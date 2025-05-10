@@ -162,7 +162,7 @@ vllm serve Qwen/Qwen3-32B --enable-reasoning --reasoning-parser deepseek_r1 --to
 
 # Misc
 
-To prepare some benchmark datasets with the [Makefile](Makefile), e.g. using `make wikidata-benchmarks`, you first need to clone [github.com/KGQA/KGQA-datasets](github.com/KGQA/KGQA-datasets) into `third_party`:
+To prepare some benchmark datasets with the [Makefile](Makefile), e.g. using `make wikidata-benchmarks`, you first need to clone [github.com/KGQA/KGQA-datasets](https://github.com/KGQA/KGQA-datasets) into `third_party`:
 ```bash
 mkdir -p third_party
 git clone https://github.com/KGQA/KGQA-datasets.git third_party/KGQA-datasets
