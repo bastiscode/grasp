@@ -1,6 +1,6 @@
 # GRASP - Generic Reasoning and SPARQL generation across Knowledge Graphs
 
-Code and data for the ISWC 2025 paper.
+Code and data for the corresponding ISWC 2025 paper submission.
 
 # Overview and directory structure
 
@@ -32,31 +32,45 @@ configs/
 
 # Quickstart
 
+Follow these steps to run GRASP and the evaluation app.
+
 ## Run GRASP
 
 > Note: We recommend to use conda for ease of installation of FAISS and to avoid
 > dependency issues.
 
 1. Create and activate conda environment: `conda create -n grasp python=3.12 && conda activate grasp`
+
 2. Install FAISS (not supported to be installed with pip): `conda install -c pytorch -c nvidia faiss-gpu=1.9.0`
+
 3. Clone the repository: `git clone https://github.com/ad-freiburg/grasp`
+
 4. Go to directory and install with pip: `cd grasp && pip install -e .`
+
 5. Get indices for the knowledge graphs you want to use. All indices are available
 at [](https://iswc25-250.hopto.org/kg-index). For example, to get the indices for Wikidata:
 ```bash
-mkdir -p data/kg-index # create index directory
-wget -P data/kg-index https://iswc25-250.hopto.org/kg-index/wikidata.tar.gz # download Wikidata index
-tar -xzf data/kg-index/wikidata.tar.gz -C data/kg-index # extract index
+# create index directory
+mkdir -p data/kg-index
+# download Wikidata index
+wget -P data/kg-index https://iswc25-250.hopto.org/kg-index/wikidata.tar.gz
+# extract index
+tar -xzf data/kg-index/wikidata.tar.gz -C data/kg-index
 ```
 Optionally, you can also download example indices for few-shot learning. Example indices are always built from the train set of a benchmark and called `train.example-index`. For example, to get the example index for QALD-10 on Wikidata:
 ```bash
-mkdir -p data/benchmark/wikidata/qald10 # create benchmark directory
-wget -P data/benchmark/wikidata/qald10 https://iswc25-250.hopto.org/benchmark/wikidata/qald10/train.example-index.tar.gz # download example index
-tar -xzf data/benchmark/wikidata/qald10/train.example-index.tar.gz -C data/benchmark/wikidata/qald10 # extract example index
+# create benchmark directory
+mkdir -p data/benchmark/wikidata/qald10
+# download example index
+wget -P data/benchmark/wikidata/qald10 https://iswc25-250.hopto.org/benchmark/wikidata/qald10/train.example-index.tar.gz
+# extract example index
+tar -xzf data/benchmark/wikidata/qald10/train.example-index.tar.gz -C data/benchmark/wikidata/qald10
 ```
+
 6. Set `KG_INDEX_DIR` env variable: `export KG_INDEX_DIR=$(pwd)/data/kg-index`
-(We recommend to set it with conda, such that it is set automatically when you activate
-the conda environment: `conda env config vars set KG_INDEX_DIR=$(pwd)/data/kg-index`)
+> We recommend to set it with conda, such that it is set automatically when you activate
+> the conda environment: `conda env config vars set KG_INDEX_DIR=$(pwd)/data/kg-index`
+
 7. Run GRASP:
 ```bash
 # MODEL, FN_SET, and KG need to be specified via env variables or
@@ -75,22 +89,36 @@ the conda environment: `conda env config vars set KG_INDEX_DIR=$(pwd)/data/kg-in
 # By default, GRASP outputs the answer to stdout as JSON with some extra metadata.
 # To avoid this we redirect it to /dev/null here, and set --log-level to DEBUG which
 # shows all steps in a nicely formatted way.
-MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp --config configs/single_kg.yaml --question "Where was Albert Einstein born?" --log-level DEBUG > /dev/null
+MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp \
+--config configs/single_kg.yaml \
+--question "Where was Albert Einstein born?" \
+--log-level DEBUG > /dev/null
 
 # Run GRASP on a benchmark and save the output to a file, in this case QALD-10:
-MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp --config config/single_kg.yaml --file data/benchmark/wikidata/qald10/test.jsonl --output-file data/benchmark/wikidata/qald10/outputs/grasp-example.jsonl --log-level DEBUG
+MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp \
+--config config/single_kg.yaml \
+--file data/benchmark/wikidata/qald10/test.jsonl \
+--output-file data/benchmark/wikidata/qald10/outputs/grasp-example.jsonl \
+--log-level DEBUG
 
 # Start a GRASP server with a Websocket endpoint at /live, in this case on port 8000:
-MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp --config configs/single_kg.yaml --serve 8000 --log-level DEBUG
-# For convenience, we also provide a config to run the server with all available KGs, and model and function set already specified:
+MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp \
+--config configs/single_kg.yaml \
+--serve 8000 \
+--log-level DEBUG
+
+# For convenience, we also provide a config to run the server with all available KGs,
+# and model and function set already specified:
 grasp --config configs/serve.yaml --serve 8000 --log-level DEBUG
 ```
 
 ## Run evaluation app
 
-Follow steps in [](apps/evaluation/README.md) to run the evaluation app.
+Follow steps [here](apps/evaluation/README.md) to run the evaluation app.
 
 # Supported models
+
+GRASP supports both commercial and open-source models.
 
 ## OpenAI
 
@@ -134,7 +162,7 @@ vllm serve Qwen/Qwen3-32B --enable-reasoning --reasoning-parser deepseek_r1 --to
 
 # Misc
 
-To prepare some benchmark datasets with the [](Makefile), e.g. using `make wikidata-benchmarks`, you first need to clone [](github.com/KGQA/KGQA-datasets) into `third_party`:
+To prepare some benchmark datasets with the [Makefile](Makefile), e.g. using `make wikidata-benchmarks`, you first need to clone [github.com/KGQA/KGQA-datasets](github.com/KGQA/KGQA-datasets) into `third_party`:
 ```bash
 mkdir -p third_party
 git clone https://github.com/KGQA/KGQA-datasets.git third_party/KGQA-datasets

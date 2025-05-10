@@ -1,6 +1,8 @@
 model: env(MODEL:openai/gpt-4.1)
 model_endpoint: env(MODEL_ENDPOINT:null)
 
+api_key: env(API_KEY:null)
+
 fn_set: env(FN_SET:search_extended)
 
 temperature: env(TEMPERATURE:0.2)
