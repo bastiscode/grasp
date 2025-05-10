@@ -8,7 +8,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 
-keywords = ["nlp", "text", "LLM", "SPARQL", "QA", "knowledge graph"]
+keywords = ["nlp", "text", "llm", "sparql", "question answering", "knowledge graph"]
 
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -38,10 +38,10 @@ dependencies = [
 [project.optional-dependencies]
 # if you want to rebuild the benchmark datasets, see scripts/prepare_benchmark.py,
 # scripts/extract_uniprot_examples.py, and scripts/fix_uniprot_examples.py
-data = ["datasets>=3.3.0", "bs4>="]
+data = ["datasets>=3.3.0", "beautifulsoup4>=4.12.0"]
 
 [project.scripts]
 "grasp" = "grasp.cli:main"
 
 [project.urls]
-Github = "https://github.com/ad-freiburg/grasp"
+Github = "https://github.com/bastiscode/grasp"
