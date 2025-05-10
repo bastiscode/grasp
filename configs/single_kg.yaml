@@ -1,0 +1,21 @@
+model: env(MODEL)
+model_endpoint: env(MODEL_ENDPOINT:null)
+
+api_key: env(API_KEY:null)
+
+fn_set: env(FN_SET)
+
+temperature: env(TEMPERATURE:0.2)
+top_p: env(TOP_P:0.9)
+reasoning_effort: env(REASONING_EFFORT:null)
+
+feedback: env(FEEDBACK:false)
+know_before_use: env(KNOW_BEFORE_USE:false)
+
+force_examples: env(FORCE_EXAMPLES:false)
+random_examples: env(RANDOM_EXAMPLES:false)
+
+knowledge_graphs:
+  - name: env(KG)
+    endpoint: env(KG_ENDPOINT:null)
+    example_index: env(KG_EXAMPLES:null)
