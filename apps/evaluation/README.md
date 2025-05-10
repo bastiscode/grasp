@@ -47,13 +47,12 @@ information:
 
 ```jsonc
 {
-  "id": "example_0",
+  "id": "sample_0",
   "question": "Select everything",
   "sparql": "SELECT * WHERE { ?s ?p ?o }",
   "paraphrases": ["Select all triples", "Get all triples"],
   "info": {
-    "some_key": "some_value",
-    ...
+    // arbitrary additional information here
   }
 }
 ```
@@ -64,9 +63,9 @@ Each line contains a JSON object like this, with optional additional fields:
 
 ```jsonc
 {
-  "id": "example_0",
+  "id": "sample_0",
   "sparql": "SELECT * WHERE { ?s ?p ?o }",
-  ...
+  // additional fields here
 }
 ```
 
@@ -77,7 +76,7 @@ produced by the `scripts/evaluate.py` script, in the format:
 
 ```jsonc
 {
-  "example_0": {
+  "sample_0": {
     // Ground truth SPARQL query
     "target": {
       "size": 12345, // Size of ground truth SPARQL results
@@ -91,6 +90,6 @@ produced by the `scripts/evaluate.py` script, in the format:
       "score": 0.8, // F1-score between predicted and ground truth SPARQL results
       "elapsed": 10.3 // Time taken to predict the SPARQL query by the model
   },
-  ...
+  // evaluations of more samples here
 }
 ```

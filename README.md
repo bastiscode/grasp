@@ -16,7 +16,8 @@ data/
     [knowledge-graph]/
       [benchmark]/                   
         test.jsonl                # Test set with input and ground truth
-        train.example_index/      # Index based on train set for few-shot learning (needs to be downloaded)
+        train.example_index/      # Index based on train set for few-shot learning
+                                    (needs to be downloaded)
         outputs/
           [model].jsonl           # Model output
           [model].config.json     # Model config
