@@ -87,7 +87,7 @@ dbpedia-benchmarks:
 	--out-dir data/benchmark/dbpedia/lcquad \
 	$(ARGS)
 	@python scripts/prepare_benchmark.py \
-	--qald-7-dbpedia data/raw/dbpedia-qald7 \
+	--qald-7-dbpedia data/raw/qald7 \
 	--out-dir data/benchmark/dbpedia/qald7 \
 	$(ARGS)
 	@python scripts/prepare_benchmark.py \
