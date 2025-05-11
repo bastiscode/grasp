@@ -14,7 +14,7 @@ from litellm import completion
 from search_index.similarity import SimilarityIndex
 from termcolor import colored
 from universal_ml_utils.configuration import load_config
-from universal_ml_utils.io import load_jsonl_file
+from universal_ml_utils.io import load_jsonl
 from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import extract_field, partition_by
 
@@ -255,7 +255,7 @@ def run(args: argparse.Namespace) -> None:
         random.seed(args.seed)
         assert args.output_file is not None, "Output file is required with --file"
 
-        inputs = load_jsonl_file(args.file)
+        inputs = load_jsonl(args.file)
         if args.shuffle:
             random.shuffle(inputs)
 
@@ -264,7 +264,7 @@ def run(args: argparse.Namespace) -> None:
 
         exists = os.path.exists(args.output_file)
         if exists and not args.overwrite:
-            outputs = load_jsonl_file(args.output_file)
+            outputs = load_jsonl(args.output_file)
 
         # save this in a config file
         output_stem, _ = os.path.splitext(args.output_file)
