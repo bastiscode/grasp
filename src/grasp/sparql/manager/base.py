@@ -16,6 +16,7 @@ from search_index import (
 from universal_ml_utils.table import generate_table
 
 from grasp.sparql.constants import (
+    READ_TIMEOUT,
     REQUEST_TIMEOUT,
     AskResult,
     Binding,
@@ -127,6 +128,7 @@ class KgManager:
         request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
         max_retries: int = 1,
         force_select_result: bool = False,
+        read_timeout: float | None = READ_TIMEOUT,
     ) -> SelectResult | AskResult:
         if force_select_result:
             # ask_to_select returns None if sparql is not an ask query
@@ -140,6 +142,7 @@ class KgManager:
             self.endpoint,
             request_timeout,
             max_retries,
+            read_timeout,
         )
 
     def format_sparql_result(

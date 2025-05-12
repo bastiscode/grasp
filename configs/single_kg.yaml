@@ -5,6 +5,8 @@ api_key: env(API_KEY:null)
 
 fn_set: env(FN_SET)
 
+list_k: env(LIST_K:10)
+
 temperature: env(TEMPERATURE:0.2)
 top_p: env(TOP_P:0.9)
 reasoning_effort: env(REASONING_EFFORT:null)

@@ -3,7 +3,7 @@ import json
 import os
 
 from tqdm import tqdm
-from universal_ml_utils.io import load_jsonl_file
+from universal_ml_utils.io import load_jsonl
 
 from grasp.sparql.constants import get_endpoint
 from grasp.sparql.manager import load_kg_manager
@@ -71,16 +71,16 @@ def evaluate(args: argparse.Namespace):
     else:
         evaluations = {}
 
-    predictions = load_jsonl_file(args.prediction)
+    predictions = load_jsonl(args.prediction)
 
     if args.reparse_answer:
         manager = load_kg_manager(args.knowledge_graph)
     else:
         manager = None
 
-    inputs = load_jsonl_file(args.input)
+    inputs = load_jsonl(args.input)
     inputs: dict[str, Sample] = {}
-    for sample in load_jsonl_file(args.input):
+    for sample in load_jsonl(args.input):
         sample = Sample(**sample)
         assert sample.id not in inputs, f"Duplicate id {sample.id}"
         inputs[sample.id] = sample
