@@ -814,17 +814,10 @@ def check_known(manager: KgManager, sparql: str, known: set[str]):
 
         identifier = binding.identifier()
 
-        for map in [manager.entity_mapping, manager.property_mapping]:
-            norm = map.normalize(identifier)
-            if norm is None:
-                iri = identifier
-            else:
-                iri = norm[0]
-
-            longest = manager.find_longest_prefix(iri)
-            if longest is None or longest[0] not in COMMON_PREFIXES:
-                # unknown or uncommon prefix
-                in_query.add(iri)
+        longest = manager.find_longest_prefix(identifier)
+        if longest is None or longest[0] not in COMMON_PREFIXES:
+            # unknown or uncommon prefix, should be known before use
+            in_query.add(identifier)
 
     unknown_in_query = in_query - known
     if unknown_in_query:
@@ -853,6 +846,23 @@ def update_known_from_iris(
         known.add(norm[0])
 
 
+def update_known_from_alts(
+    known: set[str],
+    alts: Iterable[Alternative],
+    mapping: Mapping | None = None,
+):
+    for alt in alts:
+        known.add(alt.identifier)
+        if mapping is None or not alt.variants:
+            continue
+
+        for var in alt.variants:
+            denorm = mapping.denormalize(alt.identifier, var)
+            if denorm is None:
+                continue
+            known.add(denorm)
+
+
 def update_known_from_rows(
     known: set[str],
     rows: Iterable[SelectRow],
@@ -875,23 +885,23 @@ def update_known_from_alternatives(
     manager: KgManager,
 ):
     # entities
-    update_known_from_iris(
+    update_known_from_alts(
         known,
-        (alt.identifier for alt in alternatives.get(ObjType.ENTITY, [])),
+        alternatives.get(ObjType.ENTITY, []),
         manager.entity_mapping,
     )
 
     # properties
-    update_known_from_iris(
+    update_known_from_alts(
         known,
-        (alt.identifier for alt in alternatives.get(ObjType.PROPERTY, [])),
+        alternatives.get(ObjType.PROPERTY, []),
         manager.property_mapping,
     )
 
     # other
     update_known_from_iris(
         known,
-        (alt.identifier for alt in alternatives.get(ObjType.OTHER, [])),
+        alternatives.get(ObjType.OTHER, []),
     )
 
 
