@@ -570,28 +570,38 @@ def show_predictions_view(available_data):
     st.sidebar.subheader("Select a Model")
     model_options = list(available_models.keys())
 
+    # Preferred model to select by default
+    preferred_model = "gpt-41 (search_extended_with_feedback)"
+
+    # Helper function to get default index for a model list
+    def get_default_model_index(model_list):
+        return next((i for i, m in enumerate(model_list) if preferred_model == m), 0)
+
     # Add regex filter for model selection
     model_regex = st.sidebar.text_input(
         "Filter models by regex pattern", st.session_state.stored_model_regex
     )
     # Update session state with current filter
     st.session_state.stored_model_regex = model_regex
+
+    # Determine which model options to display
+    display_options = model_options
     if model_regex:
         try:
             regex = re.compile(model_regex)
             filtered_model_options = [
                 model for model in model_options if regex.search(model)
             ]
-            if not filtered_model_options:
-                st.sidebar.warning(f"No models match the pattern '{model_regex}'")
-                selected_model = st.sidebar.selectbox("Model", model_options)
+            if filtered_model_options:
+                display_options = filtered_model_options
             else:
-                selected_model = st.sidebar.selectbox("Model", filtered_model_options)
+                st.sidebar.warning(f"No models match the pattern '{model_regex}'")
         except re.error as e:
             st.sidebar.error(f"Invalid regex pattern: {e}")
-            selected_model = st.sidebar.selectbox("Model", model_options)
-    else:
-        selected_model = st.sidebar.selectbox("Model", model_options)
+
+    # Get default index and display selectbox
+    default_model_index = get_default_model_index(display_options)
+    selected_model = st.sidebar.selectbox("Model", display_options, index=default_model_index)
 
     # Filter type
     prediction_options = ["All Outputs", "Invalid Outputs", "Invalid Evaluations"]
