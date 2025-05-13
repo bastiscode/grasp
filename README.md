@@ -44,7 +44,7 @@ Follow these steps to run GRASP and the evaluation app.
 
 2. Install FAISS (not supported to be installed with pip): `conda install -c pytorch -c nvidia faiss-gpu=1.9.0`
 
-3. Clone the repository: `git clone https://github.com/ad-freiburg/grasp`
+3. Clone the repository: `git clone https://github.com/bastiscode/grasp`
 
 4. Go to directory and install with pip: `cd grasp && pip install -e .`
 
@@ -92,14 +92,14 @@ tar -xzf data/benchmark/wikidata/qald10/train.example-index.tar.gz -C data/bench
 # shows all steps in a nicely formatted way.
 MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp \
 --config configs/single_kg.yaml \
---question "Where was Albert Einstein born?" \
+--question "Where was Angela Merkel born?" \
 --log-level DEBUG > /dev/null
 
 # Run GRASP on a benchmark and save the output to a file, in this case QALD-10:
 MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp \
 --config config/single_kg.yaml \
 --file data/benchmark/wikidata/qald10/test.jsonl \
---output-file data/benchmark/wikidata/qald10/outputs/grasp-example.jsonl \
+--output-file data/benchmark/wikidata/qald10/outputs/test.jsonl \
 --log-level DEBUG
 
 # Start a GRASP server with a Websocket endpoint at /live, in this case on port 8000:
