@@ -1,3 +1,4 @@
+import unittest
 from collections import Counter
 from typing import Any, Iterable
 
@@ -102,279 +103,224 @@ def get_result_or_error(
     return result, None
 
 
-# Test functions
-if __name__ == "__main__":
-    import unittest
+class TestF1Score(unittest.TestCase):
+    def test_exact_f1_score_identical(self):
+        pred = [("a", "b"), ("c", "d")]
+        target = [("a", "b"), ("c", "d")]
+        self.assertEqual(exact_f1_score(pred, target), 1.0)
 
-    class TestF1Score(unittest.TestCase):
-        def test_exact_f1_score_identical(self):
-            pred = [("a", "b"), ("c", "d")]
-            target = [("a", "b"), ("c", "d")]
-            self.assertEqual(exact_f1_score(pred, target), 1.0)
+    def test_exact_f1_score_disjoint(self):
+        pred = [("a", "b"), ("c", "d")]
+        target = [("e", "f"), ("g", "h")]
+        self.assertEqual(exact_f1_score(pred, target), 0.0)
 
-        def test_exact_f1_score_disjoint(self):
-            pred = [("a", "b"), ("c", "d")]
-            target = [("e", "f"), ("g", "h")]
-            self.assertEqual(exact_f1_score(pred, target), 0.0)
+    def test_exact_f1_score_partial_match(self):
+        pred = [("a", "b"), ("c", "d"), ("e", "f")]
+        target = [("a", "b"), ("g", "h"), ("i", "j")]
+        # TP = 1, FP = 2, FN = 2
+        # Precision = 1/3, Recall = 1/3, F1 = 2 * (1/3) * (1/3) / (2/3) = 1/3
+        self.assertAlmostEqual(exact_f1_score(pred, target), 1 / 3)
 
-        def test_exact_f1_score_partial_match(self):
-            pred = [("a", "b"), ("c", "d"), ("e", "f")]
-            target = [("a", "b"), ("g", "h"), ("i", "j")]
-            # TP = 1, FP = 2, FN = 2
-            # Precision = 1/3, Recall = 1/3, F1 = 2 * (1/3) * (1/3) / (2/3) = 1/3
-            self.assertAlmostEqual(exact_f1_score(pred, target), 1 / 3)
+    def test_exact_f1_score_duplicates(self):
+        pred = [("a", "b"), ("a", "b"), ("c", "d")]
+        target = [("a", "b"), ("c", "d"), ("c", "d")]
+        # After running the test, the actual result is 0.6666666666666666
+        # When we analyze the Counter logic:
+        # pred_set = {"a,b": 2, "c,d": 1}
+        # target_set = {"a,b": 1, "c,d": 2}
+        # tp = min("a,b": 1, "c,d": 1) = 2
+        # fp = max(0, "a,b": 2-1 = 1, "c,d": 1-2 = 0) = 1
+        # fn = max(0, "a,b": 1-2 = 0, "c,d": 2-1 = 1) = 1
+        # Precision = 2/3, Recall = 2/3, F1 = 2 * (2/3) * (2/3) / (4/3) = 2/3
+        self.assertAlmostEqual(exact_f1_score(pred, target), 0.6666666666666666)
 
-        def test_exact_f1_score_duplicates(self):
-            pred = [("a", "b"), ("a", "b"), ("c", "d")]
-            target = [("a", "b"), ("c", "d"), ("c", "d")]
-            # After running the test, the actual result is 0.6666666666666666
-            # When we analyze the Counter logic:
-            # pred_set = {"a,b": 2, "c,d": 1}
-            # target_set = {"a,b": 1, "c,d": 2}
-            # tp = min("a,b": 1, "c,d": 1) = 2
-            # fp = max(0, "a,b": 2-1 = 1, "c,d": 1-2 = 0) = 1
-            # fn = max(0, "a,b": 1-2 = 0, "c,d": 2-1 = 1) = 1
-            # Precision = 2/3, Recall = 2/3, F1 = 2 * (2/3) * (2/3) / (4/3) = 2/3
-            self.assertAlmostEqual(exact_f1_score(pred, target), 0.6666666666666666)
+    def test_assignment_f1_score_identical(self):
+        pred = [["a", "b"], ["c", "d"]]
+        target = [["a", "b"], ["c", "d"]]
+        self.assertEqual(assignment_f1_score(pred, target), 1.0)
 
-        def test_assignment_f1_score_identical(self):
-            pred = [["a", "b"], ["c", "d"]]
-            target = [["a", "b"], ["c", "d"]]
-            self.assertEqual(assignment_f1_score(pred, target), 1.0)
+    def test_assignment_f1_score_disjoint(self):
+        pred = [["a", "b"], ["c", "d"]]
+        target = [["e", "f"], ["g", "h"]]
+        self.assertEqual(assignment_f1_score(pred, target), 0.0)
 
-        def test_assignment_f1_score_disjoint(self):
-            pred = [["a", "b"], ["c", "d"]]
-            target = [["e", "f"], ["g", "h"]]
-            self.assertEqual(assignment_f1_score(pred, target), 0.0)
+    def test_assignment_f1_score_partial_match(self):
+        pred = [["a", "b", "c"], ["d", "e"]]
+        target = [["a", "b"], ["d", "e", "f"]]
+        # The optimal assignment matches the first row of pred with the first row of target (2/2 = 1.0)
+        # and the second row of pred with the second row of target (2/3 = 0.667)
+        # tp = 1.0 + 0.667 = 1.667, fn = 0 + 0.333 = 0.333, fp = 0
+        # Precision = 1.667/1.667 = 1, Recall = 1.667/2 = 0.8335, F1 = 2 * 1 * 0.8335 / 1.8335 ≈ 0.909
+        self.assertAlmostEqual(
+            assignment_f1_score(pred, target), 0.9090909090909091, places=6
+        )
 
-        def test_assignment_f1_score_partial_match(self):
-            pred = [["a", "b", "c"], ["d", "e"]]
-            target = [["a", "b"], ["d", "e", "f"]]
-            # The optimal assignment matches the first row of pred with the first row of target (2/2 = 1.0)
-            # and the second row of pred with the second row of target (2/3 = 0.667)
-            # tp = 1.0 + 0.667 = 1.667, fn = 0 + 0.333 = 0.333, fp = 0
-            # Precision = 1.667/1.667 = 1, Recall = 1.667/2 = 0.8335, F1 = 2 * 1 * 0.8335 / 1.8335 ≈ 0.909
-            self.assertAlmostEqual(
-                assignment_f1_score(pred, target), 0.9090909090909091, places=6
-            )
+    def test_assignment_f1_score_different_lengths(self):
+        pred = [["a", "b"], ["c", "d"], ["e", "f"]]
+        target = [["a", "b"], ["g", "h"]]
+        # After running the test, the actual result is 0.5
+        # When we analyze the assignment logic:
+        # We have 2 target rows and 3 prediction rows
+        # Optimal assignment matches pred[0] with target[0] (score 1.0),
+        # with pred[1] and pred[2] unmatched, and target[1] matched to nothing (score 0)
+        # tp = 1.0, fn = 2 - 1 = 1, fp = 3 - 1 = 2
+        # Precision = 1/3, Recall = 1/2, F1 = 2 * (1/3) * (1/2) / ((1/3) + (1/2)) = 0.5
+        self.assertAlmostEqual(assignment_f1_score(pred, target), 0.5)
 
-        def test_assignment_f1_score_different_lengths(self):
-            pred = [["a", "b"], ["c", "d"], ["e", "f"]]
-            target = [["a", "b"], ["g", "h"]]
-            # After running the test, the actual result is 0.5
-            # When we analyze the assignment logic:
-            # We have 2 target rows and 3 prediction rows
-            # Optimal assignment matches pred[0] with target[0] (score 1.0),
-            # with pred[1] and pred[2] unmatched, and target[1] matched to nothing (score 0)
-            # tp = 1.0, fn = 2 - 1 = 1, fp = 3 - 1 = 2
-            # Precision = 1/3, Recall = 1/2, F1 = 2 * (1/3) * (1/2) / ((1/3) + (1/2)) = 0.5
-            self.assertAlmostEqual(assignment_f1_score(pred, target), 0.5)
+    def test_assignment_f1_score_perfect_match_with_extras(self):
+        # Test case combining:
+        # 1. Different order of rows
+        # 2. Different order of elements within rows
+        # 3. Extra elements in prediction rows
+        # Should still give a perfect F1 score of 1.0
+        pred = [
+            ["c", "extra1", "a", "b"],  # Extra elements and shuffled order
+            ["f", "e", "d", "extra2"],  # Extra elements and shuffled order
+        ]
+        target = [["a", "b", "c"], ["d", "e", "f"]]
 
-        def test_assignment_f1_score_perfect_match_with_extras(self):
-            # Test case combining:
-            # 1. Different order of rows
-            # 2. Different order of elements within rows
-            # 3. Extra elements in prediction rows
-            # Should still give a perfect F1 score of 1.0
-            pred = [
-                ["c", "extra1", "a", "b"],  # Extra elements and shuffled order
-                ["f", "e", "d", "extra2"],  # Extra elements and shuffled order
+        # Using Counter-based comparison, each target row finds its best match
+        # where all target elements are present (regardless of order)
+        # In this case, target[0] matches with pred[0] and target[1] with pred[1]
+        # For each match, recall = 1.0 as all elements in target are in pred
+        # tp = 2.0, fn = 0, fp = 0
+        # Precision = 2/2 = 1.0, Recall = 2/2 = 1.0, F1 = 1.0
+        self.assertEqual(assignment_f1_score(pred, target), 1.0)
+
+    def test_f1_score_ask_results(self):
+        from grasp.sparql.constants import AskResult
+
+        self.assertEqual(f1_score(AskResult(True), AskResult(True)), 1.0)
+        self.assertEqual(f1_score(AskResult(False), AskResult(False)), 1.0)
+        self.assertEqual(f1_score(AskResult(True), AskResult(False)), 0.0)
+
+    def test_f1_score_empty_results(self):
+        from grasp.sparql.constants import SelectResult
+
+        empty1 = SelectResult([], [])
+        empty2 = SelectResult([], [])
+        non_empty = SelectResult(["var"], [["value"]])
+
+        self.assertEqual(f1_score(empty1, empty2), 1.0)
+        self.assertEqual(f1_score(empty1, non_empty), 0.0)
+        self.assertEqual(f1_score(non_empty, empty1), 0.0)
+
+    def test_f1_score_exact_parameter(self):
+        from grasp.sparql.constants import SelectResult
+
+        # Create results with more than the default threshold rows
+        many_rows1 = SelectResult(["var"], [["val" + str(i)] for i in range(2000)])
+        many_rows2 = SelectResult(
+            ["var"], [["val" + str(i)] for i in range(1000, 3000)]
+        )
+
+        # With exact=True (0), use assignment_f1_score
+        self.assertEqual(
+            f1_score(many_rows1, many_rows2, exact=True),
+            exact_f1_score(many_rows1.rows(), many_rows2.rows()),
+        )
+
+        # With exact=False (max len), use exact_f1_score
+        self.assertEqual(
+            f1_score(many_rows1, many_rows2, exact=False),
+            exact_f1_score(many_rows1.rows(), many_rows2.rows()),
+        )
+
+        # With exact=500 (less than both lengths), use exact_f1_score
+        self.assertEqual(
+            f1_score(many_rows1, many_rows2, exact=500),
+            exact_f1_score(many_rows1.rows(), many_rows2.rows()),
+        )
+
+
+class PerformanceTests(unittest.TestCase):
+    def test_exact_f1_score_performance(self):
+        import time
+
+        # Run performance tests with increasingly larger datasets
+        sizes = [10, 50, 100, 500, 1000, 5000, 10000]
+        times = []
+
+        for size in sizes:
+            # Create test data with 'size' rows, each with 5 elements
+            pred = [tuple(f"val{i*j}" for j in range(5)) for i in range(size)]
+            target = [
+                tuple(f"val{(i+size//2)*j}" for j in range(5)) for i in range(size)
             ]
-            target = [["a", "b", "c"], ["d", "e", "f"]]
 
-            # Using Counter-based comparison, each target row finds its best match
-            # where all target elements are present (regardless of order)
-            # In this case, target[0] matches with pred[0] and target[1] with pred[1]
-            # For each match, recall = 1.0 as all elements in target are in pred
-            # tp = 2.0, fn = 0, fp = 0
-            # Precision = 2/2 = 1.0, Recall = 2/2 = 1.0, F1 = 1.0
-            self.assertEqual(assignment_f1_score(pred, target), 1.0)
+            # Measure execution time
+            start_time = time.time()
+            exact_f1_score(pred, target)
+            end_time = time.time()
 
-        def test_f1_score_ask_results(self):
-            from grasp.sparql.utils.constants import AskResult
+            execution_time = end_time - start_time
+            times.append(execution_time)
 
-            self.assertEqual(f1_score(AskResult(True), AskResult(True)), 1.0)
-            self.assertEqual(f1_score(AskResult(False), AskResult(False)), 1.0)
-            self.assertEqual(f1_score(AskResult(True), AskResult(False)), 0.0)
+            print(f"Exact F1 Score - Size {size}: {execution_time:.4f} seconds")
 
-        def test_f1_score_empty_results(self):
-            from grasp.sparql.utils.constants import SelectResult
-
-            empty1 = SelectResult([], [])
-            empty2 = SelectResult([], [])
-            non_empty = SelectResult(["var"], [["value"]])
-
-            self.assertEqual(f1_score(empty1, empty2), 1.0)
-            self.assertEqual(f1_score(empty1, non_empty), 0.0)
-            self.assertEqual(f1_score(non_empty, empty1), 0.0)
-
-        def test_f1_score_exact_parameter(self):
-            from grasp.sparql.utils.constants import SelectResult
-
-            # Create results with more than the default threshold rows
-            many_rows1 = SelectResult(["var"], [["val" + str(i)] for i in range(2000)])
-            many_rows2 = SelectResult(
-                ["var"], [["val" + str(i)] for i in range(1000, 3000)]
-            )
-
-            # With exact=True (0), use assignment_f1_score
-            self.assertEqual(
-                f1_score(many_rows1, many_rows2, exact=True),
-                exact_f1_score(many_rows1.rows(), many_rows2.rows()),
-            )
-
-            # With exact=False (max len), use exact_f1_score
-            self.assertEqual(
-                f1_score(many_rows1, many_rows2, exact=False),
-                exact_f1_score(many_rows1.rows(), many_rows2.rows()),
-            )
-
-            # With exact=500 (less than both lengths), use exact_f1_score
-            self.assertEqual(
-                f1_score(many_rows1, many_rows2, exact=500),
-                exact_f1_score(many_rows1.rows(), many_rows2.rows()),
-            )
-
-    class PerformanceTests(unittest.TestCase):
-        def test_exact_f1_score_performance(self):
-            import time
-
-            # Run performance tests with increasingly larger datasets
-            sizes = [10, 50, 100, 500, 1000, 5000, 10000]
-            times = []
-
-            for size in sizes:
-                # Create test data with 'size' rows, each with 5 elements
-                pred = [tuple(f"val{i*j}" for j in range(5)) for i in range(size)]
-                target = [
-                    tuple(f"val{(i+size//2)*j}" for j in range(5)) for i in range(size)
-                ]
-
-                # Measure execution time
-                start_time = time.time()
-                exact_f1_score(pred, target)
-                end_time = time.time()
-
-                execution_time = end_time - start_time
-                times.append(execution_time)
-
-                print(f"Exact F1 Score - Size {size}: {execution_time:.4f} seconds")
-
-                # Stop testing if execution time exceeds 1 second
-                if execution_time > 1.0:
-                    print(
-                        f"Stopping exact F1 score tests at size {size} as execution time exceeds 1 second"
-                    )
-                    break
-
-            # Print summary
-            print("\nExact F1 Score Performance Summary:")
-            for i, size in enumerate(sizes[: len(times)]):
-                print(f"Size {size}: {times[i]:.4f} seconds")
-
-        def test_assignment_f1_score_performance(self):
-            import time
-
-            # Run performance tests with increasingly larger datasets
-            # More granular size steps for smaller sizes, larger steps for bigger sizes
-            sizes = [
-                10,
-                20,
-                30,
-                40,
-                50,
-                75,
-                100,
-                125,
-                150,
-                175,
-                200,
-                250,
-                300,
-                350,
-                400,
-                500,
-                600,
-                700,
-                800,
-                900,
-                1000,
-                1500,
-                2000,
-                2500,
-                3000,
-                4000,
-                5000,
-                7500,
-                10000,
-            ]
-            times = []
-
-            for size in sizes:
-                # Create test data with 'size' rows, each with 5 elements
-                pred = [["val" + str(i * j) for j in range(5)] for i in range(size)]
-                target = [
-                    ["val" + str((i + size // 2) * j) for j in range(5)]
-                    for i in range(size)
-                ]
-
-                # Measure execution time
-                start_time = time.time()
-                assignment_f1_score(pred, target)
-                end_time = time.time()
-
-                execution_time = end_time - start_time
-                times.append(execution_time)
-
+            # Stop testing if execution time exceeds 1 second
+            if execution_time > 1.0:
                 print(
-                    f"Assignment F1 Score - Size {size}: {execution_time:.4f} seconds"
+                    f"Stopping exact F1 score tests at size {size} as execution time exceeds 1 second"
                 )
+                break
 
-                # Stop testing if execution time exceeds 1 second
-                if execution_time > 1.0:
-                    print(
-                        f"Stopping assignment F1 score tests at size {size} as execution time exceeds 1 second"
-                    )
-                    break
+        # Print summary
+        print("\nExact F1 Score Performance Summary:")
+        for i, size in enumerate(sizes[: len(times)]):
+            print(f"Size {size}: {times[i]:.4f} seconds")
 
-            # Print summary
-            print("\nAssignment F1 Score Performance Summary:")
-            for i, size in enumerate(sizes[: len(times)]):
-                print(f"Size {size}: {times[i]:.4f} seconds")
+    def test_assignment_f1_score_performance(self):
+        import time
 
-    # Only run the unit tests by default, not the performance tests
-    if __name__ == "__main__":
-        import argparse
+        # Run performance tests with increasingly larger datasets
+        sizes = [10, 50, 100, 500, 1000, 5000, 10000]
+        times = []
 
-        parser = argparse.ArgumentParser(description="Run tests for F1 score functions")
-        parser.add_argument("--perf", action="store_true", help="Run performance tests")
-        parser.add_argument(
-            "--exact-perf",
-            action="store_true",
-            help="Run performance tests for exact F1 score only",
-        )
-        parser.add_argument(
-            "--assignment-perf",
-            action="store_true",
-            help="Run performance tests for assignment F1 score only",
-        )
-        args = parser.parse_args()
+        for size in sizes:
+            # Create test data with 'size' rows, each with 5 elements
+            pred = [["val" + str(i * j) for j in range(5)] for i in range(size)]
+            target = [
+                ["val" + str((i + size // 2) * j) for j in range(5)]
+                for i in range(size)
+            ]
 
-        if args.perf:
-            # Run all performance tests
-            suite = unittest.TestLoader().loadTestsFromTestCase(PerformanceTests)
-            unittest.TextTestRunner().run(suite)
-        elif args.exact_perf:
-            # Run just the exact F1 score performance test
-            suite = unittest.TestSuite()
-            suite.addTest(PerformanceTests("test_exact_f1_score_performance"))
-            unittest.TextTestRunner().run(suite)
-        elif args.assignment_perf:
-            # Run just the assignment F1 score performance test
-            suite = unittest.TestSuite()
-            suite.addTest(PerformanceTests("test_assignment_f1_score_performance"))
-            unittest.TextTestRunner().run(suite)
-        else:
-            # Run regular unit tests
-            suite = unittest.TestLoader().loadTestsFromTestCase(TestF1Score)
-            unittest.TextTestRunner().run(suite)
+            # Measure execution time
+            start_time = time.time()
+            assignment_f1_score(pred, target)
+            end_time = time.time()
+
+            execution_time = end_time - start_time
+            times.append(execution_time)
+
+            print(f"Assignment F1 Score - Size {size}: {execution_time:.4f} seconds")
+
+            # Stop testing if execution time exceeds 1 second
+            if execution_time > 1.0:
+                print(
+                    f"Stopping assignment F1 score tests at size {size} as execution time exceeds 1 second"
+                )
+                break
+
+        # Print summary
+        print("\nAssignment F1 Score Performance Summary:")
+        for i, size in enumerate(sizes[: len(times)]):
+            print(f"Size {size}: {times[i]:.4f} seconds")
+
+
+# Only run the unit tests by default, not the performance tests
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run tests for F1 score functions")
+    parser.add_argument("--perf", action="store_true", help="Run performance tests")
+    args = parser.parse_args()
+
+    if args.perf:
+        # Run performance tests
+        suite = unittest.TestLoader().loadTestsFromTestCase(PerformanceTests)
+        unittest.TextTestRunner().run(suite)
+    else:
+        # Run regular unit tests
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestF1Score)
+        unittest.TextTestRunner().run(suite)

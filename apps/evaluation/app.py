@@ -552,7 +552,11 @@ def show_predictions_view(available_data):
     selected_kg = st.sidebar.selectbox("Select Knowledge Graph", kg_options, index=default_index)
 
     benchmark_options = list(available_data[selected_kg].keys())
-    selected_benchmark = st.sidebar.selectbox("Select Benchmark", benchmark_options)
+    # Set default benchmark based on selected knowledge graph
+    default_benchmark = "qald10" if selected_kg == "wikidata" else "wqsp" if selected_kg == "freebase" else benchmark_options[0]
+    # Make sure the default benchmark exists in the options
+    default_index = benchmark_options.index(default_benchmark) if default_benchmark in benchmark_options else 0
+    selected_benchmark = st.sidebar.selectbox("Select Benchmark", benchmark_options, index=default_index)
 
     # Get available models for this benchmark
     benchmark_info = available_data[selected_kg][selected_benchmark]
@@ -1478,7 +1482,11 @@ def main():
         selected_kg = st.sidebar.selectbox("Select Knowledge Graph", kg_options, index=default_index)
 
         benchmark_options = list(available_data[selected_kg].keys())
-        selected_benchmark = st.sidebar.selectbox("Select Benchmark", benchmark_options)
+        # Set default benchmark based on selected knowledge graph
+        default_benchmark = "qald10" if selected_kg == "wikidata" else "wqsp" if selected_kg == "freebase" else benchmark_options[0]
+        # Make sure the default benchmark exists in the options
+        default_index = benchmark_options.index(default_benchmark) if default_benchmark in benchmark_options else 0
+        selected_benchmark = st.sidebar.selectbox("Select Benchmark", benchmark_options, index=default_index)
 
         # Option to restrict evaluation to common examples - moved to top, without heading
         restrict_to_common = st.sidebar.checkbox(
