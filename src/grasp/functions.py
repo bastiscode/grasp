@@ -899,7 +899,7 @@ def update_known_from_alternatives(
     )
 
     # other
-    update_known_from_iris(
+    update_known_from_alts(
         known,
         alternatives.get(ObjType.OTHER, []),
     )
