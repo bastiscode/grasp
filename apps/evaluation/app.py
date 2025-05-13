@@ -319,7 +319,7 @@ def generate_latex_table(df, rankings, sorted_kgs, kg_benchmarks, metric_key):
 
     latex += " \\\\\n"
 
-    # Second row: Dataset names
+    # Second row: Benchmark names
     latex += " "  # Empty cell for Model column
 
     for kg in sorted_kgs:
@@ -540,8 +540,8 @@ def setup_model_selection(available_models, selected_models_dict=None):
 
 # Additional view functions
 def show_predictions_view(available_data):
-    """Show a view focused on examining predictions in detail."""
-    st.title("Predictions Analysis")
+    """Show a view focused on examining model outputs in detail."""
+    st.title("Outputs Analysis")
 
     # Sidebar for benchmark and model selection
     st.sidebar.title("Benchmark Settings")
@@ -558,11 +558,11 @@ def show_predictions_view(available_data):
     benchmark_info = available_data[selected_kg][selected_benchmark]
     available_models = benchmark_info["models"]
 
-    # Add empty target handling option
+    # Add empty ground truth handling option
     empty_target_valid = st.sidebar.checkbox(
-        "Count empty targets as valid",
+        "Count empty ground truth as valid",
         value=False,
-        help="When checked, targets with size 0 (empty result sets) will be counted as valid",
+        help="When checked, ground truth with size 0 (empty result sets) will be counted as valid",
     )
 
     # Allow user to select a model
@@ -570,12 +570,13 @@ def show_predictions_view(available_data):
     st.sidebar.subheader("Select a Model")
     model_options = list(available_models.keys())
 
-    # Preferred model to select by default
+    # Preferred model to select by default when first loading
     preferred_model = "gpt-41 (search_extended_with_feedback)"
 
-    # Helper function to get default index for a model list
-    def get_default_model_index(model_list):
-        return next((i for i, m in enumerate(model_list) if preferred_model == m), 0)
+    # Store the selected model in session state to persist between benchmark changes
+    if "predictions_view_model" not in st.session_state:
+        # Initialize with preferred model
+        st.session_state.predictions_view_model = preferred_model
 
     # Add regex filter for model selection
     model_regex = st.sidebar.text_input(
@@ -599,9 +600,19 @@ def show_predictions_view(available_data):
         except re.error as e:
             st.sidebar.error(f"Invalid regex pattern: {e}")
 
-    # Get default index and display selectbox
-    default_model_index = get_default_model_index(display_options)
-    selected_model = st.sidebar.selectbox("Model", display_options, index=default_model_index)
+    # Find index for the model selection based on stored value or preferred model
+    if st.session_state.predictions_view_model in display_options:
+        # Use previously selected model if available in current options
+        default_index = display_options.index(st.session_state.predictions_view_model)
+    else:
+        # Otherwise use preferred model if available, or first model if not
+        default_index = next((i for i, m in enumerate(display_options) if preferred_model == m), 0)
+
+    # Show select box with appropriate default index
+    selected_model = st.sidebar.selectbox("Model", display_options, index=default_index)
+
+    # Store selected model in session state for next time
+    st.session_state.predictions_view_model = selected_model
 
     # Filter type
     prediction_options = ["All Outputs", "Invalid Outputs", "Invalid Evaluations"]
@@ -716,14 +727,14 @@ def show_predictions_view(available_data):
                 eval_data = evaluations[selected_id]
                 st.subheader("Evaluation")
 
-                # Create columns for evaluation metrics
-                eval_cols = st.columns(3)
+                # Create columns for evaluation metrics (use more columns for better spacing)
+                eval_cols = st.columns([1, 1, 1.5])
                 with eval_cols[0]:
                     if "prediction" in eval_data and "score" in eval_data["prediction"]:
                         f1_score = eval_data["prediction"]["score"]
-                        st.metric("F1 Score", f"{f1_score:.2f}")
+                        st.metric("F1", f"{f1_score:.2f}")
                     else:
-                        st.metric("F1 Score", "N/A")
+                        st.metric("F1", "N/A")
 
                 with eval_cols[1]:
                     if (
@@ -731,13 +742,20 @@ def show_predictions_view(available_data):
                         and "elapsed" in eval_data["prediction"]
                     ):
                         elapsed = eval_data["prediction"]["elapsed"]
-                        st.metric("Processing Time (s)", f"{elapsed:.3f}")
+                        st.metric("Time (s)", f"{elapsed:.3f}")
                     else:
-                        st.metric("Processing Time (s)", "N/A")
+                        st.metric("Time (s)", "N/A")
 
                 with eval_cols[2]:
                     if is_invalid_evaluation(eval_data, empty_target_valid):
-                        st.metric("Status", "❌ Invalid")
+                        # Check if invalid due to empty ground truth
+                        if (not empty_target_valid
+                            and "target" in eval_data
+                            and eval_data["target"].get("size", None) == 0
+                            and eval_data["target"].get("err", None) is None):
+                            st.metric("Status", "❌ Empty Ground Truth")
+                        else:
+                            st.metric("Status", "❌ Invalid")
                     elif (
                         "prediction" in eval_data
                         and eval_data["prediction"].get("score", 0) == 1.0
@@ -750,14 +768,14 @@ def show_predictions_view(available_data):
                 if "error" in eval_data:
                     st.error(f"Error: {eval_data['error']}")
 
-                # Show target errors if available
+                # Show ground truth errors if available
                 if (
                     "target" in eval_data
                     and eval_data["target"] is not None
                     and "err" in eval_data["target"]
                     and eval_data["target"]["err"] is not None
                 ):
-                    st.error(f"Target Error: {eval_data['target']['err']}")
+                    st.error(f"Ground Truth Error: {eval_data['target']['err']}")
 
                 # Show prediction errors if available
                 if (
@@ -884,7 +902,7 @@ def show_predictions_view(available_data):
 
 
 def show_comprehensive_view(available_data):
-    """Show a comprehensive view with a large table of metrics across KGs and datasets."""
+    """Show a comprehensive view with a large table of metrics across KGs and benchmarks."""
     st.title("Comprehensive Model Comparison")
 
     # Add settings to sidebar
@@ -908,11 +926,11 @@ def show_comprehensive_view(available_data):
         help="When checked, only examples where all selected models have valid outputs and evaluations will be included in the comparison",
     )
 
-    # Add empty target handling option
+    # Add empty ground truth handling option
     empty_target_valid = st.sidebar.checkbox(
-        "Count empty targets as valid",
+        "Count empty ground truth as valid",
         value=False,
-        help="When checked, targets with size 0 (empty result sets) will be counted as valid",
+        help="When checked, ground truth with size 0 (empty result sets) will be counted as valid",
     )
 
     # We'll set up the benchmark checkboxes after gathering all the data for the table
@@ -942,15 +960,15 @@ def show_comprehensive_view(available_data):
     # Use shared model selection function
     selected_models = setup_model_selection(available_models=all_available_models)
 
-    # Create a dictionary to hold all metrics across all KGs and datasets
+    # Create a dictionary to hold all metrics across all KGs and benchmarks
     all_metrics = {}
 
     # Keep track of KGs and their benchmarks for hierarchical columns
     kg_benchmarks = defaultdict(list)
 
-    # Process each KG and dataset
+    # Process each KG and benchmark
     with st.spinner(
-        "Loading comprehensive metrics across all knowledge graphs and datasets..."
+        "Loading comprehensive metrics across all knowledge graphs and benchmarks..."
     ):
         for kg_name, kg_data in available_data.items():
             for benchmark_name, benchmark_info in kg_data.items():
@@ -976,7 +994,7 @@ def show_comprehensive_view(available_data):
                     if model_name in selected_models and selected_models[model_name]
                 }
 
-                # Skip if no selected models for this dataset
+                # Skip if no selected models for this benchmark
                 if not filtered_model_info:
                     continue
 
@@ -993,7 +1011,7 @@ def show_comprehensive_view(available_data):
                     if model_name not in all_metrics:
                         all_metrics[model_name] = {}
 
-                    # Store with separate KG and dataset keys for hierarchical display
+                    # Store with separate KG and benchmark keys for hierarchical display
                     if kg_name not in all_metrics[model_name]:
                         all_metrics[model_name][kg_name] = {}
 
@@ -1310,7 +1328,7 @@ def show_comprehensive_view(available_data):
                 for model_name, row_idx in zip(
                     sorted(all_metrics.keys()), range(len(df))
                 ):
-                    cell_value = df.iloc[row_idx][kg, dataset]
+                    cell_value = df.iloc[row_idx][kg, benchmark]
                     if cell_value != "—":
                         try:
                             # Convert to number for ranking
@@ -1440,17 +1458,17 @@ def main():
         st.session_state.stored_model_regex = ""
 
     # Create a view selector
-    view_options = ["Individual Dataset View", "Comprehensive View", "Predictions View"]
-    # Individual Dataset View is the default (index=0)
+    view_options = ["Benchmark View", "Comprehensive View", "Outputs View"]
+    # Benchmark View is the default (index=0)
     selected_view = st.sidebar.radio("Select View", view_options, index=0)
 
     # Show the appropriate view based on selection
     if selected_view == "Comprehensive View":
         # The select_only variable is defined inside the function, so we don't need to pass it
         show_comprehensive_view(available_data)
-    elif selected_view == "Predictions View":
+    elif selected_view == "Outputs View":
         show_predictions_view(available_data)
-    else:  # Individual Dataset View
+    else:  # Benchmark View
         # Sidebar for benchmark and model selection
         st.sidebar.title("Benchmark Settings")
 
@@ -1469,11 +1487,11 @@ def main():
             help="When checked, only examples where all selected models have valid outputs and evaluations will be included in the comparison",
         )
 
-        # Add empty target handling option
+        # Add empty ground truth handling option
         empty_target_valid = st.sidebar.checkbox(
-            "Count empty targets as valid",
+            "Count empty ground truth as valid",
             value=False,
-            help="When checked, targets with size 0 (empty result sets) will be counted as valid",
+            help="When checked, ground truth with size 0 (empty result sets) will be counted as valid",
         )
 
         # Get available models for this benchmark
@@ -1557,9 +1575,9 @@ def main():
         st.dataframe(metrics_df, use_container_width=True)
 
         # Add explanation for the info column
-        empty_target_text = "" if empty_target_valid else " or those with empty results"
+        empty_ground_truth_text = "" if empty_target_valid else " or those with empty ground truth results"
         st.caption(
-            f"* Info format: Outputs (Missing Evaluations/Invalid Evaluations/Invalid Outputs) - 'Outputs' is the total number of model outputs, 'Missing Evaluations' counts outputs without an evaluation, 'Invalid Evaluations' counts evaluations with errors{empty_target_text}, 'Invalid Outputs' counts model outputs with errors. Note: Accuracy and F1 scores are calculated over all evaluations."
+            f"* Info format: Outputs (Missing Evaluations/Invalid Evaluations/Invalid Outputs) - 'Outputs' is the total number of model outputs, 'Missing Evaluations' counts outputs without an evaluation, 'Invalid Evaluations' counts evaluations with errors{empty_ground_truth_text}, 'Invalid Outputs' counts model outputs with errors. Note: Accuracy and F1 scores are calculated over all evaluations."
         )
 
     # Add auto reload option with slider in sidebar (at the bottom)
