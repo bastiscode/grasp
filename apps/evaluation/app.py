@@ -547,7 +547,9 @@ def show_predictions_view(available_data):
     st.sidebar.title("Benchmark Settings")
 
     kg_options = list(available_data.keys())
-    selected_kg = st.sidebar.selectbox("Select Knowledge Graph", kg_options)
+    # Set Wikidata as default if available
+    default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
+    selected_kg = st.sidebar.selectbox("Select Knowledge Graph", kg_options, index=default_index)
 
     benchmark_options = list(available_data[selected_kg].keys())
     selected_benchmark = st.sidebar.selectbox("Select Benchmark", benchmark_options)
@@ -1429,7 +1431,8 @@ def main():
 
     # Create a view selector
     view_options = ["Individual Dataset View", "Comprehensive View", "Predictions View"]
-    selected_view = st.sidebar.radio("Select View", view_options)
+    # Individual Dataset View is the default (index=0)
+    selected_view = st.sidebar.radio("Select View", view_options, index=0)
 
     # Show the appropriate view based on selection
     if selected_view == "Comprehensive View":
@@ -1442,7 +1445,9 @@ def main():
         st.sidebar.title("Benchmark Settings")
 
         kg_options = list(available_data.keys())
-        selected_kg = st.sidebar.selectbox("Select Knowledge Graph", kg_options)
+        # Set Wikidata as default if available
+        default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
+        selected_kg = st.sidebar.selectbox("Select Knowledge Graph", kg_options, index=default_index)
 
         benchmark_options = list(available_data[selected_kg].keys())
         selected_benchmark = st.sidebar.selectbox("Select Benchmark", benchmark_options)
