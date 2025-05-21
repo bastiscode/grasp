@@ -11,6 +11,7 @@ from uuid import uuid4
 import litellm
 from fastapi import WebSocketDisconnect
 from litellm import completion
+from pydantic import BaseModel, conlist
 from search_index.similarity import SimilarityIndex
 from termcolor import colored
 from universal_ml_utils.configuration import load_config
@@ -149,7 +150,7 @@ SPARQL endpoints. Use rdfs:label or similar properties to get labels instead.",
     ]
 
 
-def get_system_message(managers: list[KgManager], fns: list[dict]) -> dict:
+def get_system_message(managers: list[KgManager]) -> dict:
     prefixes = {}
     for manager in managers:
         prefixes.update(manager.prefixes)
@@ -159,7 +160,7 @@ def get_system_message(managers: list[KgManager], fns: list[dict]) -> dict:
     kgs = "\n".join(f"{manager.kg} at {manager.endpoint}" for manager in managers)
 
     rules = "\n".join(
-        f"{i+1}. {rule}" for i, rule in enumerate(general_rules() + sparql_rules())
+        f"{i + 1}. {rule}" for i, rule in enumerate(general_rules() + sparql_rules())
     )
 
     return {
@@ -208,8 +209,8 @@ def format_message(message: dict) -> str:
 
 def format_function_call(fn_name: str, fn_args: dict) -> str:
     fn_name = colored(fn_name, "green")
-    fn_args = colored(json.dumps(fn_args, indent=2), "yellow")
-    return f"{fn_name}({fn_args})"
+    fn_args_str = colored(json.dumps(fn_args, indent=2), "yellow")
+    return f"{fn_name}({fn_args_str})"
 
 
 def write_jsonl_file(items: list, file: str) -> None:
@@ -223,9 +224,9 @@ def run(args: argparse.Namespace) -> None:
     config = Config(**load_config(args.config))
 
     if config.force_examples:
-        assert (
-            len(config.knowledge_graphs) == 1
-        ), "Forcing examples only works with a single knowledge graph"
+        assert len(config.knowledge_graphs) == 1, (
+            "Forcing examples only works with a single knowledge graph"
+        )
 
     example_indices = {}
     for kg_config in config.knowledge_graphs:
@@ -248,7 +249,7 @@ def run(args: argparse.Namespace) -> None:
         config.num_examples,
         config.random_examples,
     )
-    system_message = get_system_message(managers, functions)
+    system_message = get_system_message(managers)
 
     outputs = []
     if args.file is not None:
@@ -299,7 +300,6 @@ def run(args: argparse.Namespace) -> None:
             managers,
             example_indices,
             functions,
-            system_message,
             logger=logger,
         )
 
@@ -319,7 +319,7 @@ def run(args: argparse.Namespace) -> None:
 def get_feedback_system_message(managers: list[KgManager]) -> dict:
     kgs = "\n".join(f"{manager.kg} at {manager.endpoint}" for manager in managers)
 
-    rules = "\n".join(f"{i+1}. {rule}" for i, rule in enumerate(sparql_rules()))
+    rules = "\n".join(f"{i + 1}. {rule}" for i, rule in enumerate(sparql_rules()))
     return {
         "role": "system",
         "content": f"""\
@@ -350,7 +350,6 @@ Provide your feedback with the give_feedback function.""",
 
 
 def get_feedback_prompt(
-    config: Config,
     managers: list[KgManager],
     question: str,
     answer: dict | None,
@@ -369,7 +368,7 @@ def get_feedback_prompt(
 1) The system was able to find an answer
 
 Answer:
-{answer['answer'].strip()}"""
+{answer["answer"].strip()}"""
         sparql = answer["sparql"]
         kg = answer["kg"]
 
@@ -380,7 +379,7 @@ Answer:
 2) The system failed to find an answer
 
 Explanation:
-{cancel['explanation'].strip()}"""
+{cancel["explanation"].strip()}"""
         best_attempt = cancel.get("best_attempt")
         if best_attempt:
             sparql = best_attempt.get("sparql")
@@ -427,6 +426,7 @@ SPARQL query:
         if selections:
             prompt += f"\n\n{selections}"
 
+        assert isinstance(result, str)
         prompt += f"\n\nExecution result:\n{result.strip()}"
 
     else:
@@ -440,9 +440,9 @@ def generate_feedback(
     managers: list[KgManager],
     question: str,
     answer: dict | None,
-    cancel: str | None,
+    cancel: dict | None,
     logger: Logger = get_logger("GRASP FEEDBACK GENERATION"),
-) -> str | None:
+) -> dict | None:
     # give feedback to answer or last message from generate_sparql
 
     api_messages: list[dict] = [
@@ -450,7 +450,6 @@ def generate_feedback(
         {
             "role": "user",
             "content": get_feedback_prompt(
-                config,
                 managers,
                 question,
                 answer,
@@ -475,7 +474,7 @@ def generate_feedback(
             # decoding parameters
             temperature=config.temperature,
             top_p=config.top_p,
-            reasoning_effort=config.reasoning_effort,
+            reasoning_effort=config.reasoning_effort,  # type: ignore
             # should be set to more than enough until the next function call
             max_completion_tokens=config.max_completion_tokens,
             base_url=config.model_endpoint,
@@ -487,13 +486,13 @@ def generate_feedback(
         logger.error("LLM API timed out during feedback generation")
         return None
 
-    choice = response.choices[0]
-    msg = choice.message.model_dump(exclude_none=True)
+    choice = response.choices[0]  # type: ignore
+    msg = choice.message.model_dump(exclude_none=True)  # type: ignore
     logger.debug(format_message(msg))
 
     try:
-        assert len(choice.message.tool_calls) == 1, "No tool call found"
-        tool_call = choice.message.tool_calls[0]
+        assert len(choice.message.tool_calls) == 1, "No tool call found"  # type: ignore
+        tool_call = choice.message.tool_calls[0]  # type: ignore
         assert tool_call.type == "function", "Tool call is not a function call"
         fn_name = tool_call.function.name
         assert fn_name == "give_feedback", "Feedback function not called"
@@ -515,7 +514,7 @@ def format_feedback(feedback: dict) -> str:
 
 
 def has_content(message: dict[str, Any]) -> bool:
-    return message.get("content") or message.get("reasoning_content")
+    return bool(message.get("content") or message.get("reasoning_content"))
 
 
 def generate_sparql(
@@ -524,7 +523,7 @@ def generate_sparql(
     managers: list[KgManager],
     example_indices: dict[str, SimilarityIndex],
     functions: list[dict],
-    system_message: dict,
+    past_messages: list[dict] | None = None,
     logger: Logger = get_logger("GRASP SPARQL GENERATION"),
 ) -> Iterator[dict]:
     start = time.perf_counter()
@@ -532,10 +531,12 @@ def generate_sparql(
     known = set()
     retries = 0
 
-    api_messages: list[dict] = [
-        system_message,
-        {"role": "user", "content": question},
-    ]
+    if past_messages:
+        api_messages = deepcopy(past_messages)
+    else:
+        api_messages = [get_system_message(managers)]
+
+    api_messages.append({"role": "user", "content": question})
 
     # log messages
     logger.debug(
@@ -634,7 +635,7 @@ def generate_sparql(
                 # decoding parameters
                 temperature=config.temperature,
                 top_p=config.top_p,
-                reasoning_effort=config.reasoning_effort,
+                reasoning_effort=config.reasoning_effort,  # type: ignore
                 # should be more than enough until the next function call
                 max_completion_tokens=config.max_completion_tokens,
                 base_url=config.model_endpoint,
@@ -656,7 +657,7 @@ def generate_sparql(
             api_messages.append(msg)
             break
 
-        if not response.choices:
+        if not response.choices:  # type: ignore
             msg = {
                 "role": "error",
                 "content": "No choices from LLM API",
@@ -666,10 +667,10 @@ def generate_sparql(
             api_messages.append(msg)
             break
 
-        choice = response.choices[0]
-        usage = response.usage.model_dump(exclude_none=True)
+        choice = response.choices[0]  # type: ignore
+        usage = response.usage.model_dump(exclude_none=True)  # type: ignore
 
-        msg = choice.message.model_dump(exclude_none=True)
+        msg = choice.message.model_dump(exclude_none=True)  # type: ignore
         api_messages.append(msg)
 
         # display usage info for assistant messages
@@ -702,11 +703,11 @@ def generate_sparql(
             break
 
         # no tool calls mean we should stop
-        should_stop = not choice.message.tool_calls
+        should_stop = not choice.message.tool_calls  # type: ignore
 
         # execute tool calls
-        for tool_call in choice.message.tool_calls or []:
-            fn_name = tool_call.function.name
+        for tool_call in choice.message.tool_calls or []:  # type: ignore
+            fn_name: str = tool_call.function.name  # type: ignore
 
             fn_args = json.loads(tool_call.function.arguments)
 
@@ -840,9 +841,9 @@ def generate_sparql(
 
         try:
             managers, others = partition_by(managers, lambda m: m.kg == kg)
-            assert (
-                len(managers) == 1
-            ), f"Unknown knowledge graph {kg} for final SPARQL query"
+            assert len(managers) == 1, (
+                f"Unknown knowledge graph {kg} for final SPARQL query"
+            )
             manager = managers[0]
             result, sparql = execute_sparql(
                 manager,
@@ -885,6 +886,12 @@ active_connections = 0
 MAX_CONNECTIONS = 10
 # maximum duration for a query in seconds
 MAX_QUERY_DURATION = 120.0
+
+
+class Request(BaseModel):
+    question: str
+    knowledge_graphs: conlist(str, min_length=1)  # type: ignore
+    past_messages: conlist(dict, min_length=1) | None = None  # type: ignore
 
 
 def serve(args: argparse.Namespace) -> None:
@@ -946,13 +953,13 @@ def serve(args: argparse.Namespace) -> None:
         try:
             while True:
                 data = await websocket.receive_json()
-                if "knowledge_graphs" not in data or "question" not in data:
-                    await websocket.send_json(
-                        {"error": "Missing knowledge graphs or question"}
-                    )
+                try:
+                    request = Request(**data)
+                except Exception:
+                    await websocket.send_json({"error": "Invalid request format"})
                     continue
 
-                sel = data["knowledge_graphs"]
+                sel = request.knowledge_graphs
                 if not sel or not all(kg in kgs for kg in sel):
                     await websocket.send_json(
                         {"error": "Unsupported knowledge graph selection"}
@@ -971,27 +978,34 @@ def serve(args: argparse.Namespace) -> None:
                     config.num_examples,
                     config.random_examples,
                 )
-                system_message = get_system_message(sel_managers, functions)
+
+                system_message = get_system_message(sel_managers)
+                past_messages = []
+                if request.past_messages is None:
+                    past_messages.append(system_message)
+                else:
+                    # overwrite system message because new set of
+                    # knowledge graphs might be present
+                    past_messages = request.past_messages
+                    past_messages[0] = system_message
 
                 await websocket.send_json(
                     {
                         "typ": "system",
                         "functions": functions,
-                        "system_message": system_message,
+                        "system_message": system_message["content"],
                     }
                 )
                 await websocket.receive_json()
 
-                question = data["question"]
-
                 # Setup generator
                 generator = generate_sparql(
-                    question,
+                    request.question,
                     config,
                     sel_managers,
                     sel_example_indices,
                     functions,
-                    system_message,
+                    past_messages,
                     logger=logger,
                 )
 
@@ -1006,7 +1020,6 @@ def serve(args: argparse.Namespace) -> None:
                         # Send timeout message to client
                         await websocket.send_json(
                             {
-                                "status": "timeout",
                                 "error": f"Operation timed out after {MAX_QUERY_DURATION} seconds",
                             }
                         )
@@ -1019,7 +1032,7 @@ def serve(args: argparse.Namespace) -> None:
                     # Check if client requested cancellation
                     if data.get("cancel", False):
                         # Send cancellation confirmation to client
-                        await websocket.send_json({"status": "cancelled"})
+                        await websocket.send_json({"cancelled": True})
                         break
 
         except WebSocketDisconnect:
