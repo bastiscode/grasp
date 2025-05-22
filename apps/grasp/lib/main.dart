@@ -587,11 +587,12 @@ $result
                 } else if (data.hasData && data.data != lastData) {
                   lastData = data.data;
                   final json = jsonDecode(data.data);
-                  if (json.containsKey("error")) {
+                  final hasTyp = json.containsKey("typ");
+                  if (!hasTyp && json.containsKey("error")) {
                     showMessageDelayed(json["error"], color: uniRed);
-                  } else if (json.containsKey("cancelled")) {
+                  } else if (!hasTyp && json.containsKey("cancelled")) {
                     doDelayed(() => clear());
-                  } else {
+                  } else if (hasTyp) {
                     received(cancel: cancelling);
                     histories.last.add(json);
                     if (json["typ"] == "output") {
