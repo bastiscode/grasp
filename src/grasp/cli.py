@@ -624,6 +624,8 @@ def generate_sparql(
             "result": tool_result,
         }
 
+    error: dict | None = None
+
     while len(api_messages) < MAX_MESSAGES:
         try:
             response = completion(
@@ -648,23 +650,19 @@ def generate_sparql(
             logger.error("LLM API timed out during SPARQL generation")
             break
         except Exception as e:
-            msg = {
-                "role": "error",
+            error = {
                 "content": f"Failed to generate response:\n{e}",
                 "reason": "api",
             }
-            logger.error(format_message(msg))
-            api_messages.append(msg)
+            logger.error(format_message({"role": "error", **error}))
             break
 
         if not response.choices:  # type: ignore
-            msg = {
-                "role": "error",
+            error = {
                 "content": "No choices from LLM API",
                 "reason": "no_choices",
             }
-            logger.error(format_message(msg))
-            api_messages.append(msg)
+            logger.error(format_message({"role": "error", **error}))
             break
 
         choice = response.choices[0]  # type: ignore
@@ -690,13 +688,11 @@ def generate_sparql(
             yield {"typ": "model", "content": content}
 
         if choice.finish_reason not in ["tool_calls", "stop", "length"]:
-            msg = {
-                "role": "error",
+            error = {
                 "content": f"Unexpected finish reason {choice.finish_reason}",
                 "reason": "invalid_finish_reason",
             }
-            logger.error(format_message(msg))
-            api_messages.append(msg)
+            logger.error(format_message({"role": "error", **error}))
             break
 
         elif choice.finish_reason == "length":
@@ -786,13 +782,11 @@ def generate_sparql(
                 logger,
             )
         except Exception as e:
-            msg = {
-                "role": "error",
+            error = {
                 "content": f"Failed to generate feedback:\n{e}",
                 "reason": "feedback",
             }
-            logger.error(format_message(msg))
-            api_messages.append(msg)
+            logger.error(format_message({"role": "error", **error}))
             break
 
         if feedback is None:
@@ -877,6 +871,7 @@ def generate_sparql(
         "endpoint": endpoint,
         "content": content,
         "elapsed": end - start,
+        "error": error,
         "messages": api_messages,
     }
 

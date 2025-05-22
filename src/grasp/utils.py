@@ -82,6 +82,7 @@ def is_tool_fail(message: dict) -> bool:
 
 
 def is_error(message: dict) -> bool:
+    # old error format
     return message["role"] == "error"
 
 
@@ -89,7 +90,9 @@ def is_invalid_model_output(model_output: dict | None) -> bool:
     if model_output is None:
         return True
 
-    return any(
+    has_error = model_output.get("error") is not None
+
+    return has_error or any(
         is_tool_fail(message) or is_error(message)
         for message in model_output.get("messages", [])
     )
