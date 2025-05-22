@@ -1,0 +1,695 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:grasp/config.dart';
+import 'package:grasp/utils.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+final GlobalKey<ScaffoldMessengerState> rootScaffoldMessenger =
+    GlobalKey<ScaffoldMessengerState>();
+
+void main() {
+  runApp(const App());
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'GRASP',
+      scaffoldMessengerKey: rootScaffoldMessenger,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: uniBlue),
+        scaffoldBackgroundColor: Colors.white,
+        canvasColor: Colors.white,
+      ),
+      home: const GRASP(),
+    );
+  }
+}
+
+class GRASP extends StatefulWidget {
+  const GRASP({super.key});
+
+  // This widget is the home page of your application. It is stateful, meaning
+  // that it has a State object (defined below) that contains fields that affect
+  // how it looks.
+
+  // This class is the configuration for the state. It holds the values (in this
+  // case the title) provided by the parent (in this case the App widget) and
+  // used by the build method of the State. Fields in a Widget subclass are
+  // always marked "final".
+
+  @override
+  State<GRASP> createState() => _GRASPState();
+}
+
+class _GRASPState extends State<GRASP> {
+  final retry = Duration(seconds: 5);
+  bool initial = true;
+  bool running = false;
+  bool cancelling = false;
+
+  ScrollController scrollController = ScrollController();
+  TextEditingController questionController = TextEditingController();
+  FocusNode questionFocus = FocusNode();
+  WebSocketChannel? channel;
+  Timer? timer;
+
+  dynamic lastData;
+  dynamic config;
+  List<List<dynamic>> histories = [];
+  List<dynamic>? pastMessages;
+  Map<String, bool> knowledgeGraphs = {};
+
+  List<String> get selectedKgs => knowledgeGraphs.entries
+      .where((entry) => entry.value)
+      .map((entry) => entry.key)
+      .toList();
+
+  int get numSelected =>
+      knowledgeGraphs.entries.where((entry) => entry.value).length;
+
+  Future<void> connect() async {
+    try {
+      // reset stuff
+      config = null;
+      knowledgeGraphs.clear();
+      await channel?.sink.close();
+      channel = null;
+
+      // get stuff
+      var res = await http.get(Uri.parse(configEndpoint));
+      final newConfig = jsonDecode(res.body);
+      res = await http.get(Uri.parse(kgEndpoint));
+      final newKgs = jsonDecode(res.body).cast<String>() as List<String>;
+      assert(newKgs.isNotEmpty);
+      final newChannel = WebSocketChannel.connect(Uri.parse(wsEndpoint));
+      await newChannel.ready;
+
+      // set stuff
+      final prefs = await SharedPreferences.getInstance();
+      if (initial && prefs.containsKey("lastOutput")) {
+        // check past history on initial load
+        final lastOutput = prefs.getString("lastOutput");
+        final lastData = jsonDecode(lastOutput!);
+        pastMessages = lastData["pastMessages"];
+        histories = lastData["histories"].cast<List<dynamic>>();
+      }
+
+      final prevSelected = prefs.getStringList("selectedKgs") ?? [];
+      config = newConfig;
+      for (final kg in newKgs) {
+        knowledgeGraphs[kg] = prevSelected.contains(kg);
+      }
+      if (numSelected == 0) {
+        // find wikidata first
+        if (knowledgeGraphs.containsKey("wikidata")) {
+          knowledgeGraphs["wikidata"] = true;
+        } else {
+          knowledgeGraphs[newKgs.first] = true;
+        }
+      }
+      channel = newChannel;
+    } catch (e) {
+      showMessage(
+        "Failed to connect to backend. Retrying in ${retry.inSeconds} seconds.",
+        color: uniRed,
+      );
+      debugPrint("error connecting: $e");
+    }
+  }
+
+  bool get connected =>
+      config != null &&
+      knowledgeGraphs.isNotEmpty &&
+      channel != null &&
+      channel!.closeCode == null;
+
+  void received({bool cancel = false}) {
+    channel?.sink.add(jsonEncode({"received": true, "cancel": cancel}));
+  }
+
+  void ask(String question) {
+    running = true;
+    // initialize new history with question
+    histories.add([
+      {"typ": "question", "question": question},
+    ]);
+    channel?.sink.add(
+      jsonEncode({
+        "question": question,
+        "knowledge_graphs": selectedKgs,
+        "past_messages": pastMessages,
+      }),
+    );
+    setState(() {});
+  }
+
+  void cancel() {
+    cancelling = true;
+    setState(() {});
+  }
+
+  Future<void> clear({bool full = false}) async {
+    cancelling = false;
+    running = false;
+    if (full) {
+      questionController.text = "";
+      histories.clear();
+      pastMessages = null;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove("lastOutput");
+    } else if (histories.isNotEmpty) {
+      histories.removeLast();
+    }
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    timer = Timer.periodic(retry, (_) async {
+      if (connected) return;
+
+      await connect();
+      initial = false;
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    channel?.sink.close();
+    questionController.dispose();
+    timer?.cancel();
+    questionFocus.dispose();
+    scrollController.dispose();
+    super.dispose();
+  }
+
+  Widget buildKgSelection() {
+    return Wrap(
+      alignment: WrapAlignment.start,
+      runSpacing: 8,
+      spacing: 8,
+      children: knowledgeGraphs.entries.map((entry) {
+        return ActionChip(
+          tooltip: entry.value
+              ? "Exclude ${entry.key}"
+              : "Include ${entry.key}",
+          label: Text(
+            entry.key,
+            style: TextStyle(color: entry.value ? Colors.white : null),
+          ),
+          backgroundColor: entry.value ? uniBlue : null,
+          visualDensity: VisualDensity.compact,
+          onPressed: () async {
+            if (entry.value && numSelected <= 1) return;
+            knowledgeGraphs[entry.key] = !entry.value;
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setStringList("selectedKgs", selectedKgs);
+            setState(() {});
+          },
+        );
+      }).toList(),
+    );
+  }
+
+  Widget buildTextField() {
+    final question = questionController.text.trim();
+
+    final inAction = cancelling || !connected || running;
+
+    return KeyboardListener(
+      focusNode: questionFocus,
+      onKeyEvent: (event) {
+        if (!inAction &&
+            question.isNotEmpty &&
+            event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.enter &&
+            HardwareKeyboard.instance.isControlPressed) {
+          ask(question);
+        }
+      },
+      child: TextField(
+        minLines: 1,
+        maxLines: 5,
+        keyboardType: TextInputType.multiline,
+        controller: questionController,
+        autofocus: true,
+        onChanged: (value) {
+          setState(() {});
+        },
+        decoration: InputDecoration(
+          border: OutlineInputBorder(),
+          hintText: pastMessages == null
+              ? "Ask a question..."
+              : "Follow up on the previous question...",
+          helperText: cancelling
+              ? "Cancelling..."
+              : "Ctrl + Enter to submit question",
+          suffixIcon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: !connected
+                    ? "Disconnected"
+                    : cancelling
+                    ? "Cancelling"
+                    : running
+                    ? "Cancel"
+                    : "Ask",
+                icon: cancelling || !connected
+                    ? SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(
+                          color: connected ? null : uniRed,
+                        ),
+                      )
+                    : running
+                    ? Icon(Icons.cancel_outlined, color: uniRed)
+                    : Icon(
+                        Icons.question_answer_outlined,
+                        color: question.isEmpty ? null : uniBlue,
+                      ),
+                onPressed: cancelling || !connected
+                    ? null
+                    : running
+                    ? () => cancel()
+                    : question.isNotEmpty
+                    ? () => ask(question)
+                    : null,
+              ),
+              IconButton(
+                tooltip: "Reset for new question",
+                onPressed: inAction || histories.isEmpty
+                    ? null
+                    : () async => await clear(full: true),
+                icon: Icon(
+                  Icons.refresh,
+                  color: inAction || histories.isEmpty ? null : uniRed,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget buildCardWithTitle(
+    String title,
+    Widget content, {
+    Color? color,
+    Widget? subtitle,
+  }) {
+    return buildCard(
+      Text(
+        title,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 18,
+        ),
+      ),
+      content,
+      subtitle: subtitle,
+    );
+  }
+
+  Widget buildCard(Widget title, Widget content, {Widget? subtitle}) {
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 1,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: uniGray),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      color: Colors.white,
+      child: Padding(
+        padding: EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [title, Divider(height: 16, thickness: 0.5), content],
+        ),
+      ),
+    );
+  }
+
+  Widget buildQuestionItem(String question) {
+    return buildCardWithTitle("Question", markdown(question), color: uniGreen);
+  }
+
+  Widget buildUnknownItem(dynamic item) {
+    return buildCard(
+      item["typ"],
+      markdown("```json\n${prettyJson(item)}\n```"),
+    );
+  }
+
+  String fnToMarkdown(dynamic fn) {
+    return '''
+**${fn["name"]}**
+
+${fn["description"]}
+
+*JSON Schema*
+```json
+${prettyJson(fn["parameters"])}
+```
+''';
+  }
+
+  Widget buildSystemItem(List<dynamic> functions, String systemMessage) {
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(4),
+      side: BorderSide(color: uniGray),
+    );
+
+    return buildCardWithTitle(
+      "System",
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ExpansionTile(
+            title: Text("Configuration"),
+            tilePadding: EdgeInsets.symmetric(horizontal: 8),
+            childrenPadding: EdgeInsets.all(8),
+            shape: shape,
+            collapsedShape: shape,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            children: [markdown("```json\n${prettyJson(config)}\n```")],
+          ),
+          SizedBox(height: 8),
+          ExpansionTile(
+            title: Text("Functions"),
+            tilePadding: EdgeInsets.symmetric(horizontal: 8),
+            childrenPadding: EdgeInsets.all(8),
+            shape: shape,
+            collapsedShape: shape,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            children: [
+              markdown(functions.map((fn) => fnToMarkdown(fn)).join("\n\n")),
+            ],
+          ),
+          SizedBox(height: 8),
+          ExpansionTile(
+            tilePadding: EdgeInsets.symmetric(horizontal: 8),
+            childrenPadding: EdgeInsets.all(8),
+            shape: shape,
+            collapsedShape: shape,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            title: Text("GRASP instruction"),
+            children: [markdown(systemMessage)],
+          ),
+        ],
+      ),
+      color: uniPink,
+    );
+  }
+
+  Widget buildReasoningItem(String content) {
+    return buildCardWithTitle("Reasoning", markdown(content), color: uniBlue);
+  }
+
+  Widget buildFunctionCallItem(String name, dynamic args, String result) {
+    return buildCard(
+      Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          Text(
+            "Function Call",
+            style: TextStyle(
+              color: uniYellow,
+              fontWeight: FontWeight.w700,
+              fontSize: 18,
+            ),
+          ),
+          Chip(
+            padding: EdgeInsets.all(4),
+            label: Text(
+              name,
+              style: TextStyle(color: uniYellow, fontWeight: FontWeight.w400),
+            ),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+      markdown('''
+Function `$name` called with arguments:
+```json
+${prettyJson(args)}
+```
+$result
+ '''),
+    );
+  }
+
+  Widget buildOutputItem(
+    String content,
+    String? sparql,
+    String? endpoint,
+    String? result,
+    double elapsed,
+  ) {
+    final parsed = endpoint != null ? Uri.parse(endpoint) : null;
+    return buildCardWithTitle(
+      "Output",
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          markdown(content),
+          markdown("```sparql\n${sparql ?? "No SPARQL query generated."}\n```"),
+          markdown(result ?? "No SPARQL result available."),
+          Divider(height: 16),
+          Wrap(
+            alignment: WrapAlignment.start,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              Text(
+                "Took ${elapsed.toStringAsFixed(2)} seconds",
+                style: TextStyle(fontSize: 12),
+              ),
+              if (sparql != null &&
+                  endpoint != null &&
+                  parsed != null &&
+                  parsed.host == "qlever.cs.uni-freiburg.de")
+                TextButton.icon(
+                  onPressed: () async {
+                    var query =
+                        "$parsed?query=${Uri.encodeComponent(sparql)}&exec=true";
+                    query = query.replaceFirst("/api", "");
+                    await launchUrl(Uri.parse(query));
+                  },
+                  icon: Icon(Icons.link),
+                  label: Text(
+                    "Execute on QLever",
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+      color: uniDarkBlue,
+    );
+  }
+
+  Widget buildHistoryItem(dynamic item) {
+    switch (item["typ"] as String) {
+      case "question":
+        return buildQuestionItem(item["question"]);
+      case "system":
+        return buildSystemItem(item["functions"], item["system_message"]);
+      case "model":
+        return buildReasoningItem(item["content"]);
+      case "tool":
+        return buildFunctionCallItem(
+          item["name"],
+          item["args"],
+          item["result"],
+        );
+      case "output":
+        return buildOutputItem(
+          item["content"],
+          item["sparql"],
+          item["endpoint"],
+          item["result"],
+          item["elapsed"],
+        );
+      default:
+        return buildUnknownItem(item);
+    }
+  }
+
+  void doDelayed(void Function() fn) {
+    Future.delayed(Duration.zero, () => fn());
+  }
+
+  void showMessageDelayed(String message, {Color? color}) {
+    doDelayed(() => showMessage(message, color: color));
+  }
+
+  void showMessage(String message, {Color? color}) {
+    rootScaffoldMessenger.currentState?.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: color,
+        duration: retry * 0.5,
+      ),
+    );
+  }
+
+  Widget constrainWidth(Widget widget) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: 800),
+      child: widget,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: initial
+          ? Center(child: CircularProgressIndicator())
+          : StreamBuilder(
+              stream: channel?.stream,
+              builder: (_, data) {
+                if (data.hasError) {
+                  showMessageDelayed(
+                    "Unknown error: ${data.error}",
+                    color: uniRed,
+                  );
+                } else if (data.hasData && data.data != lastData) {
+                  lastData = data.data;
+                  final json = jsonDecode(data.data);
+                  if (json.containsKey("error")) {
+                    showMessageDelayed(json["error"], color: uniRed);
+                  } else if (json.containsKey("cancelled")) {
+                    doDelayed(() => clear());
+                  } else {
+                    received(cancel: cancelling);
+                    histories.last.add(json);
+                    if (json["typ"] == "output") {
+                      questionController.text = "";
+                      cancelling = false;
+                      running = false;
+                      pastMessages = json["messages"];
+                      SharedPreferences.getInstance().then(
+                        (prefs) => prefs.setString(
+                          "lastOutput",
+                          jsonEncode({
+                            "pastMessages": pastMessages,
+                            "histories": histories,
+                          }),
+                        ),
+                      );
+                    }
+                  }
+                }
+                final canScroll =
+                    scrollController.hasClients &&
+                    scrollController.position.pixels <=
+                        scrollController.position.maxScrollExtent -
+                            10; // some small tolerance
+
+                final items = histories.expand((h) => h).toList();
+                return Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(8),
+                    child: constrainWidth(
+                      Column(
+                        mainAxisAlignment: histories.isEmpty
+                            ? MainAxisAlignment.center
+                            : MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.max,
+                        children: [
+                          if (histories.isNotEmpty) ...[
+                            Expanded(
+                              child: Stack(
+                                alignment: AlignmentDirectional.bottomCenter,
+                                children: [
+                                  NotificationListener<ScrollNotification>(
+                                    onNotification: (_) {
+                                      setState(() {});
+                                      return false;
+                                    },
+                                    child: ListView.separated(
+                                      padding: EdgeInsets.zero,
+                                      physics: BouncingScrollPhysics(),
+                                      controller: scrollController,
+                                      itemCount: items.length,
+                                      itemBuilder: (_, i) =>
+                                          buildHistoryItem(items[i]),
+                                      separatorBuilder: (_, i) =>
+                                          SizedBox(height: 8),
+                                    ),
+                                  ),
+                                  if (canScroll)
+                                    FloatingActionButton(
+                                      mini: true,
+                                      backgroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        side: BorderSide(color: uniGray),
+                                        borderRadius: BorderRadius.circular(
+                                          100,
+                                        ),
+                                      ),
+                                      tooltip: "Scroll to bottom",
+                                      onPressed: () async {
+                                        await scrollController.animateTo(
+                                          scrollController
+                                              .position
+                                              .maxScrollExtent,
+                                          duration: Duration(milliseconds: 200),
+                                          curve: Curves.easeInOut,
+                                        );
+                                        setState(() {});
+                                      },
+                                      child: Icon(
+                                        Icons.arrow_downward_outlined,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(height: 8),
+                          ],
+                          buildTextField(),
+                          SizedBox(height: 8),
+                          buildKgSelection(),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}

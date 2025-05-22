@@ -133,3 +133,5 @@ dmypy.json
 /third_party
 /experiments
 /data
+
+!/apps/grasp/lib
