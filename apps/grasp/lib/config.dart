@@ -2,21 +2,22 @@ import 'package:flutter/material.dart';
 
 // change this config to suit your setup
 const host = "localhost";
-const port = 8001;
+const port = 8000;
 const secure = false;
+const baseURL = "";
 
 // do not change that
 const wsPath = "/live";
 const configPath = "/config";
 const kgPath = "/knowledge_graphs";
 
-get backendEndpoint => "http${secure ? "s" : ""}://$host:$port";
+get backendEndpoint => "http${secure ? "s" : ""}://$host:$port$baseURL";
 
 get configEndpoint => backendEndpoint + configPath;
 
 get kgEndpoint => backendEndpoint + kgPath;
 
-get wsEndpoint => "ws${secure ? "s" : ""}://$host:$port$wsPath";
+get wsEndpoint => "ws${secure ? "s" : ""}://$host:$port$baseURL$wsPath";
 
 const uniBlue = Color.fromRGBO(52, 74, 154, 1);
 const uniDarkBlue = Color.fromRGBO(0, 1, 73, 1);
