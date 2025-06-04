@@ -21,4 +21,3 @@ knowledge_graphs:
   - name: env(KG)
     endpoint: env(KG_ENDPOINT:null)
     example_index: env(KG_EXAMPLES:null)
-  - name: imdb
