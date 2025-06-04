@@ -221,6 +221,7 @@ class _GRASPState extends State<GRASP> {
         avatar: Icon(Icons.assignment_late_outlined),
         label: Text(Task.values[task].name),
         tooltip: Task.values[task].tooltip,
+        visualDensity: VisualDensity.compact,
         onPressed: () async {
           task = (task + 1) % Task.values.length;
           final prefs = await SharedPreferences.getInstance();
@@ -251,7 +252,14 @@ class _GRASPState extends State<GRASP> {
         );
       }),
     );
-    return Wrap(spacing: 8, runSpacing: 8, children: children);
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
+      alignment: WrapAlignment.center,
+      runAlignment: WrapAlignment.center,
+      children: children,
+    );
   }
 
   Widget buildTextField() {
