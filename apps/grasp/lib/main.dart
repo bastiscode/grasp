@@ -16,7 +16,10 @@ final GlobalKey<ScaffoldMessengerState> rootScaffoldMessenger =
 
 class CustomScrollBehavior extends MaterialScrollBehavior {
   @override
-  Set<PointerDeviceKind> get dragDevices => PointerDeviceKind.values.toSet();
+  Set<PointerDeviceKind> get dragDevices => {
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.touch,
+  };
 }
 
 void main() {
@@ -65,6 +68,7 @@ class _GRASPState extends State<GRASP> {
   bool running = false;
   bool cancelling = false;
 
+  ScrollController selectionController = ScrollController();
   ScrollController scrollController = ScrollController();
   TextEditingController questionController = TextEditingController();
   FocusNode questionFocus = FocusNode();
@@ -207,38 +211,47 @@ class _GRASPState extends State<GRASP> {
     timer?.cancel();
     questionFocus.dispose();
     scrollController.dispose();
+    selectionController.dispose();
     super.dispose();
   }
 
-  Widget buildKgSelection() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        spacing: 8,
-        children: knowledgeGraphs.entries.map((entry) {
-          return ActionChip(
-            tooltip: entry.value
-                ? "Exclude ${entry.key}"
-                : "Include ${entry.key}",
-            label: Text(
-              entry.key,
-              style: TextStyle(color: entry.value ? Colors.white : null),
-            ),
-            backgroundColor: entry.value ? uniBlue : null,
-            visualDensity: VisualDensity.compact,
-            onPressed: () async {
-              if (entry.value && numSelected <= 1) return;
-              knowledgeGraphs[entry.key] = !entry.value;
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setStringList("selectedKgs", selectedKgs);
-              setState(() {});
-            },
-          );
-        }).toList(),
+  Widget buildSelection() {
+    var children = [
+      ActionChip(
+        avatar: Icon(Icons.assignment_late_outlined),
+        label: Text(Task.values[task].name),
+        tooltip: Task.values[task].tooltip,
+        onPressed: () async {
+          task = (task + 1) % Task.values.length;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt("task", task);
+          setState(() {});
+        },
       ),
+    ];
+    children.addAll(
+      knowledgeGraphs.entries.map((entry) {
+        return ActionChip(
+          tooltip: entry.value
+              ? "Exclude ${entry.key}"
+              : "Include ${entry.key}",
+          label: Text(
+            entry.key,
+            style: TextStyle(color: entry.value ? Colors.white : null),
+          ),
+          backgroundColor: entry.value ? uniBlue : null,
+          visualDensity: VisualDensity.compact,
+          onPressed: () async {
+            if (entry.value && numSelected <= 1) return;
+            knowledgeGraphs[entry.key] = !entry.value;
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setStringList("selectedKgs", selectedKgs);
+            setState(() {});
+          },
+        );
+      }),
     );
+    return Wrap(spacing: 8, runSpacing: 8, children: children);
   }
 
   Widget buildTextField() {
@@ -494,9 +507,14 @@ $result
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          markdown(content),
-          markdown("```sparql\n${sparql ?? "No SPARQL query generated."}\n```"),
-          markdown(result ?? "No SPARQL result available."),
+          markdown('''$content
+          
+```sparql
+${sparql ?? "No SPARQL query generated."}
+```
+
+${result ?? "No SPARQL result available."}
+'''),
           Divider(height: 16),
           Wrap(
             alignment: WrapAlignment.start,
@@ -725,29 +743,7 @@ $result
                           ],
                           buildTextField(),
                           SizedBox(height: 8),
-                          Row(
-                            spacing: 8,
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              ActionChip(
-                                avatar: Icon(Icons.assignment_late_outlined),
-                                label: Text(Task.values[task].name),
-                                tooltip: Task.values[task].tooltip,
-                                onPressed: () async {
-                                  task = (task + 1) % Task.values.length;
-                                  final prefs =
-                                      await SharedPreferences.getInstance();
-                                  await prefs.setInt("task", task);
-                                  setState(() {});
-                                },
-                              ),
-                              Flexible(
-                                fit: FlexFit.loose,
-                                child: buildKgSelection(),
-                              ),
-                            ],
-                          ),
+                          buildSelection(),
                         ],
                       ),
                     ),
