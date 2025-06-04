@@ -56,7 +56,8 @@ def parse_args() -> argparse.Namespace:
         choices=["sparql-qa", "general-qa"],
         default="sparql-qa",
         help="Task to perform, either 'sparql-qa' for SPARQL question answering or "
-        "'general-qa' for general knowledge graph assisted question answering",
+        "'general-qa' for general knowledge graph assisted question answering (ignored"
+        " if --serve is used)",
     )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument(
@@ -901,6 +902,7 @@ def generate(
         end = time.perf_counter()
         yield {
             "typ": "output",
+            "task": task,
             "answer": answer,
             "content": content,
             "elapsed": end - start,
@@ -969,6 +971,7 @@ def generate(
     end = time.perf_counter()
     yield {
         "typ": "output",
+        "task": task,
         "sparql": sparql,
         "result": result,
         "endpoint": endpoint,

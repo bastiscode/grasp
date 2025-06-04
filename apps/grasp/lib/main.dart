@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:grasp/config.dart';
 import 'package:grasp/utils.dart';
 import 'package:http/http.dart' as http;
@@ -65,6 +64,7 @@ class _GRASPState extends State<GRASP> {
   WebSocketChannel? channel;
   Timer? timer;
 
+  int task = 0;
   dynamic lastData;
   dynamic config;
   List<List<dynamic>> histories = [];
@@ -104,6 +104,10 @@ class _GRASPState extends State<GRASP> {
         final lastData = jsonDecode(lastOutput!);
         pastMessages = lastData["pastMessages"];
         histories = lastData["histories"].cast<List<dynamic>>();
+      }
+
+      if (initial && prefs.containsKey("task")) {
+        task = prefs.getInt("task")!;
       }
 
       final prevSelected = prefs.getStringList("selectedKgs") ?? [];
@@ -147,6 +151,7 @@ class _GRASPState extends State<GRASP> {
     ]);
     channel?.sink.add(
       jsonEncode({
+        "task": Task.values[task].identifier,
         "question": question,
         "knowledge_graphs": selectedKgs,
         "past_messages": pastMessages,
@@ -199,30 +204,33 @@ class _GRASPState extends State<GRASP> {
   }
 
   Widget buildKgSelection() {
-    return Wrap(
-      alignment: WrapAlignment.start,
-      runSpacing: 8,
-      spacing: 8,
-      children: knowledgeGraphs.entries.map((entry) {
-        return ActionChip(
-          tooltip: entry.value
-              ? "Exclude ${entry.key}"
-              : "Include ${entry.key}",
-          label: Text(
-            entry.key,
-            style: TextStyle(color: entry.value ? Colors.white : null),
-          ),
-          backgroundColor: entry.value ? uniBlue : null,
-          visualDensity: VisualDensity.compact,
-          onPressed: () async {
-            if (entry.value && numSelected <= 1) return;
-            knowledgeGraphs[entry.key] = !entry.value;
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setStringList("selectedKgs", selectedKgs);
-            setState(() {});
-          },
-        );
-      }).toList(),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        spacing: 8,
+        children: knowledgeGraphs.entries.map((entry) {
+          return ActionChip(
+            tooltip: entry.value
+                ? "Exclude ${entry.key}"
+                : "Include ${entry.key}",
+            label: Text(
+              entry.key,
+              style: TextStyle(color: entry.value ? Colors.white : null),
+            ),
+            backgroundColor: entry.value ? uniBlue : null,
+            visualDensity: VisualDensity.compact,
+            onPressed: () async {
+              if (entry.value && numSelected <= 1) return;
+              knowledgeGraphs[entry.key] = !entry.value;
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setStringList("selectedKgs", selectedKgs);
+              setState(() {});
+            },
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -465,7 +473,7 @@ $result
     );
   }
 
-  Widget buildOutputItem(
+  Widget buildSparqlQaOutputItem(
     String content,
     String? sparql,
     String? endpoint,
@@ -518,6 +526,25 @@ $result
     );
   }
 
+  Widget buildGeneralQaOutputItem(String content, double elapsed) {
+    return buildCardWithTitle(
+      "Output",
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          markdown(content),
+          Divider(height: 16),
+          Text(
+            "Took ${elapsed.toStringAsFixed(2)} seconds",
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+      color: uniDarkBlue,
+    );
+  }
+
   Widget buildHistoryItem(dynamic item) {
     switch (item["typ"] as String) {
       case "question":
@@ -533,13 +560,21 @@ $result
           item["result"],
         );
       case "output":
-        return buildOutputItem(
-          item["content"],
-          item["sparql"],
-          item["endpoint"],
-          item["result"],
-          item["elapsed"],
-        );
+        final task = item["task"];
+        if (task == Task.sparqlQa.identifier) {
+          return buildSparqlQaOutputItem(
+            item["content"],
+            item["sparql"],
+            item["endpoint"],
+            item["result"],
+            item["elapsed"],
+          );
+        } else if (task == Task.generalQa.identifier) {
+          return buildGeneralQaOutputItem(item["content"], item["elapsed"]);
+        } else {
+          // unknown task
+          return buildUnknownItem(item);
+        }
       default:
         return buildUnknownItem(item);
     }
@@ -557,6 +592,7 @@ $result
     rootScaffoldMessenger.currentState?.showSnackBar(
       SnackBar(
         content: Text(message),
+        margin: EdgeInsets.all(8),
         behavior: SnackBarBehavior.floating,
         backgroundColor: color,
         duration: retry * 0.5,
@@ -627,7 +663,7 @@ $result
                         mainAxisAlignment: histories.isEmpty
                             ? MainAxisAlignment.center
                             : MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         mainAxisSize: MainAxisSize.max,
                         children: [
                           if (histories.isNotEmpty) ...[
@@ -642,7 +678,6 @@ $result
                                     },
                                     child: ListView.separated(
                                       padding: EdgeInsets.zero,
-                                      physics: BouncingScrollPhysics(),
                                       controller: scrollController,
                                       itemCount: items.length,
                                       itemBuilder: (_, i) =>
@@ -683,7 +718,29 @@ $result
                           ],
                           buildTextField(),
                           SizedBox(height: 8),
-                          buildKgSelection(),
+                          Row(
+                            spacing: 8,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              ActionChip(
+                                avatar: Icon(Icons.assignment_late_outlined),
+                                label: Text(Task.values[task].name),
+                                tooltip: Task.values[task].tooltip,
+                                onPressed: () async {
+                                  task = (task + 1) % Task.values.length;
+                                  final prefs =
+                                      await SharedPreferences.getInstance();
+                                  await prefs.setInt("task", task);
+                                  setState(() {});
+                                },
+                              ),
+                              Flexible(
+                                fit: FlexFit.loose,
+                                child: buildKgSelection(),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),

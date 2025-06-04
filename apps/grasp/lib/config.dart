@@ -6,6 +6,39 @@ const secure = false;
 const baseURL = "";
 
 // do not change that
+enum Task { sparqlQa, generalQa }
+
+extension TaskExtension on Task {
+  String get identifier {
+    switch (this) {
+      case Task.sparqlQa:
+        return "sparql-qa";
+      case Task.generalQa:
+        return "general-qa";
+    }
+  }
+
+  String get name {
+    switch (this) {
+      case Task.sparqlQa:
+        return "SPARQL QA";
+      case Task.generalQa:
+        return "General QA";
+    }
+  }
+
+  String get tooltip {
+    switch (this) {
+      case Task.sparqlQa:
+        return "Answer questions by generating a corresponding SPARQL query "
+            "over one or more knowledge graphs";
+      case Task.generalQa:
+        return "Answer questions by retrieving relevant information from "
+            "knowledge graphs";
+    }
+  }
+}
+
 const wsPath = "/live";
 const configPath = "/config";
 const kgPath = "/knowledge_graphs";
