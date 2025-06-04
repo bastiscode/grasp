@@ -1,14 +1,11 @@
 import logging
 import math
 import os
-import re
 import sys
 import tempfile
 import time
-from collections import Counter
 from typing import Any, Iterable, Type
 
-import numpy as np
 from search_index import (
     PrefixIndex,
     SearchIndex,
@@ -25,7 +22,6 @@ from grasp.sparql.constants import (
     SelectResult,
     SelectRow,
     get_endpoint,
-    obj_types_before,
 )
 from grasp.sparql.manager.utils import (
     get_common_sparql_prefixes,
@@ -46,7 +42,6 @@ from grasp.sparql.sparql import (
     has_iri,
     load_iri_and_literal_parser,
     load_sparql_parser,
-    normalize,
     parse_string,
     prettify,
     query_type,
@@ -161,13 +156,13 @@ class KgManager:
         if result.num_rows == 0:
             return f"Got no rows and {result.num_columns:,} columns"
 
-        assert (
-            column_names is None or len(column_names) == result.num_columns
-        ), f"Expected {result.num_columns:,} column names"
+        assert column_names is None or len(column_names) == result.num_columns, (
+            f"Expected {result.num_columns:,} column names"
+        )
         assert show_top_rows or show_bottom_rows, "At least one row must be shown"
-        assert (
-            show_left_columns or show_right_columns
-        ), "At least one column must be shown"
+        assert show_left_columns or show_right_columns, (
+            "At least one column must be shown"
+        )
 
         left_end = min(show_left_columns, result.num_columns)
         right_start = result.num_columns - show_right_columns
@@ -657,7 +652,7 @@ class KgManager:
     ) -> dict[ObjType, list[Alternative]]:
         self.logger.debug(
             f'Getting top {k} selection alternatives with query "{search_query}" for '
-            f'object types {", ".join(obj_type.value for obj_type in search_items)}'
+            f"object types {', '.join(obj_type.value for obj_type in search_items)}"
         )
         alternatives = {}
 
@@ -700,8 +695,7 @@ class KgManager:
 
         end = time.perf_counter()
         self.logger.debug(
-            f"Getting other and literal alternatives "
-            f"took {1000 * (end - start):.2f}ms"
+            f"Getting other and literal alternatives took {1000 * (end - start):.2f}ms"
         )
 
         return alternatives

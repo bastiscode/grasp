@@ -49,6 +49,15 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Path to the configuration file",
     )
+    parser.add_argument(
+        "-t",
+        "--task",
+        type=str,
+        choices=["sparql-qa", "general-qa"],
+        default="sparql-qa",
+        help="Task to perform, either 'sparql-qa' for SPARQL question answering or "
+        "'general-qa' for general knowledge graph assisted question answering",
+    )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument(
         "--serve",
@@ -60,7 +69,7 @@ def parse_args() -> argparse.Namespace:
         "-q",
         "--question",
         type=str,
-        help="Question to translate to SPARQL",
+        help="Question to answer",
     )
     input_group.add_argument(
         "-f",
@@ -125,32 +134,47 @@ def general_rules() -> list[str]:
     return [
         "Explain your thought process before and after each step \
 and function call.",
-        "Do not assume or make up any entities or properties \
+        "Do not assume or make up any entity or property identifiers \
 without verifying them with the knowledge graphs and functions.",
     ]
 
 
-def sparql_rules() -> list[str]:
-    return [
-        "The SPARQL query should always return the actual \
+def task_rules(task: str) -> list[str]:
+    if task == "sparql-qa":
+        return [
+            "The SPARQL query should always return the actual \
 identifiers / IRIs of the items in its result. It additionally may return \
 labels or other human-readable information, but they are optional and should be \
 put within optional clauses unless explicitly requested by the user.",
-        "Do not stop early if there are still obvious improvements to be made \
+            "Do not stop early if there are still obvious improvements to be made \
 to the SPARQL query. For example, keep refining your SPARQL query if its result \
 contains irrelevant items or is missing items you expected.",
-        "Do not perform additional computation (e.g. filtering, sorting, calculations) \
+            "Do not perform additional computation (e.g. filtering, sorting, calculations) \
 on the result of the SPARQL query to determine the answer. All computation should \
 be done solely within SPARQL.",
-        'For questions with a "True" or "False" answer the SPARQL query \
+            'For questions with a "True" or "False" answer the SPARQL query \
 should be an ASK query.',
-        "Do not use 'SERVICE wikibase:label { bd:serviceParam wikibase:language ...' \
+            "Do not use 'SERVICE wikibase:label { bd:serviceParam wikibase:language ...' \
 in SPARQL queries. It is not SPARQL standard and unsupported by the used QLever \
 SPARQL endpoints. Use rdfs:label or similar properties to get labels instead.",
-    ]
+        ]
+
+    elif task == "general-qa":
+        return [
+            "Your answers should be concise and directly address the user question.",
+            "Your answers should be based on the information available in the \
+knowledge graphs. If you do not need them to answer the question, e.g. if \
+you know the answer by heart, still try to verify it with the knowledge graphs.",
+            "Do not use 'SERVICE wikibase:label { bd:serviceParam wikibase:language ...' \
+in SPARQL queries. It is not SPARQL standard and unsupported by the used QLever \
+SPARQL endpoints. Use rdfs:label or similar properties to get labels instead.",
+        ]
+
+    else:
+        raise ValueError(f"Unknown task {task}")
 
 
-def get_system_message(managers: list[KgManager]) -> dict:
+def get_system_message(task: str, managers: list[KgManager]) -> dict:
     prefixes = {}
     for manager in managers:
         prefixes.update(manager.prefixes)
@@ -160,12 +184,11 @@ def get_system_message(managers: list[KgManager]) -> dict:
     kgs = "\n".join(f"{manager.kg} at {manager.endpoint}" for manager in managers)
 
     rules = "\n".join(
-        f"{i + 1}. {rule}" for i, rule in enumerate(general_rules() + sparql_rules())
+        f"{i + 1}. {rule}" for i, rule in enumerate(general_rules() + task_rules(task))
     )
 
-    return {
-        "role": "system",
-        "content": f"""\
+    if task == "sparql-qa":
+        content = f"""\
 You are a question answering assistant. Your job is to generate a SPARQL query \
 to answer a given user question.
 
@@ -189,7 +212,40 @@ executions to refine the query.
 generation process.
 
 Additional rules:
-{rules}""",
+{rules}"""
+
+    elif task == "general-qa":
+        content = f"""\
+You are a question answering assistant. Your job is to answer a given user \
+question using the knowledge graphs and functions available to you.
+
+You have access to the following knowledge graphs:
+{kgs}
+
+You can use the following SPARQL prefixes implicitly in all functions:
+{prefixes}
+
+You should follow a step-by-step approach to answer the question:
+1. Determine the pieces of information needed to answer the user question and \
+think about how they might be represented with entities and properties in the \
+knowledge graphs.
+2. Iteratively use the functions to search in or execute SPARQL queries on \
+the knowledge graphs to find the needed information. You may need to refine \
+your understanding of the question and the needed information as you go. \
+Where applicable, constrain the searches with already identified entities and \
+properties.
+3. Use the answer or cancel function to finalize your answer and stop the \
+generation process.
+
+Additional rules:
+{rules}"""
+
+    else:
+        raise ValueError(f"Unknown task {task}")
+
+    return {
+        "role": "system",
+        "content": content,
     }
 
 
@@ -243,13 +299,14 @@ def run(args: argparse.Namespace) -> None:
     ]
 
     functions = get_functions(
+        args.task,
         config.fn_set,
         managers,
         example_indices,
         config.num_examples,
         config.random_examples,
     )
-    system_message = get_system_message(managers)
+    system_message = get_system_message(args.task, managers)
 
     outputs = []
     if args.file is not None:
@@ -294,7 +351,8 @@ def run(args: argparse.Namespace) -> None:
             if not args.retry_failed or not is_invalid_model_output(output):
                 continue
 
-        *_, output = generate_sparql(
+        *_, output = generate(
+            args.task,
             question,
             config,
             managers,
@@ -316,10 +374,12 @@ def run(args: argparse.Namespace) -> None:
         write_jsonl_file(outputs, args.output_file)
 
 
-def get_feedback_system_message(managers: list[KgManager]) -> dict:
+def get_sparql_qa_feedback_system_message(managers: list[KgManager]) -> dict:
     kgs = "\n".join(f"{manager.kg} at {manager.endpoint}" for manager in managers)
 
-    rules = "\n".join(f"{i + 1}. {rule}" for i, rule in enumerate(sparql_rules()))
+    rules = "\n".join(
+        f"{i + 1}. {rule}" for i, rule in enumerate(task_rules("sparql-qa"))
+    )
     return {
         "role": "system",
         "content": f"""\
@@ -349,7 +409,7 @@ Provide your feedback with the give_feedback function.""",
     }
 
 
-def get_feedback_prompt(
+def get_sparql_qa_feedback_prompt(
     managers: list[KgManager],
     question: str,
     answer: dict | None,
@@ -435,7 +495,7 @@ SPARQL query:
     return prompt
 
 
-def generate_feedback(
+def generate_sparql_qa_feedback(
     config: Config,
     managers: list[KgManager],
     question: str,
@@ -446,10 +506,10 @@ def generate_feedback(
     # give feedback to answer or last message from generate_sparql
 
     api_messages: list[dict] = [
-        get_feedback_system_message(managers),
+        get_sparql_qa_feedback_system_message(managers),
         {
             "role": "user",
-            "content": get_feedback_prompt(
+            "content": get_sparql_qa_feedback_prompt(
                 managers,
                 question,
                 answer,
@@ -517,7 +577,8 @@ def has_content(message: dict[str, Any]) -> bool:
     return bool(message.get("content") or message.get("reasoning_content"))
 
 
-def generate_sparql(
+def generate(
+    task: str,
     question: str,
     config: Config,
     managers: list[KgManager],
@@ -526,6 +587,14 @@ def generate_sparql(
     past_messages: list[dict] | None = None,
     logger: Logger = get_logger("GRASP SPARQL GENERATION"),
 ) -> Iterator[dict]:
+    if task == "general-qa":
+        # check that certain config options are not set
+        assert not config.feedback, "Feedback is not supported for general QA"
+        assert not config.force_examples, (
+            "Forced examples are not supported for general QA"
+        )
+        assert not example_indices, "Examples are not supported for general QA"
+
     start = time.perf_counter()
 
     known = set()
@@ -534,7 +603,7 @@ def generate_sparql(
     if past_messages:
         api_messages = deepcopy(past_messages)
     else:
-        api_messages = [get_system_message(managers)]
+        api_messages = [get_system_message(task, managers)]
 
     api_messages.append({"role": "user", "content": question})
 
@@ -766,14 +835,14 @@ def generate_sparql(
             break
 
         # get latest answer and message
-        answer, cancel = get_answer_or_cancel(api_messages)
+        answer, cancel = get_answer_or_cancel(task, api_messages)
         if answer is None and cancel is None:
             # need at least one of them for feedback
             break
 
         # provide feedback
         try:
-            feedback = generate_feedback(
+            feedback = generate_sparql_qa_feedback(
                 config,
                 managers,
                 question,
@@ -807,14 +876,48 @@ def generate_sparql(
         # if not done, continue
         retries += 1
 
-    answer, cancel = get_answer_or_cancel(api_messages)
+    answer, cancel = get_answer_or_cancel(task, api_messages)
 
-    # setup some variables for the output
+    if task == "general-qa":
+        ans: str | None = None
+        content = "Failed to answer the question"
+        if answer is not None:
+            content = ans = answer["answer"]
+        elif cancel is not None:
+            content = cancel["explanation"]
+            if cancel.get("best_attempt"):
+                ans = cancel["best_attempt"]
+                content += f"\n\nBest answer attempt:\n{ans}"
+
+        logger.info(
+            format_message(
+                {
+                    "role": "output",
+                    "content": f"Question:\n{question}\n\nAnswer:\n{content}",
+                }
+            )
+        )
+
+        end = time.perf_counter()
+        yield {
+            "typ": "output",
+            "answer": answer,
+            "content": content,
+            "elapsed": end - start,
+            "error": error,
+            "messages": api_messages,
+        }
+
+        return
+
+    assert task == "sparql-qa", "Unknown task, expected 'sparql-qa'"
+
+    # setup some variables for the SPARQL qa output
     sparql = None
     kg = None
     endpoint = None
     result = None
-    content = "Failed to generate SPARQL query"
+    content = "Failed to answer the question"
 
     if answer is not None:
         sparql = answer["sparql"]
@@ -884,6 +987,7 @@ MAX_QUERY_DURATION = 120.0
 
 
 class Request(BaseModel):
+    task: str
     question: str
     knowledge_graphs: conlist(str, min_length=1)  # type: ignore
     past_messages: conlist(dict, min_length=1) | None = None  # type: ignore
@@ -967,6 +1071,7 @@ def serve(args: argparse.Namespace) -> None:
                 }
 
                 functions = get_functions(
+                    request.task,
                     config.fn_set,
                     sel_managers,
                     sel_example_indices,
@@ -974,7 +1079,7 @@ def serve(args: argparse.Namespace) -> None:
                     config.random_examples,
                 )
 
-                system_message = get_system_message(sel_managers)
+                system_message = get_system_message(request.task, sel_managers)
                 past_messages = []
                 if request.past_messages is None:
                     past_messages.append(system_message)
@@ -994,7 +1099,8 @@ def serve(args: argparse.Namespace) -> None:
                 await websocket.receive_json()
 
                 # Setup generator
-                generator = generate_sparql(
+                generator = generate(
+                    request.task,
                     request.question,
                     config,
                     sel_managers,

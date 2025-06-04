@@ -74,6 +74,7 @@ and provide suggestions for improving the output if applicable.""",
 
 
 def get_functions(
+    task: str,
     fn_set: str,
     managers: list[KgManager],
     example_indices: dict[str, SimilarityIndex],
@@ -89,74 +90,132 @@ def get_functions(
     ], f"Unknown function set {fn_set}"
     kgs = [manager.kg for manager in managers]
 
-    fns = [
-        {
-            "name": "answer",
-            "description": """\
+    fns = []
+    if task == "sparql-qa":
+        fns.extend(
+            [
+                {
+                    "name": "answer",
+                    "description": """\
 Provide your final SPARQL query and answer to the user question based on the \
 query results. This function will stop the generation process.""",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kg": {
-                        "type": "string",
-                        "enum": kgs,
-                        "description": "The knowledge graph on which the final SPARQL query \
-needs to be executed",
-                    },
-                    "sparql": {
-                        "type": "string",
-                        "description": "The final SPARQL query",
-                    },
-                    "answer": {
-                        "type": "string",
-                        "description": "The answer to the question based \
-on the SPARQL query results",
-                    },
-                },
-                "required": ["kg", "sparql", "answer"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-        {
-            "name": "cancel",
-            "description": """\
-If you are unable to find a SPARQL query that answers the question well, \
-you can call this function instead of the answer function. This function will \
-stop the generation process.""",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "explanation": {
-                        "type": "string",
-                        "description": "A detailed explanation of why you \
-could not find a satisfactory SPARQL query",
-                    },
-                    "best_attempt": {
+                    "parameters": {
                         "type": "object",
-                        "description": "Your best attempt at a SPARQL query so far, \
-can be omitted if there is none",
                         "properties": {
-                            "sparql": {
-                                "type": "string",
-                                "description": "The best SPARQL query so far",
-                            },
                             "kg": {
                                 "type": "string",
                                 "enum": kgs,
-                                "description": "The knowledge graph on which \
-the SPARQL query needs to be executed",
+                                "description": "The knowledge graph on which the final SPARQL query \
+needs to be executed",
+                            },
+                            "sparql": {
+                                "type": "string",
+                                "description": "The final SPARQL query",
+                            },
+                            "answer": {
+                                "type": "string",
+                                "description": "The answer to the question based \
+on the SPARQL query results",
                             },
                         },
-                        "required": ["sparql", "kg"],
+                        "required": ["kg", "sparql", "answer"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                },
+                {
+                    "name": "cancel",
+                    "description": """\
+If you are unable to find a SPARQL query that answers the question well, \
+you can call this function instead of the answer function. This function will \
+stop the generation process.""",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "explanation": {
+                                "type": "string",
+                                "description": "A detailed explanation of why you \
+could not find a satisfactory SPARQL query",
+                            },
+                            "best_attempt": {
+                                "type": "object",
+                                "description": "Your best attempt at a SPARQL query so far, \
+can be omitted if there is none",
+                                "properties": {
+                                    "sparql": {
+                                        "type": "string",
+                                        "description": "The best SPARQL query so far",
+                                    },
+                                    "kg": {
+                                        "type": "string",
+                                        "enum": kgs,
+                                        "description": "The knowledge graph on which \
+the SPARQL query needs to be executed",
+                                    },
+                                },
+                                "required": ["sparql", "kg"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "required": ["explanation"],
                         "additionalProperties": False,
                     },
                 },
-                "required": ["explanation"],
-                "additionalProperties": False,
-            },
-        },
+            ]
+        )
+
+    elif task == "general-qa":
+        fns.extend(
+            [
+                {
+                    "name": "answer",
+                    "description": """\
+Provide your final answer to the user question. This function will stop \
+the generation process.""",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "answer": {
+                                "type": "string",
+                                "description": "The answer to the question",
+                            },
+                        },
+                        "required": ["answer"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                },
+                {
+                    "name": "cancel",
+                    "description": """\
+If you are unable to find an answer to the question, \
+you can call this function instead of the answer function. \
+This function will stop the generation process.""",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "explanation": {
+                                "type": "string",
+                                "description": "A detailed explanation of why you \
+could not find a satisfactory answer",
+                            },
+                            "best_attempt": {
+                                "type": "string",
+                                "description": "Your best attempt at an answer so far, \
+can be omitted if there is none",
+                            },
+                        },
+                        "required": ["explanation"],
+                        "additionalProperties": False,
+                    },
+                },
+            ]
+        )
+
+    else:
+        raise ValueError(f"Unknown task {task}")
+
+    fns.append(
         {
             "name": "execute",
             "description": """\
@@ -183,8 +242,8 @@ execute(kg="wikidata", sparql="SELECT ?job WHERE { wd:Q937 wdt:P106 ?job }")""",
                 "additionalProperties": False,
             },
             "strict": True,
-        },
-    ]
+        }
+    )
 
     if fn_set == "base":
         return fns
@@ -595,7 +654,7 @@ def call_function(
             kwargs["result_max_columns"],
             known,
             know_before_use=kwargs["know_before_use"],
-        )
+        )  # type: ignore
 
     elif fn_name == "list":
         return list_triples(
@@ -810,6 +869,7 @@ def check_known(manager: KgManager, sparql: str, known: set[str]):
 
     for iri in find_all(parse, {"IRIREF", "PNAME_NS", "PNAME_LN"}, skip={"Prologue"}):
         binding = parse_binding(iri["value"], manager)
+        assert binding is not None, f"Failed to parse binding from {iri['value']}"
         assert binding.typ == "uri", f"Expected IRI, got {binding.typ}"
 
         identifier = binding.identifier()
@@ -1091,12 +1151,14 @@ SELECT ?s ?p ?o WHERE {{
     )
 
     def normalize_prop(prob: Binding) -> str:
-        norm = manager.property_mapping.normalize(prob.identifier())
-        return norm[0] if norm is not None else prob
+        identifier = prob.identifier()
+        norm = manager.property_mapping.normalize(identifier)
+        return norm[0] if norm is not None else identifier
 
     def normalize_ent(ent: Binding) -> str:
-        norm = manager.entity_mapping.normalize(ent.identifier())
-        return norm[0] if norm is not None else ent
+        identifier = ent.identifier()
+        norm = manager.entity_mapping.normalize(identifier)
+        return norm[0] if norm is not None else identifier
 
     # now make sure that we show a diverse set of rows
     # triples with unseen properties or subjects / objects
@@ -1168,7 +1230,7 @@ object should be constrained at once."
 
     unconstrained = all(c is None for c in constraints.values())
 
-    search_items = manager.get_default_search_items(position)
+    search_items = manager.get_default_search_items(Position(position))
     info = ""
     if not unconstrained:
         pos_values = {}
@@ -1196,7 +1258,7 @@ or in full form, like "<http://www.wikidata.org/entity/Q937>".'
 
         sparql = f"""\
 SELECT DISTINCT {select_var} WHERE {{
-    {pos_values['subject']} {pos_values['property']} {pos_values['object']} 
+    {pos_values["subject"]} {pos_values["property"]} {pos_values["object"]} 
 }}
 LIMIT {MAX_RESULTS + 1}"""
 

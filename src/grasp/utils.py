@@ -19,25 +19,29 @@ class Sample(BaseModel):
     info: dict[str, Any] = {}
 
 
-class AnswerModel(BaseModel):
+class SparqlQaAnswerModel(BaseModel):
     kg: str
     sparql: str
     answer: str
 
 
+class GeneralQaAnswerModel(BaseModel):
+    answer: str
+
+
 class AnswerCallModel(BaseModel):
     name: str
-    arguments: AnswerModel
+    arguments: SparqlQaAnswerModel | GeneralQaAnswerModel
 
 
-class BestAttemptModel(BaseModel):
+class SparqlQaBestAttemptModel(BaseModel):
     sparql: str
     kg: str
 
 
 class CancelModel(BaseModel):
     explanation: str
-    best_attempt: BestAttemptModel | None = None
+    best_attempt: SparqlQaBestAttemptModel | str | None = None
 
 
 class CancelCallModel(BaseModel):
@@ -98,7 +102,7 @@ def is_invalid_model_output(model_output: dict | None) -> bool:
     )
 
 
-def get_tool_call_from_message(message: str | None) -> dict | None:
+def get_tool_call_from_message(message: str) -> str | None:
     # sometimes the model fails to call the answer function, but
     # provides the output in one of the following formats:
     # 1) within <tool_call>...</tool_call> tags:
@@ -123,15 +127,11 @@ def get_tool_call_from_message(message: str | None) -> dict | None:
 
     if tool_call_match is None:
         return None
-
-    try:
-        tool_content = tool_call_match.group(1).strip()
-        return json.loads(tool_content)
-    finally:
-        return None
+    else:
+        return tool_call_match.group(1).strip()
 
 
-def get_answer_from_message(message: str | None) -> dict | None:
+def get_answer_from_message(task: str, message: str | None) -> dict | None:
     if message is None:
         return None
 
@@ -140,12 +140,17 @@ def get_answer_from_message(message: str | None) -> dict | None:
         return None
 
     try:
-        return AnswerCallModel(**tool_call).arguments.model_dump()
+        return AnswerCallModel.model_validate_json(tool_call).arguments.model_dump()
     except ValidationError:
         pass
 
     try:
-        return AnswerModel(**tool_call).model_dump()
+        if task == "sparql-qa":
+            return SparqlQaAnswerModel.model_validate_json(tool_call).model_dump()
+        elif task == "general-qa":
+            return GeneralQaAnswerModel.model_validate_json(tool_call).model_dump()
+        else:
+            raise ValueError(f"Unknown task: {task}")
     finally:
         return None
 
@@ -159,12 +164,12 @@ def get_cancel_from_message(message: str | None) -> dict | None:
         return None
 
     try:
-        return CancelCallModel(**tool_call).arguments.model_dump()
+        return CancelCallModel.model_validate_json(tool_call).arguments.model_dump()
     except ValidationError:
         pass
 
     try:
-        return CancelModel(**tool_call).model_dump()
+        return CancelModel.model_validate_json(tool_call).model_dump()
     finally:
         return None
 
@@ -186,7 +191,10 @@ def get_sparql_from_message(message: str | None) -> dict | None:
     return None
 
 
-def get_answer_or_cancel(messages: list[dict]) -> tuple[dict | None, dict | None]:
+def get_answer_or_cancel(
+    task: str,
+    messages: list[dict],
+) -> tuple[dict | None, dict | None]:
     last_message: str | None = None
     last_answer: dict | None = None
     last_cancel: str | None = None
@@ -236,7 +244,7 @@ def get_answer_or_cancel(messages: list[dict]) -> tuple[dict | None, dict | None
 
     # try to parse answer from last message if neither are set
     if last_answer is None and last_cancel is None:
-        last_answer = get_answer_from_message(last_message)
+        last_answer = get_answer_from_message(task, last_message)
 
     # try to parse cancel from last message if both are still None
     if last_answer is None and last_cancel is None:
@@ -246,11 +254,27 @@ def get_answer_or_cancel(messages: list[dict]) -> tuple[dict | None, dict | None
     if last_answer is None and last_cancel is None:
         last_answer = get_sparql_from_message(last_message)
 
-    # try last execute function call
-    if last_answer is None and last_cancel is None and last_execute is not None:
+    # try last execute function call for SPARQL QA
+    if (
+        task == "sparql-qa"
+        and last_answer is None
+        and last_cancel is None
+        and last_execute is not None
+    ):
         last_answer = {
             **last_execute,
-            "answer": last_message or "See SPARQL query results",
+            "answer": last_message or "No answer provided",
+        }
+
+    # and last message for general QA
+    elif (
+        task == "general-qa"
+        and last_answer is None
+        and last_cancel is None
+        and last_message is not None
+    ):
+        last_answer = {
+            "answer": last_message,
         }
 
     return last_answer, last_cancel
