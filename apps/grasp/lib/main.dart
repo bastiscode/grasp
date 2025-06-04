@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:grasp/config.dart';
@@ -12,6 +13,11 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 final GlobalKey<ScaffoldMessengerState> rootScaffoldMessenger =
     GlobalKey<ScaffoldMessengerState>();
+
+class CustomScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => PointerDeviceKind.values.toSet();
+}
 
 void main() {
   runApp(const App());
@@ -25,6 +31,7 @@ class App extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'GRASP',
+      scrollBehavior: CustomScrollBehavior(),
       scaffoldMessengerKey: rootScaffoldMessenger,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: uniBlue),
