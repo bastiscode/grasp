@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import csv
 
 from search_index import IndexData, Mapping
 
@@ -23,23 +24,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def fix(s: str) -> str:
-    return s.replace(r"\n", " ").replace(r"\t", " ").strip()
-
-
-def format_label(s: str) -> str:
-    if s.startswith('"') and s.rfind('"@') != -1:
-        # literal with language tag
-        return fix(s[1 : s.rfind('"@')])
-    elif s.startswith('"') and s.rfind('"^^') != -1:
-        # literal with datatype
-        return fix(s[1 : s.rfind('"^^')])
-    elif s.startswith('"') and s.endswith('"'):
-        return fix(s[1:-1])
-    else:
-        return fix(s)
-
-
 def split_iri(iri: str) -> tuple[str, str]:
     if not is_fq_iri(iri):
         return "", iri
@@ -48,7 +32,7 @@ def split_iri(iri: str) -> tuple[str, str]:
     last_hashtag = iri.rfind("#")
     last_slash = iri.rfind("/")
     if last_hashtag == -1 and last_slash == -1:
-        return iri[1:-1]
+        return "", iri[1:-1]
     elif last_hashtag > last_slash:
         return iri[1:last_hashtag], iri[last_hashtag + 1 : -1]
     else:
@@ -116,38 +100,41 @@ def get_osm_planet_score_from_wikidata_id(wd_id: str) -> str:
 
 if __name__ == "__main__":
     args = parse_args()
-    header = next(sys.stdin)
-    print("\t".join(field[1:] for field in header.rstrip("\r\n").split("\t")))
 
-    for line in sys.stdin:
+    reader = csv.reader(sys.stdin)
+    writer = csv.writer(sys.stdout, delimiter="\t")
+
+    # skip header
+    next(reader)
+
+    # write Header
+    writer.writerow(["label", "score", "synonyms", "id", "infos"])
+
+    for row in reader:
         try:
-            (label, score, syns, obj_id, infos) = line.rstrip("\r\n").split("\t")
+            label, score, syns, id, infos = row
         except Exception as e:
-            print(f"Error parsing line '{line}': {e}", file=sys.stderr)
+            print(f"Malformed row: {row}", file=sys.stderr)
+            print(f"Error: {e}", file=sys.stderr)
             continue
 
-        assert syns.startswith('"') and syns.endswith('"')
-        syns = fix(syns[1:-1])
-        assert infos.startswith('"') and infos.endswith('"')
-        infos = fix(infos[1:-1])
+        # add brackets to id
+        id = f"<{id}>"
 
-        if label:
-            label = format_label(label)
-        else:
+        if not label:
             # label is empty, try to get it from the object id
             if args.dblp_properties:
-                label = get_label_from_camel_case_id("dblp", obj_id)
+                label = get_label_from_camel_case_id("dblp", id)
             elif args.uniprot:
-                label = get_label_from_camel_case_id("uniprot", obj_id)
+                label = get_label_from_camel_case_id("uniprot", id)
             elif args.osm_planet_properties:
-                label = get_label_from_camel_case_id("osm-planet", obj_id)
+                label = get_label_from_camel_case_id("osm-planet", id)
             elif args.imdb_properties:
-                label = get_label_from_camel_case_id("imdb", obj_id)
+                label = get_label_from_camel_case_id("imdb", id)
             elif syns:
                 # use the first synonym as label
                 # keep rest of synonyms
                 first, *rest = syns.split(";;;")
-                label = format_label(first)
                 syns = ";;;".join(rest)
             else:
                 raise ValueError(
@@ -158,6 +145,6 @@ if __name__ == "__main__":
             # for osm planet entities, score is a wikidata id
             score = get_osm_planet_score_from_wikidata_id(score)
 
-        score = "0" if score == "" else score
+        score = "0" if not score else score
 
-        print("\t".join([label, score, syns, obj_id, infos]))
+        writer.writerow([label, score, syns, id, infos])
