@@ -3,7 +3,7 @@ import os
 import time
 from typing import Any, Type
 
-from search_index import PrefixIndex, QGramIndex, SearchIndex, SimilarityIndex
+from search_index import PrefixIndex, SearchIndex, SimilarityIndex
 from universal_ml_utils.logging import get_logger
 
 from grasp.sparql.manager.base import KgManager
@@ -66,8 +66,6 @@ def load_index_and_mapping(
 
     if index_type == "prefix":
         index_cls = PrefixIndex
-    elif index_type == "qgram":
-        index_cls = QGramIndex
     elif index_type == "similarity":
         index_cls = SimilarityIndex
     else:

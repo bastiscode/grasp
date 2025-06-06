@@ -1,4 +1,4 @@
-from search_index import PrefixIndex, QGramIndex, SearchIndex
+from search_index import PrefixIndex, SearchIndex
 
 
 def get_common_sparql_prefixes() -> dict[str, str]:
@@ -29,15 +29,6 @@ def get_index_desc(index: SearchIndex | None = None) -> str:
     if isinstance(index, PrefixIndex) or index is None:
         index_type = "Keyword index"
         dist_info = "number of exact and prefix keyword matches"
-
-    elif isinstance(index, QGramIndex):
-        assert isinstance(index, QGramIndex)
-        if index.distance == "ied":
-            dist = "substring"
-        else:
-            dist = "prefix"
-        index_type = "Fuzzy n-gram index"
-        dist_info = f"{dist} edit distance"
 
     else:
         index_type = "Vector embedding index"

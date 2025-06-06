@@ -480,7 +480,7 @@ def _get_item(
         obj_types = [ObjType.PROPERTY, ObjType.ENTITY]
 
     # check whether the iri is a valid entity or property
-    for i, obj_type in enumerate(obj_types):
+    for obj_type in obj_types:
         map = _mapping(manager, obj_type)
         norm = map.normalize(iri)
         if norm is None:

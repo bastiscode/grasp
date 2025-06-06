@@ -320,10 +320,10 @@ class KgManager:
 
     def build_alternative(
         self,
-        data: str,
+        data: list[str],
         variants: set[str] | None = None,
     ) -> Alternative:
-        label, _, syns, id, infos = data.rstrip("\r\n").split("\t")
+        label, _, syns, id, infos = data
 
         return Alternative(
             identifier=id,

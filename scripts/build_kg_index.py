@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from search_index import PrefixIndex, QGramIndex, SimilarityIndex
+from search_index import PrefixIndex, SimilarityIndex
 
 
 def parse_args() -> argparse.Namespace:
@@ -12,24 +12,12 @@ def parse_args() -> argparse.Namespace:
         "--type",
         type=str,
         default="prefix",
-        choices=["qgram", "prefix", "similarity"],
+        choices=["prefix", "similarity"],
     )
     parser.add_argument(
         "--no-syns",
         action="store_true",
         help="Whether to remove synonyms",
-    )
-    parser.add_argument(
-        "--qgram-distance",
-        choices=["ped", "ied"],
-        default="ied",
-    )
-    parser.add_argument(
-        "-q",
-        "--qgram",
-        type=int,
-        default=3,
-        help="Qgram size",
     )
     parser.add_argument(
         "--sim-precision",
@@ -61,15 +49,7 @@ def build(args: argparse.Namespace):
     print(f"Building {args.type} index at {args.output}")
     os.makedirs(args.output, exist_ok=True)
 
-    if args.type == "qgram":
-        QGramIndex.build(
-            args.input,
-            args.output,
-            q=args.qgram,
-            distance=args.qgram_distance,
-            use_synonyms=not args.no_syns,
-        )
-    elif args.type == "prefix":
+    if args.type == "prefix":
         PrefixIndex.build(
             args.input,
             args.output,

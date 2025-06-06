@@ -162,7 +162,6 @@ SPARQL endpoints. Use rdfs:label or similar properties to get labels instead.",
 
     elif task == "general-qa":
         return [
-            "Your answers should be concise and directly address the user question.",
             "Your answers should be based on the information available in the \
 knowledge graphs. If you do not need them to answer the question, e.g. if \
 you know the answer by heart, still try to verify it with the knowledge graphs.",
@@ -201,14 +200,12 @@ You can use the following SPARQL prefixes implicitly in all functions:
 
 You should follow a step-by-step approach to generate the SPARQL query:
 1. Determine possible entities and properties implied by the user question.
-2. Use the functions to search for entities and properties in the \
-knowledge graphs. Where applicable, constrain the searches with \
-already identified entities and properties.
+2. Search for the entities and properties in the knowledge graphs. Where \
+applicable, constrain the searches with already identified entities and properties.
 3. Gradually build up the SPARQL query using the identified entities \
 and properties. Start with simple queries and add more complexity as needed. \
-Use the execute function to get feedback on intermediate queries. \
-You can go back and forth between knowledge graph searches and SPARQL query \
-executions to refine the query.
+You may need to refine or rethink your current plan based on the query \
+results and go back to step 2 if needed, possibly multiple times.
 4. Use the answer or cancel function to finalize your answer and stop the \
 generation process.
 
@@ -227,15 +224,16 @@ You can use the following SPARQL prefixes implicitly in all functions:
 {prefixes}
 
 You should follow a step-by-step approach to answer the question:
-1. Determine the pieces of information needed to answer the user question and \
-think about how they might be represented with entities and properties in the \
-knowledge graphs.
-2. Iteratively use the functions to search in or execute SPARQL queries on \
-the knowledge graphs to find the needed information. You may need to refine \
-your understanding of the question and the needed information as you go. \
-Where applicable, constrain the searches with already identified entities and \
-properties.
-3. Use the answer or cancel function to finalize your answer and stop the \
+1. Determine the information needed from the knowledge graphs to \
+answer the user question and think about how it might be represented with \
+entities and properties.
+2. Search for the entities and properties in the knowledge graphs. Where \
+applicable, constrain the searches with already identified entities and properties.
+3. Gradually build up the answer by executing SPARQL queries using the \
+identified entities and properties. You may need to refine or rethink your \
+current plan based on the query results and go back to step 2 if needed, \
+possibly multiple times.
+4. Use the answer or cancel function to finalize your answer and stop the \
 generation process.
 
 Additional rules:

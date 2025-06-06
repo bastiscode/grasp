@@ -298,9 +298,9 @@ def autocomplete_prefix(
         assert bracket_stack, "bracket stack is empty"
         last = bracket_stack[-1]
         expected = "(" if item["name"] == ")" else "{"
-        assert (
-            last == expected
-        ), f"expected {expected} bracket in the stack but got {last}"
+        assert last == expected, (
+            f"expected {expected} bracket in the stack but got {last}"
+        )
         bracket_stack.pop()
 
     if rest in ["{", "("]:
@@ -765,7 +765,7 @@ def is_iri(iri: str) -> bool:
 
 
 def is_fq_iri(iri: str) -> bool:
-    return is_iri(iri) and validators.url(iri[1:-1])
+    return is_iri(iri) and validators.url(iri[1:-1])  # type: ignore
 
 
 def format_iri(
