@@ -3,15 +3,16 @@ import os
 import time
 from typing import Any, Type
 
-from search_index import PrefixIndex, SearchIndex, SimilarityIndex
+from search_index import (
+    IndexData, 
+    PrefixIndex, SearchIndex, SimilarityIndex,
+)
 from universal_ml_utils.logging import get_logger
 
 from grasp.sparql.manager.base import KgManager
 from grasp.sparql.mapping import Mapping
-from grasp.sparql.sparql import (
-    find_longest_prefix,
-    get_index_dir,
-)
+from grasp.sparql.sparql import find_longest_prefix, get_index_dir
+
 
 WIKIDATA_PROPERTY_VARIANTS = {
     "wdt": "<http://www.wikidata.org/prop/direct/",
@@ -72,8 +73,16 @@ def load_index_and_mapping(
         raise ValueError(f"Unknown index type {index_type}")
 
     try:
-        index = index_cls.load(
+        data = IndexData.load(
             os.path.join(index_dir, "data.tsv"),
+            os.path.join(index_dir, "offsets.bin"),
+        )
+    except Exception as e:
+        raise ValueError(f"Failed to load index data from {index_dir}") from e
+
+    try:
+        index = index_cls.load(
+            data,
             os.path.join(index_dir, index_type),
             **kwargs,
         )
@@ -85,7 +94,7 @@ def load_index_and_mapping(
 
     try:
         mapping = mapping_cls.load(
-            index.data,
+            data,
             os.path.join(index_dir, "mapping.bin"),
         )
     except Exception as e:

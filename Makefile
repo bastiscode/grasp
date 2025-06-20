@@ -160,8 +160,9 @@ wikidata-kg-data:
 	| python scripts/prepare_kg_index.py \
 	> data/kg-index/wikidata/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/wikidata/entities/data.tsv \
+	data/kg-index/wikidata/entities/offsets.bin \
 	data/kg-index/wikidata/entities/mapping.bin \
 	--overwrite
 
@@ -174,19 +175,20 @@ wikidata-kg-data:
 	| python scripts/prepare_kg_index.py \
 	> data/kg-index/wikidata/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/wikidata/properties/data.tsv \
+	data/kg-index/wikidata/properties/offsets.bin \
 	data/kg-index/wikidata/properties/mapping.bin \
 	--overwrite
 
 wikidata-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/wikidata/entities/data.tsv \
+	data/kg-index/wikidata/entities \
 	data/kg-index/wikidata/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/wikidata/properties/data.tsv \
+	data/kg-index/wikidata/properties \
 	data/kg-index/wikidata/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)
 
@@ -201,8 +203,9 @@ imdb-kg-data:
 	| python scripts/prepare_kg_index.py \
 	> data/kg-index/imdb/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/imdb/entities/data.tsv \
+	data/kg-index/imdb/entities/offsets.bin \
 	data/kg-index/imdb/entities/mapping.bin \
 	--overwrite
 
@@ -217,19 +220,20 @@ imdb-kg-data:
 	--imdb-properties \
 	> data/kg-index/imdb/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/imdb/properties/data.tsv \
+	data/kg-index/imdb/properties/offsets.bin \
 	data/kg-index/imdb/properties/mapping.bin \
 	--overwrite
 
 imdb-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/imdb/entities/data.tsv \
+	data/kg-index/imdb/entities \
 	data/kg-index/imdb/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/imdb/properties/data.tsv \
+	data/kg-index/imdb/properties \
 	data/kg-index/imdb/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)
 
@@ -245,8 +249,9 @@ uniprot-kg-data:
 	--uniprot \
 	> data/kg-index/uniprot/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/uniprot/entities/data.tsv \
+	data/kg-index/uniprot/entities/offsets.bin \
 	data/kg-index/uniprot/entities/mapping.bin \
 	--overwrite
 
@@ -261,19 +266,20 @@ uniprot-kg-data:
 	--uniprot \
 	> data/kg-index/uniprot/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/uniprot/properties/data.tsv \
+	data/kg-index/uniprot/properties/offsets.bin \
 	data/kg-index/uniprot/properties/mapping.bin \
 	--overwrite
 
 uniprot-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/uniprot/entities/data.tsv \
+	data/kg-index/uniprot/entities \
 	data/kg-index/uniprot/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/uniprot/properties/data.tsv \
+	data/kg-index/uniprot/properties \
 	data/kg-index/uniprot/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)
 
@@ -294,8 +300,9 @@ osm-planet-kg-data:
 	> data/kg-index/osm-planet/entities/data.sorted.tsv
 	mv data/kg-index/osm-planet/entities/data.sorted.tsv data/kg-index/osm-planet/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/osm-planet/entities/data.tsv \
+	data/kg-index/osm-planet/entities/offsets.bin \
 	data/kg-index/osm-planet/entities/mapping.bin \
 	--overwrite
 
@@ -307,22 +314,23 @@ osm-planet-kg-data:
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(OSM_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_index.py \
-	--osm-planet-properties \
+	--osm-planet \
 	> data/kg-index/osm-planet/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/osm-planet/properties/data.tsv \
+	data/kg-index/osm-planet/properties/offsets.bin \
 	data/kg-index/osm-planet/properties/mapping.bin \
 	--overwrite
 
 osm-planet-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/osm-planet/entities/data.tsv \
+	data/kg-index/osm-planet/entities \
 	data/kg-index/osm-planet/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/osm-planet/properties/data.tsv \
+	data/kg-index/osm-planet/properties \
 	data/kg-index/osm-planet/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)
 
@@ -338,8 +346,9 @@ freebase-kg-data:
 	| python scripts/prepare_kg_index.py \
 	> data/kg-index/freebase/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/freebase/entities/data.tsv \
+	data/kg-index/freebase/entities/offsets.bin \
 	data/kg-index/freebase/entities/mapping.bin \
 	--overwrite
 
@@ -353,19 +362,20 @@ freebase-kg-data:
 	| python scripts/prepare_kg_index.py \
 	> data/kg-index/freebase/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/freebase/properties/data.tsv \
+	data/kg-index/freebase/properties/offsets.bin \
 	data/kg-index/freebase/properties/mapping.bin \
 	--overwrite
 
 freebase-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/freebase/entities/data.tsv \
+	data/kg-index/freebase/entities \
 	data/kg-index/freebase/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/freebase/properties/data.tsv \
+	data/kg-index/freebase/properties \
 	data/kg-index/freebase/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)
 
@@ -380,8 +390,9 @@ dbpedia-kg-data:
 	| python scripts/prepare_kg_index.py \
 	> data/kg-index/dbpedia/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/dbpedia/entities/data.tsv \
+	data/kg-index/dbpedia/entities/offsets.bin \
 	data/kg-index/dbpedia/entities/mapping.bin \
 	--overwrite
 
@@ -395,19 +406,20 @@ dbpedia-kg-data:
 	| python scripts/prepare_kg_index.py \
 	> data/kg-index/dbpedia/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/dbpedia/properties/data.tsv \
+	data/kg-index/dbpedia/properties/offsets.bin \
 	data/kg-index/dbpedia/properties/mapping.bin \
 	--overwrite
 
 dbpedia-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/dbpedia/entities/data.tsv \
+	data/kg-index/dbpedia/entities \
 	data/kg-index/dbpedia/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/dbpedia/properties/data.tsv \
+	data/kg-index/dbpedia/properties \
 	data/kg-index/dbpedia/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)
 
@@ -420,10 +432,12 @@ dblp-kg-data:
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(DBLP_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_index.py \
+	--dblp \
 	> data/kg-index/dblp/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/dblp/entities/data.tsv \
+	data/kg-index/dblp/entities/offsets.bin \
 	data/kg-index/dblp/entities/mapping.bin \
 	--overwrite
 
@@ -435,22 +449,23 @@ dblp-kg-data:
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(DBLP_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_index.py \
-	--dblp-properties \
+	--dblp \
 	> data/kg-index/dblp/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/dblp/properties/data.tsv \
+	data/kg-index/dblp/properties/offsets.bin \
 	data/kg-index/dblp/properties/mapping.bin \
 	--overwrite
 
 dblp-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/dblp/entities/data.tsv \
+	data/kg-index/dblp/entities \
 	data/kg-index/dblp/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/dblp/properties/data.tsv \
+	data/kg-index/dblp/properties \
 	data/kg-index/dblp/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)
 
@@ -463,10 +478,12 @@ orkg-kg-data:
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(ORKG_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_index.py \
+	--orkg \
 	> data/kg-index/orkg/entities/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/orkg/entities/data.tsv \
+	data/kg-index/orkg/entities/offsets.bin \
 	data/kg-index/orkg/entities/mapping.bin \
 	--overwrite
 
@@ -478,20 +495,22 @@ orkg-kg-data:
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(ORKG_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_index.py \
+	--orkg \
 	> data/kg-index/orkg/properties/data.tsv
 
-	@python scripts/build_kg_mapping.py \
+	@python scripts/build_kg_data_and_mapping.py \
 	data/kg-index/orkg/properties/data.tsv \
+	data/kg-index/orkg/properties/offsets.bin \
 	data/kg-index/orkg/properties/mapping.bin \
 	--overwrite
 
 orkg-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/orkg/entities/data.tsv \
+	data/kg-index/orkg/entities \
 	data/kg-index/orkg/entities/$(ENT_SEARCH_INDEX) \
 	--type $(ENT_SEARCH_INDEX) $(ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/orkg/properties/data.tsv \
+	data/kg-index/orkg/properties \
 	data/kg-index/orkg/properties/$(PROP_SEARCH_INDEX) \
 	--type $(PROP_SEARCH_INDEX) $(ARGS)

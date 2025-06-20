@@ -15,12 +15,13 @@ from grasp.sparql.sparql import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    prop_type_group = parser.add_mutually_exclusive_group()
-    prop_type_group.add_argument("--dblp-properties", action="store_true")
-    prop_type_group.add_argument("--uniprot", action="store_true")
-    prop_type_group.add_argument("--osm-planet-entities", action="store_true")
-    prop_type_group.add_argument("--osm-planet-properties", action="store_true")
-    prop_type_group.add_argument("--imdb-properties", action="store_true")
+    type_group = parser.add_mutually_exclusive_group()
+    type_group.add_argument("--dblp", action="store_true")
+    type_group.add_argument("--uniprot", action="store_true")
+    type_group.add_argument("--osm-planet-entities", action="store_true")
+    type_group.add_argument("--osm-planet", action="store_true")
+    type_group.add_argument("--imdb-properties", action="store_true")
+    type_group.add_argument("--orkg", action="store_true")
     return parser.parse_args()
 
 
@@ -31,12 +32,11 @@ def split_iri(iri: str) -> tuple[str, str]:
     # split iri into prefix and last part after final / or #
     last_hashtag = iri.rfind("#")
     last_slash = iri.rfind("/")
-    if last_hashtag == -1 and last_slash == -1:
+    last = max(last_hashtag, last_slash)
+    if last == -1:
         return "", iri[1:-1]
-    elif last_hashtag > last_slash:
-        return iri[1:last_hashtag], iri[last_hashtag + 1 : -1]
     else:
-        return iri[1:last_slash], iri[last_slash + 1 : -1]
+        return iri[1:last], iri[last + 1:-1]
 
 
 def camel_case_split(s: str) -> str:
@@ -78,39 +78,46 @@ WD_DATA: IndexData | None = None
 WD_MAP: Mapping | None = None
 
 
-def get_osm_planet_score_from_wikidata_id(wd_id: str) -> str:
+def get_osm_planet_score_from_wikidata_id(wid: str) -> str:
     global WD_DATA, WD_MAP
     if WD_DATA is None or WD_MAP is None:
         index_dir = get_index_dir()
         assert index_dir is not None, "KG_INDEX_DIR environment variable not set"
         data_file = os.path.join(index_dir, "wikidata", "entities", "data.tsv")
-        WD_DATA = IndexData(data_file)
+        offsets_file = os.path.join(index_dir, "wikidata", "entities", "offsets.bin")
+        WD_DATA = IndexData.load(data_file, offsets_file)
         mapping_file = os.path.join(index_dir, "wikidata", "entities", "mapping.bin")
         WD_MAP = Mapping.load(WD_DATA, mapping_file)
 
-    id = WD_MAP.get(wd_id)
+    id = WD_MAP.get(wid)
     if id is None:
         return ""
 
     # score is in the second column
     score = WD_DATA.get_val(id, 1)
-    assert score is not None, f"no score for {wd_id}"
+    assert score is not None, f"no score for {wid}"
     return score
+
+
+def clean(s: str) -> str:
+    return s.replace("\n", " ").replace("\t", " ")
 
 
 if __name__ == "__main__":
     args = parse_args()
 
     reader = csv.reader(sys.stdin)
-    writer = csv.writer(sys.stdout, delimiter="\t")
 
     # skip header
     next(reader)
 
     # write Header
-    writer.writerow(["label", "score", "synonyms", "id", "infos"])
+    print("\t".join(["label", "score", "synonyms", "id", "infos"]))
 
     for row in reader:
+        # remove \n and \t from each column
+        row = [clean(col) for col in row]
+
         try:
             label, score, syns, id, infos = row
         except Exception as e:
@@ -123,14 +130,16 @@ if __name__ == "__main__":
 
         if not label:
             # label is empty, try to get it from the object id
-            if args.dblp_properties:
+            if args.dblp:
                 label = get_label_from_camel_case_id("dblp", id)
             elif args.uniprot:
                 label = get_label_from_camel_case_id("uniprot", id)
-            elif args.osm_planet_properties:
+            elif args.osm_planet or args.osm_planet_entities:
                 label = get_label_from_camel_case_id("osm-planet", id)
             elif args.imdb_properties:
                 label = get_label_from_camel_case_id("imdb", id)
+            elif args.orkg:
+                label = get_label_from_camel_case_id("orkg", id)
             elif syns:
                 # use the first synonym as label
                 # keep rest of synonyms
@@ -138,13 +147,14 @@ if __name__ == "__main__":
                 syns = ";;;".join(rest)
             else:
                 raise ValueError(
-                    "Label is empty and no ID fallback or synonyms provided"
+                    f"Label is empty and no ID fallback or synonyms provided: {row}"
                 )
 
         if args.osm_planet_entities:
             # for osm planet entities, score is a wikidata id
-            score = get_osm_planet_score_from_wikidata_id(score)
+            wid = f"<{score}>"
+            score = get_osm_planet_score_from_wikidata_id(wid)
 
         score = "0" if not score else score
 
-        writer.writerow([label, score, syns, id, infos])
+        print("\t".join([label, score, syns, id, infos]))

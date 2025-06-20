@@ -1,12 +1,12 @@
 import argparse
 import os
 
-from search_index import PrefixIndex, SimilarityIndex
+from search_index import IndexData, PrefixIndex, SimilarityIndex
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("input", type=str, help="Input file")
+    parser.add_argument("input", type=str, help="Input dir")
     parser.add_argument("output", type=str, help="Output dir")
     parser.add_argument(
         "--type",
@@ -49,15 +49,20 @@ def build(args: argparse.Namespace):
     print(f"Building {args.type} index at {args.output}")
     os.makedirs(args.output, exist_ok=True)
 
+    data = IndexData.load(
+        os.path.join(args.input, "data.tsv"),
+        os.path.join(args.input, "offsets.bin"),
+    )
+
     if args.type == "prefix":
         PrefixIndex.build(
-            args.input,
+            data,
             args.output,
             use_synonyms=not args.no_syns,
         )
     else:
         SimilarityIndex.build(
-            args.input,
+            data,
             args.output,
             precision=args.sim_precision,
             batch_size=args.sim_batch_size,
