@@ -111,9 +111,11 @@ class Binding:
                     return f'"{self.value}"'
             case "bnode":
                 return f"_:{self.value}"
+            case _:
+                raise ValueError(f"Unknown binding type: {self.typ}")
 
 
-SelectRow = list[Binding | None]
+SelectRow = dict[str, Binding]
 
 
 @dataclass
@@ -142,13 +144,13 @@ class SelectResult:
         for i in range(start, end):
             data = self.data[i]
             if data is None:
-                row = [None] * self.num_columns
+                yield {}
             else:
-                row = [
-                    Binding.from_dict(data[var]) if var in data else None
+                yield {
+                    var: Binding.from_dict(data[var]) 
                     for var in self.variables
-                ]
-            yield row
+                    if var in data
+                }
 
     @property
     def num_rows(self) -> int:

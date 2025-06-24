@@ -135,14 +135,16 @@ def general_rules() -> list[str]:
     return [
         "Explain your thought process before and after each step \
 and function call.",
-        "Do not assume or make up any entity or property identifiers \
-without verifying them with the knowledge graphs and functions.",
+        "Do not just use or make up entity or property identifiers \
+without verifying their existence in the knowledge graphs first.",
     ]
 
 
 def task_rules(task: str) -> list[str]:
     if task == "sparql-qa":
         return [
+            "Always execute your final SPARQL query before giving an answer to \
+make sure it returns the expected results.",
             "The SPARQL query should always return the actual \
 identifiers / IRIs of the items in its result. It additionally may return \
 labels or other human-readable information, but they are optional and should be \
@@ -162,7 +164,7 @@ SPARQL endpoints. Use rdfs:label or similar properties to get labels instead.",
 
     elif task == "general-qa":
         return [
-            "Your answers should be based on the information available in the \
+            "Your answers preferably should be based on the information available in the \
 knowledge graphs. If you do not need them to answer the question, e.g. if \
 you know the answer by heart, still try to verify it with the knowledge graphs.",
             "Do not use 'SERVICE wikibase:label { bd:serviceParam wikibase:language ...' \
@@ -585,6 +587,7 @@ def generate(
     example_indices: dict[str, SimilarityIndex],
     functions: list[dict],
     past_messages: list[dict] | None = None,
+    past_known: set[str] | None = None,
     logger: Logger = get_logger("GRASP SPARQL GENERATION"),
 ) -> Iterator[dict]:
     if task == "general-qa":
@@ -597,7 +600,7 @@ def generate(
 
     start = time.perf_counter()
 
-    known = set()
+    known = set() if past_known is None else deepcopy(past_known)
     retries = 0
 
     if past_messages:
@@ -907,6 +910,7 @@ def generate(
             "elapsed": end - start,
             "error": error,
             "messages": api_messages,
+            "known": known,
         }
 
         return
@@ -988,11 +992,16 @@ MAX_CONNECTIONS = 10
 MAX_QUERY_DURATION = 120.0
 
 
+class Past(BaseModel):
+    messages: conlist(dict, min_length=1) # type: ignore
+    known: set[str]
+
+
 class Request(BaseModel):
     task: str
     question: str
     knowledge_graphs: conlist(str, min_length=1)  # type: ignore
-    past_messages: conlist(dict, min_length=1) | None = None  # type: ignore
+    past: Past | None = None
 
 
 def serve(args: argparse.Namespace) -> None:
@@ -1083,13 +1092,16 @@ def serve(args: argparse.Namespace) -> None:
 
                 system_message = get_system_message(request.task, sel_managers)
                 past_messages = []
-                if request.past_messages is None:
+                known = set()
+                if request.past is None:
                     past_messages.append(system_message)
                 else:
                     # overwrite system message because new set of
-                    # knowledge graphs might be present
-                    past_messages = request.past_messages
+                    # knowledge graphs might be present;
+                    past_messages = request.past.messages
                     past_messages[0] = system_message
+                    # update known set
+                    known = request.past.known
 
                 await websocket.send_json(
                     {
@@ -1109,6 +1121,7 @@ def serve(args: argparse.Namespace) -> None:
                     sel_example_indices,
                     functions,
                     past_messages,
+                    known,
                     logger=logger,
                 )
 
