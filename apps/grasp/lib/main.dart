@@ -62,6 +62,13 @@ class GRASP extends StatefulWidget {
   State<GRASP> createState() => _GRASPState();
 }
 
+class Past {
+  final List<dynamic> messages;
+  final Set<String> known;
+
+  Past(this.messages, this.known);
+}
+
 class _GRASPState extends State<GRASP> {
   final retry = Duration(seconds: 5);
   bool initial = true;
@@ -79,7 +86,8 @@ class _GRASPState extends State<GRASP> {
   dynamic lastData;
   dynamic config;
   List<List<dynamic>> histories = [];
-  List<dynamic>? pastMessages;
+  Past? past;
+
   Map<String, bool> knowledgeGraphs = {};
 
   List<String> get selectedKgs => knowledgeGraphs.entries
@@ -113,7 +121,7 @@ class _GRASPState extends State<GRASP> {
         // check past history on initial load
         final lastOutput = prefs.getString("lastOutput");
         final lastData = jsonDecode(lastOutput!);
-        pastMessages = lastData["pastMessages"];
+        past = Past(lastData["pastMessages"], lastData["pastKnown"]);
         histories = lastData["histories"].cast<List<dynamic>>();
       }
 
@@ -165,7 +173,9 @@ class _GRASPState extends State<GRASP> {
         "task": Task.values[task].identifier,
         "question": question,
         "knowledge_graphs": selectedKgs,
-        "past_messages": pastMessages,
+        "past": past == null
+            ? null
+            : {"messages": past!.messages, "known": past!.known},
       }),
     );
     setState(() {});
@@ -182,7 +192,7 @@ class _GRASPState extends State<GRASP> {
     if (full) {
       questionController.text = "";
       histories.clear();
-      pastMessages = null;
+      past = null;
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove("lastOutput");
     } else if (histories.isNotEmpty) {
@@ -289,7 +299,7 @@ class _GRASPState extends State<GRASP> {
         },
         decoration: InputDecoration(
           border: OutlineInputBorder(),
-          hintText: pastMessages == null
+          hintText: past == null
               ? "Ask a question..."
               : "Follow up on the previous question...",
           helperText: cancelling
@@ -668,12 +678,13 @@ ${result ?? "No SPARQL result available."}
                       questionController.text = "";
                       cancelling = false;
                       running = false;
-                      pastMessages = json["messages"];
+                      past = Past(json["messages"], json["known"]);
                       SharedPreferences.getInstance().then(
                         (prefs) => prefs.setString(
                           "lastOutput",
                           jsonEncode({
-                            "pastMessages": pastMessages,
+                            "pastMessages": past!.messages,
+                            "pastKnown": past!.known,
                             "histories": histories,
                           }),
                         ),
