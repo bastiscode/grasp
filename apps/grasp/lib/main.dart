@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -63,14 +64,19 @@ class GRASP extends StatefulWidget {
 }
 
 class Past {
+  final List<dynamic> questions;
   final List<dynamic> messages;
-  final Set<String> known;
+  final List<dynamic> known;
 
-  Past(this.messages, this.known);
+  Past(this.questions, this.messages, this.known);
+
+  Map<String, dynamic> toJson() {
+    return {"questions": questions, "messages": messages, "known": known};
+  }
 }
 
 class _GRASPState extends State<GRASP> {
-  final retry = Duration(seconds: 5);
+  final retry = 10;
   bool initial = true;
   bool running = false;
   bool cancelling = false;
@@ -87,6 +93,7 @@ class _GRASPState extends State<GRASP> {
   dynamic config;
   List<List<dynamic>> histories = [];
   Past? past;
+  DateTime lastScrolled = DateTime.now();
 
   Map<String, bool> knowledgeGraphs = {};
 
@@ -121,7 +128,11 @@ class _GRASPState extends State<GRASP> {
         // check past history on initial load
         final lastOutput = prefs.getString("lastOutput");
         final lastData = jsonDecode(lastOutput!);
-        past = Past(lastData["pastMessages"], lastData["pastKnown"]);
+        past = Past(
+          lastData["pastQuestions"],
+          lastData["pastMessages"],
+          lastData["pastKnown"],
+        );
         histories = lastData["histories"].cast<List<dynamic>>();
       }
 
@@ -145,7 +156,7 @@ class _GRASPState extends State<GRASP> {
       channel = newChannel;
     } catch (e) {
       showMessage(
-        "Failed to connect to backend. Retrying in ${retry.inSeconds} seconds.",
+        "Failed to connect to backend. Retrying in $retry seconds.",
         color: uniRed,
       );
       debugPrint("error connecting: $e");
@@ -173,9 +184,7 @@ class _GRASPState extends State<GRASP> {
         "task": Task.values[task].identifier,
         "question": question,
         "knowledge_graphs": selectedKgs,
-        "past": past == null
-            ? null
-            : {"messages": past!.messages, "known": past!.known},
+        "past": past?.toJson(),
       }),
     );
     setState(() {});
@@ -205,7 +214,7 @@ class _GRASPState extends State<GRASP> {
   void initState() {
     super.initState();
 
-    timer = Timer.periodic(retry, (_) async {
+    timer = Timer.periodic(Duration(seconds: retry), (_) async {
       if (connected) return;
 
       await connect();
@@ -476,38 +485,73 @@ ${prettyJson(fn["parameters"])}
     return buildCardWithTitle("Reasoning", markdown(content), color: uniBlue);
   }
 
-  Widget buildFunctionCallItem(String name, dynamic args, String result) {
-    return buildCard(
-      Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 8,
-        runSpacing: 8,
+  Widget buildChip(String key, dynamic value, {Color? color}) {
+    return Chip(
+      padding: EdgeInsets.all(4),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            "Function Call",
-            style: TextStyle(
-              color: uniYellow,
-              fontWeight: FontWeight.w700,
-              fontSize: 18,
+          Flexible(
+            child: Text(
+              key,
+              style: TextStyle(color: color, fontWeight: FontWeight.w400),
             ),
           ),
-          Chip(
-            padding: EdgeInsets.all(4),
-            label: Text(
-              name,
-              style: TextStyle(color: uniYellow, fontWeight: FontWeight.w400),
-            ),
-            visualDensity: VisualDensity.compact,
-          ),
+          SizedBox(width: 8),
+          Flexible(child: Text("$value")),
         ],
       ),
-      markdown('''
-Function `$name` called with arguments:
-```json
-${prettyJson(args)}
-```
-$result
- '''),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Iterable<(String, dynamic)> flattenFunctionCallArgs(
+    Map<String, dynamic> args, {
+    String? prefix,
+  }) sync* {
+    final pfx = prefix ?? "";
+    for (final entry in args.entries) {
+      if (entry.value == null) {
+        continue;
+      } else if (entry.value is Map<String, dynamic>) {
+        yield* flattenFunctionCallArgs(
+          entry.value,
+          prefix: pfx.isEmpty ? entry.key : "$pfx.${entry.key}",
+        );
+      } else {
+        final key = pfx.isEmpty ? entry.key : "$pfx.${entry.key}";
+        yield (key, entry.value);
+      }
+    }
+  }
+
+  Widget buildFunctionCallItem(String name, dynamic args, String result) {
+    final chips = [buildChip("function", name, color: uniYellow)];
+    String? sparql;
+    for (final (key, value) in flattenFunctionCallArgs(args)) {
+      if (key == "sparql") {
+        sparql = value;
+        continue;
+      }
+      chips.add(buildChip(key, value, color: uniYellow));
+    }
+    return buildCardWithTitle(
+      "Function Call",
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 8,
+            spacing: 8,
+            children: chips,
+          ),
+          if (sparql != null) markdown("```sparql\n$sparql\n```"),
+          markdown(result),
+        ],
+      ),
+      color: uniYellow,
     );
   }
 
@@ -588,12 +632,30 @@ ${result ?? "No SPARQL result available."}
     );
   }
 
+  Widget buildFeedbackItem(String status, String feedback) {
+    return buildCardWithTitle(
+      "Feedback",
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          buildChip("status", status, color: uniBlue),
+          // SizedBox(height: 8),
+          markdown(feedback),
+        ],
+      ),
+      color: uniBlue,
+    );
+  }
+
   Widget buildHistoryItem(dynamic item) {
     switch (item["typ"] as String) {
       case "question":
         return buildQuestionItem(item["question"]);
       case "system":
         return buildSystemItem(item["functions"], item["system_message"]);
+      case "feedback":
+        return buildFeedbackItem(item["status"], item["feedback"]);
       case "model":
         return buildReasoningItem(item["content"]);
       case "tool":
@@ -638,7 +700,7 @@ ${result ?? "No SPARQL result available."}
         margin: EdgeInsets.all(8),
         behavior: SnackBarBehavior.floating,
         backgroundColor: color,
-        duration: retry * 0.5,
+        duration: Duration(seconds: min(3, retry)),
       ),
     );
   }
@@ -678,11 +740,16 @@ ${result ?? "No SPARQL result available."}
                       questionController.text = "";
                       cancelling = false;
                       running = false;
-                      past = Past(json["messages"], json["known"]);
+                      past = Past(
+                        json["questions"],
+                        json["messages"],
+                        json["known"],
+                      );
                       SharedPreferences.getInstance().then(
                         (prefs) => prefs.setString(
                           "lastOutput",
                           jsonEncode({
+                            "pastQuestions": past!.questions,
                             "pastMessages": past!.messages,
                             "pastKnown": past!.known,
                             "histories": histories,
@@ -717,7 +784,12 @@ ${result ?? "No SPARQL result available."}
                                 children: [
                                   NotificationListener<ScrollNotification>(
                                     onNotification: (_) {
-                                      setState(() {});
+                                      final now = DateTime.now();
+                                      final diff = now.difference(lastScrolled);
+                                      if (diff.inMilliseconds > 200) {
+                                        lastScrolled = now;
+                                        setState(() {});
+                                      }
                                       return false;
                                     },
                                     child: ListView.separated(

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 // change this config to suit your setup
-const hostAndPort = "ad-sparql-kgqa.cs.uni-freiburg.de";
-const secure = true;
-const baseURL = "/api";
+const hostAndPort = "localhost:8334";
+const secure = false;
+const baseURL = "";
 
 // do not change that
 enum Task { sparqlQa, generalQa }
