@@ -8,7 +8,7 @@ from typing import Any, Iterable
 
 import validators
 from search_index.similarity import SimilarityIndex
-from universal_ml_utils.ops import flatten, partition_by
+from universal_ml_utils.ops import partition_by
 
 from grasp.sparql.constants import (
     Binding,
@@ -884,7 +884,10 @@ def check_known(manager: KgManager, sparql: str, known: set[str]):
         not_seen = "\n".join(manager.format_iri(iri) for iri in unknown_in_query)
         raise SPARQLException(f"""\
 The following knowledge graph items are used in the SPARQL query \
-without being known from previous function calls:
+without being known from previous searches or query executions. \
+This does not mean they are invalid, but you should verify \
+that they indeed exist in the knowledge graphs before executing the SPARQL \
+query again:
 {not_seen}""")
 
 
@@ -932,8 +935,9 @@ def update_known_from_rows(
         known,
         (
             binding.identifier()
-            for binding in flatten(rows)
-            if binding is not None and binding.typ == "uri"
+            for row in rows
+            for binding in row.values()
+            if binding.typ == "uri"
         ),
         mapping,
     )
@@ -996,13 +1000,14 @@ def execute_sparql(
 
     if isinstance(result, SelectResult):
         # only update with the bindings shown to the model
-        rows = [
-            row[:half_columns] + row[-half_columns:]
+        shown_vars = result.variables[:half_columns] + result.variables[-half_columns:]
+        rows = (
+            {var: row[var] for var in shown_vars if var in row}
             for row in chain(
                 result.rows(end=half_rows),
                 result.rows(start=max(0, len(result) - half_rows)),
             )
-        ]
+        )
 
         # entity mapping
         update_known_from_rows(known, rows, manager.entity_mapping)
@@ -1080,15 +1085,15 @@ is not a valid {expected}. IRIs can be given in prefixed form, like "wd:Q937", \
 as URIs, like "http://www.wikidata.org/entity/Q937", \
 or in full form, like "<http://www.wikidata.org/entity/Q937>".'
 
-        triple.append(ver_const)
         bindings.append(f"BIND({ver_const} AS ?{pos[0]})")
+        triple.append(ver_const)
 
     triple = " ".join(triple)
     bindings = "\n".join(bindings)
     sparql = f"""\
 SELECT ?s ?p ?o WHERE {{
-    {bindings}
     {triple}
+    {bindings}
 }} LIMIT {MAX_RESULTS}"""
 
     try:
@@ -1121,24 +1126,11 @@ SELECT ?s ?p ?o WHERE {{
     # we show the ones with popular properties or subjects / objects
     # first
     def sort_key(row: SelectRow) -> tuple[int, int]:
-        ps = es = 0
+        # property score
+        ps = prop_score(row["p"])
 
-        s, p, o = row
-
-        if property is None:
-            assert p is not None
-            # looking for properties
-            ps = prop_score(p)
-
-        if subject is None:
-            assert s is not None
-            # looking for subjects
-            es = ent_score(s)
-
-        if obj is None:
-            assert o is not None
-            # looking for objects
-            es = max(es, ent_score(o))
+        # entity score
+        es = max(ent_score(row["s"]), ent_score(row["o"]))
 
         # sort first by properties, then by subjects or objects
         return ps, es
@@ -1168,14 +1160,10 @@ SELECT ?s ?p ?o WHERE {{
     permutation = []
 
     for i, row in sorted_rows:
-        s, p, o = row
-
-        assert s is not None and p is not None and o is not None
-
         # normalize
-        p = normalize_prop(p)
-        s = normalize_ent(s)
-        o = normalize_ent(o)
+        s = normalize_ent(row["s"])
+        p = normalize_prop(row["p"])
+        o = normalize_ent(row["o"])
 
         key = (p in probs_seen, s in ents_seen or o in ents_seen)
         permutation.append((key, i))

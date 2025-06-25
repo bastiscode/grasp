@@ -1,4 +1,3 @@
-import logging
 import math
 import os
 import sys
@@ -7,9 +6,11 @@ import time
 from typing import Any, Iterable, Type
 
 from search_index import (
+    IndexData,
     PrefixIndex,
-    SearchIndex,
+    SearchIndex, # type: ignore
 )
+from universal_ml_utils.logging import get_logger
 from universal_ml_utils.table import generate_table
 
 from grasp.sparql.constants import (
@@ -93,7 +94,7 @@ class KgManager:
 
         self.endpoint = endpoint or get_endpoint(self.kg)
 
-        self.logger = logging.getLogger(f"{self.kg.upper()} KG MANAGER")
+        self.logger = get_logger(f"{self.kg.upper()} KG MANAGER")
 
     def prettify(
         self,
@@ -180,7 +181,8 @@ class KgManager:
                     formatted_row.append("...")
                     continue
 
-                val = row[c]
+                var = result.variables[c]
+                val = row.get(var, None)
                 if val is None:
                     formatted_row.append("")
 
@@ -492,8 +494,9 @@ class KgManager:
             ]
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            # build index and search in it
+            # build temporary index and search in it
             data_file = os.path.join(temp_dir, "data.tsv")
+            offset_file = os.path.join(temp_dir, "data.offsets")
             index_dir = os.path.join(temp_dir, "index")
             os.makedirs(index_dir, exist_ok=True)
             self.logger.debug(
@@ -507,10 +510,14 @@ class KgManager:
                 for raw, formatted, info in data:
                     f.write(f"{formatted}\t0\t\t{raw}\t{info or ''}\n")
 
+            # build index data
+            IndexData.build(data_file, offset_file)
+            data = IndexData.load(data_file, offset_file)
+
             # use a prefix index here because it is faster to build
             # and query
-            PrefixIndex.build(data_file, index_dir)
-            index = PrefixIndex.load(data_file, index_dir)
+            PrefixIndex.build(data, index_dir)
+            index = PrefixIndex.load(data, index_dir)
 
             alternatives = []
             matches = index.find_matches(
