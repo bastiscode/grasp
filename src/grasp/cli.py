@@ -413,7 +413,7 @@ Provide your feedback with the give_feedback function.""",
 
 def get_sparql_qa_feedback_prompt(
     managers: list[KgManager],
-    question: str,
+    questions: list[str],
     answer: dict | None,
     cancel: dict | None,
     max_rows: int,
@@ -422,7 +422,16 @@ def get_sparql_qa_feedback_prompt(
     sparql = None
     kg = None
 
-    prompt = f"Question:\n{question.strip()}"
+    if not questions:
+        raise ValueError("At least one question is required for feedback")
+    elif len(questions) > 1:
+        prompt = f"Previous questions:\n" + "\n\n".join(
+            q.strip() for q in questions[:-1]
+        ) + "\n\n"
+    else:
+        prompt = ""
+
+    prompt += f"Question:\n{questions[-1].strip()}"
 
     if answer is not None:
         prompt += f"""
@@ -500,7 +509,7 @@ SPARQL query:
 def generate_sparql_qa_feedback(
     config: Config,
     managers: list[KgManager],
-    question: str,
+    questions: list[str],
     answer: dict | None,
     cancel: dict | None,
     logger: Logger = get_logger("GRASP FEEDBACK GENERATION"),
@@ -513,7 +522,7 @@ def generate_sparql_qa_feedback(
             "role": "user",
             "content": get_sparql_qa_feedback_prompt(
                 managers,
-                question,
+                questions,
                 answer,
                 cancel,
                 config.result_max_rows,
@@ -586,22 +595,27 @@ def generate(
     managers: list[KgManager],
     example_indices: dict[str, SimilarityIndex],
     functions: list[dict],
+    past_questions: list[str] | None = None,
     past_messages: list[dict] | None = None,
     past_known: set[str] | None = None,
     logger: Logger = get_logger("GRASP SPARQL GENERATION"),
 ) -> Iterator[dict]:
     if task == "general-qa":
-        # check that certain config options are not set
-        assert not config.feedback, "Feedback is not supported for general QA"
-        assert not config.force_examples, (
-            "Forced examples are not supported for general QA"
-        )
-        assert not example_indices, "Examples are not supported for general QA"
+        # disable feedback
+        config = deepcopy(config)
+        config.feedback = False
+        config.force_examples = False
+        example_indices = {}
+        logger.debug(f"Disabling feedback and examples for {task} task")
 
     start = time.perf_counter()
 
+    if past_questions is None:
+        questions = [question]
+    else:
+        questions = past_questions + [question]
+
     known = set() if past_known is None else deepcopy(past_known)
-    retries = 0
 
     if past_messages:
         api_messages = deepcopy(past_messages)
@@ -698,6 +712,7 @@ def generate(
 
     error: dict | None = None
 
+    retries = 0
     while len(api_messages) < MAX_MESSAGES:
         try:
             response = completion(
@@ -848,7 +863,7 @@ def generate(
             feedback = generate_sparql_qa_feedback(
                 config,
                 managers,
-                question,
+                questions,
                 answer,
                 cancel,
                 logger,
@@ -871,7 +886,11 @@ def generate(
         }
         logger.debug(format_message(msg))
         api_messages.append(msg)
-        yield {"typ": "user", "content": msg["content"]}
+        yield {
+            "typ": "feedback",
+            "status": feedback["status"],
+            "feedback": feedback["feedback"],
+        }
 
         if feedback["status"] == "done":
             break
@@ -909,8 +928,9 @@ def generate(
             "content": content,
             "elapsed": end - start,
             "error": error,
+            "questions": questions,
             "messages": api_messages,
-            "known": known,
+            "known": list(known),
         }
 
         return
@@ -981,7 +1001,9 @@ def generate(
         "content": content,
         "elapsed": end - start,
         "error": error,
+        "questions": questions,
         "messages": api_messages,
+        "known": list(known),
     }
 
 
@@ -989,10 +1011,11 @@ def generate(
 active_connections = 0
 MAX_CONNECTIONS = 10
 # maximum duration for a query in seconds
-MAX_QUERY_DURATION = 120.0
+MAX_QUERY_DURATION = 300.0
 
 
 class Past(BaseModel):
+    questions: conlist(str, min_length=1)  # type: ignore
     messages: conlist(dict, min_length=1) # type: ignore
     known: set[str]
 
@@ -1091,6 +1114,7 @@ def serve(args: argparse.Namespace) -> None:
                 )
 
                 system_message = get_system_message(request.task, sel_managers)
+                past_questions = []
                 past_messages = []
                 known = set()
                 if request.past is None:
@@ -1100,6 +1124,8 @@ def serve(args: argparse.Namespace) -> None:
                     # knowledge graphs might be present;
                     past_messages = request.past.messages
                     past_messages[0] = system_message
+                    # update questions
+                    past_questions = request.past.questions
                     # update known set
                     known = request.past.known
 
@@ -1120,6 +1146,7 @@ def serve(args: argparse.Namespace) -> None:
                     sel_managers,
                     sel_example_indices,
                     functions,
+                    past_questions,
                     past_messages,
                     known,
                     logger=logger,
