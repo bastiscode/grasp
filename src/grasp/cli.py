@@ -550,6 +550,7 @@ def generate_sparql_qa_feedback(
             max_completion_tokens=config.max_completion_tokens,
             base_url=config.model_endpoint,
             api_key=config.api_key,
+            seed=config.seed,
             # drop unsupported parameters
             drop_params=True,
         )
@@ -730,6 +731,7 @@ def generate(
                 base_url=config.model_endpoint,
                 api_key=config.api_key,
                 timeout=config.completion_timeout,
+                seed=config.seed,
                 # drop unsupported parameters
                 drop_params=True,
             )  # type: ignore

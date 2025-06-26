@@ -16,6 +16,7 @@ class Config(BaseModel):
     model: str
     model_endpoint: str | None = None
     api_key: str | None = None
+    seed: int | None = None
     fn_set: str
 
     knowledge_graphs: list[KgConfig]

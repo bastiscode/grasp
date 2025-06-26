@@ -2,6 +2,7 @@ model: env(MODEL)
 model_endpoint: env(MODEL_ENDPOINT:null)
 
 api_key: env(API_KEY:null)
+seed: env(SEED:null)
 
 fn_set: env(FN_SET)
 

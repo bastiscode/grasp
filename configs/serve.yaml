@@ -2,6 +2,7 @@ model: env(MODEL:openai/gpt-4.1)
 model_endpoint: env(MODEL_ENDPOINT:null)
 
 api_key: env(API_KEY:null)
+seed: env(SEED:null)
 
 fn_set: env(FN_SET:search_extended)
 
@@ -25,4 +26,3 @@ knowledge_graphs:
   - name: orkg
   - name: osm-planet
   - name: uniprot
-
