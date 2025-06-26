@@ -425,9 +425,11 @@ def get_sparql_qa_feedback_prompt(
     if not questions:
         raise ValueError("At least one question is required for feedback")
     elif len(questions) > 1:
-        prompt = f"Previous questions:\n" + "\n\n".join(
-            q.strip() for q in questions[:-1]
-        ) + "\n\n"
+        prompt = (
+            "Previous questions:\n"
+            + "\n\n".join(q.strip() for q in questions[:-1])
+            + "\n\n"
+        )
     else:
         prompt = ""
 
@@ -492,7 +494,7 @@ Knowledge graph:
 {kg}
 
 SPARQL query:
-{sparql}"""
+{sparql.strip()}"""
 
         if selections:
             prompt += f"\n\n{selections}"
@@ -1018,7 +1020,7 @@ MAX_QUERY_DURATION = 300.0
 
 class Past(BaseModel):
     questions: conlist(str, min_length=1)  # type: ignore
-    messages: conlist(dict, min_length=1) # type: ignore
+    messages: conlist(dict, min_length=1)  # type: ignore
     known: set[str]
 
 

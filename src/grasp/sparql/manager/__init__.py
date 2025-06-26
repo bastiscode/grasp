@@ -3,10 +3,7 @@ import os
 import time
 from typing import Any, Type
 
-from search_index import (
-    IndexData, 
-    PrefixIndex, SearchIndex, SimilarityIndex,
-)
+from search_index import IndexData, PrefixIndex, SearchIndex, SimilarityIndex
 from universal_ml_utils.logging import get_logger
 
 from grasp.sparql.manager.base import KgManager

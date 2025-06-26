@@ -8,7 +8,7 @@ from typing import Any, Iterable, Type
 from search_index import (
     IndexData,
     PrefixIndex,
-    SearchIndex, # type: ignore
+    SearchIndex,  # type: ignore
 )
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.table import generate_table

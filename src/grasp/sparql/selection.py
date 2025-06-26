@@ -109,9 +109,9 @@ class Selection:
         self.alternative = alternative
         self.obj_type = obj_type
         if variant:
-            assert (
-                alternative.has_variants() and variant in alternative.variants
-            ), f"Variant {variant} not in {alternative.variants}"
+            assert alternative.has_variants() and variant in alternative.variants, (
+                f"Variant {variant} not in {alternative.variants}"
+            )
         self.variant = variant
 
     def __repr__(self) -> str:
