@@ -25,7 +25,9 @@ IMDB_ACCESS_TOKEN=null
 QLEVER_TIMEOUT=12h
 
 ENT_SEARCH_INDEX=prefix
+ENT_ARGS=
 PROP_SEARCH_INDEX=similarity
+PROP_ARGS=
 
 ARGS=
 
@@ -108,7 +110,7 @@ dblp-benchmarks:
 orkg-benchmarks:
 	@python scripts/prepare_benchmark.py \
 	--sci-qa \
-	--out-dir data/benchmark/orkg/sci-qa \
+	--out-dir data/benchmark/orkg-2023/sci-qa \
 	$(ARGS)
 
 example-indices:
@@ -185,12 +187,12 @@ wikidata-kg-indices:
 	@python scripts/build_kg_index.py \
 	data/kg-index/wikidata/entities \
 	data/kg-index/wikidata/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
 	data/kg-index/wikidata/properties \
 	data/kg-index/wikidata/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)
 
 imdb-kg-data:
 	# imdb entities
@@ -230,12 +232,12 @@ imdb-kg-indices:
 	@python scripts/build_kg_index.py \
 	data/kg-index/imdb/entities \
 	data/kg-index/imdb/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
 	data/kg-index/imdb/properties \
 	data/kg-index/imdb/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)
 
 uniprot-kg-data:
 	# uniprot entities
@@ -276,12 +278,12 @@ uniprot-kg-indices:
 	@python scripts/build_kg_index.py \
 	data/kg-index/uniprot/entities \
 	data/kg-index/uniprot/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
 	data/kg-index/uniprot/properties \
 	data/kg-index/uniprot/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)
 
 osm-planet-kg-data:
 	# osm entities
@@ -327,12 +329,12 @@ osm-planet-kg-indices:
 	@python scripts/build_kg_index.py \
 	data/kg-index/osm-planet/entities \
 	data/kg-index/osm-planet/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
 	data/kg-index/osm-planet/properties \
 	data/kg-index/osm-planet/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)
 
 
 freebase-kg-data:
@@ -372,12 +374,12 @@ freebase-kg-indices:
 	@python scripts/build_kg_index.py \
 	data/kg-index/freebase/entities \
 	data/kg-index/freebase/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
 	data/kg-index/freebase/properties \
 	data/kg-index/freebase/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)
 
 dbpedia-kg-data:
 	# dbpedia entities
@@ -416,12 +418,12 @@ dbpedia-kg-indices:
 	@python scripts/build_kg_index.py \
 	data/kg-index/dbpedia/entities \
 	data/kg-index/dbpedia/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
 	data/kg-index/dbpedia/properties \
 	data/kg-index/dbpedia/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)
 
 dblp-kg-data:
 	# dblp entities
@@ -462,55 +464,57 @@ dblp-kg-indices:
 	@python scripts/build_kg_index.py \
 	data/kg-index/dblp/entities \
 	data/kg-index/dblp/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
 	data/kg-index/dblp/properties \
 	data/kg-index/dblp/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)
+
+ORKG_VERSION=orkg
 
 orkg-kg-data:
 	# orkg entities
 	# https://qlever.cs.uni-freiburg.de/orkg/AaYKTn
-	@mkdir -p data/kg-index/orkg/entities
+	@mkdir -p data/kg-index/$(ORKG_VERSION)/entities
 	@curl -s $(ORKG_URL) -H "Accept: text/csv" \
 	--data-urlencode query="PREFIX orkgp: <http://orkg.org/orkg/predicate/> PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> SELECT DISTINCT ?label ?score (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id ?label (COUNT(?id) AS ?score) WHERE { ?id rdfs:label ?label . ?id ?p ?o } GROUP BY ?id ?label } BIND(\"\" AS ?alias) OPTIONAL { { ?id rdf:type/rdfs:label ?type_label. BIND(CONCAT(\"has type \", ?type_label) AS ?info) } UNION { ?id orkgp:description ?info } } } GROUP BY ?label ?score ?id ORDER BY DESC(?score)" \
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(ORKG_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_index.py \
 	--orkg \
-	> data/kg-index/orkg/entities/data.tsv
+	> data/kg-index/$(ORKG_VERSION)/entities/data.tsv
 
 	@python scripts/build_kg_data_and_mapping.py \
-	data/kg-index/orkg/entities/data.tsv \
-	data/kg-index/orkg/entities/offsets.bin \
-	data/kg-index/orkg/entities/mapping.bin \
+	data/kg-index/$(ORKG_VERSION)/entities/data.tsv \
+	data/kg-index/$(ORKG_VERSION)/entities/offsets.bin \
+	data/kg-index/$(ORKG_VERSION)/entities/mapping.bin \
 	--overwrite
 
 	# orkg properties
 	# https://qlever.cs.uni-freiburg.de/orkg/GqLOQH
-	@mkdir -p data/kg-index/orkg/properties
+	@mkdir -p data/kg-index/$(ORKG_VERSION)/properties
 	@curl -s $(ORKG_URL) -H "Accept: text/csv" \
 	--data-urlencode query="PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX orkgc: <http://orkg.org/orkg/class/> SELECT DISTINCT ?label ?score (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?score) WHERE { ?s ?id ?o } GROUP BY ?id } ?id rdfs:label ?label . ?id rdf:type orkgc:Predicate . BIND(\"\" AS ?alias) BIND(\"\" AS ?info) } GROUP BY ?label ?score ?id ORDER BY DESC(?score)" \
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(ORKG_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_index.py \
 	--orkg \
-	> data/kg-index/orkg/properties/data.tsv
+	> data/kg-index/$(ORKG_VERSION)/properties/data.tsv
 
 	@python scripts/build_kg_data_and_mapping.py \
-	data/kg-index/orkg/properties/data.tsv \
-	data/kg-index/orkg/properties/offsets.bin \
-	data/kg-index/orkg/properties/mapping.bin \
+	data/kg-index/$(ORKG_VERSION)/properties/data.tsv \
+	data/kg-index/$(ORKG_VERSION)/properties/offsets.bin \
+	data/kg-index/$(ORKG_VERSION)/properties/mapping.bin \
 	--overwrite
 
 orkg-kg-indices:
 	@python scripts/build_kg_index.py \
-	data/kg-index/orkg/entities \
-	data/kg-index/orkg/entities/$(ENT_SEARCH_INDEX) \
-	--type $(ENT_SEARCH_INDEX) $(ARGS)
+	data/kg-index/$(ORKG_VERSION)/entities \
+	data/kg-index/$(ORKG_VERSION)/entities/$(ENT_SEARCH_INDEX) \
+	--type $(ENT_SEARCH_INDEX) $(ENT_ARGS)
 
 	@python scripts/build_kg_index.py \
-	data/kg-index/orkg/properties \
-	data/kg-index/orkg/properties/$(PROP_SEARCH_INDEX) \
-	--type $(PROP_SEARCH_INDEX) $(ARGS)
+	data/kg-index/$(ORKG_VERSION)/properties \
+	data/kg-index/$(ORKG_VERSION)/properties/$(PROP_SEARCH_INDEX) \
+	--type $(PROP_SEARCH_INDEX) $(PROP_ARGS)

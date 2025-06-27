@@ -1,16 +1,24 @@
-# grasp
+# GRASP web app
 
-A new Flutter project.
+Web app for the GRASP server.
 
-## Getting Started
+## Setup
 
-This project is a starting point for a Flutter application.
+1. Change the config options in [the config file](lib/config.dart)
+to match your GRASP server setup.
 
-A few resources to get you started if this is your first Flutter project:
+2. Build the docker image:
+`docker build -t grasp-app .`
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+3. Run the docker container:
+`docker run --name grasp-app -d --restart unless-stopped -p <port>:80 grasp-app`
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+You can also build and run the app locally without Docker:
+
+```bash
+# Make sure you have Flutter installed
+flutter build web --release
+
+# Start a local server
+python -m http.server --directory build/web <port>
+```

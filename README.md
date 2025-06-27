@@ -1,8 +1,8 @@
 # GRASP - Generic Reasoning and SPARQL generation across Knowledge Graphs
 
-Code and data for the corresponding ISWC 2025 paper submission.
+Code and data for the corresponding ISWC 2025 paper.
 
-# Overview and directory structure
+## Overview and directory structure
 
 ```
 Makefile                          # Makefile for getting data and building indices
@@ -31,48 +31,58 @@ configs/
   serve.yaml                      # Config to run GRASP with all available KGs
 ```
 
-# Quickstart
+## Quickstart
 
 Follow these steps to run GRASP and the evaluation app.
 
-## Run GRASP
+### Run GRASP
 
-> Note: We recommend to use conda for ease of installation of FAISS and to avoid
+> Note: We recommend to use conda for ease of installation of Faiss and to avoid
 > dependency issues.
 
-1. Create and activate conda environment: `conda create -n grasp python=3.12 && conda activate grasp`
+1. Create and activate conda environment:
+`conda create -n grasp python=3.12 && conda activate grasp`
 
-2. Install FAISS (not supported to be installed with pip): `conda install -c pytorch -c nvidia faiss-gpu=1.9.0`
+2. Install Faiss (not supported to be installed with pip):
+`conda install -c pytorch -c nvidia faiss-gpu=1.11.0`
 
 3. Clone the repository: `git clone https://github.com/bastiscode/grasp`
 
 4. Go to directory and install with pip: `cd grasp && pip install -e .`
 
 5. Get indices for the knowledge graphs you want to use. All indices are available
-at [](https://iswc25-250.hopto.org/kg-index). For example, to get the indices for Wikidata:
+[publicly](https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.materials/kg-index).
+For example, to get the indices for Wikidata:
+
 ```bash
 # create index directory
 mkdir -p data/kg-index
 # download Wikidata index
-wget -P data/kg-index https://iswc25-250.hopto.org/kg-index/wikidata.tar.gz
+wget -P data/kg-index https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.materials/kg-index/wikidata.tar.gz
 # extract index
 tar -xzf data/kg-index/wikidata.tar.gz -C data/kg-index
 ```
-Optionally, you can also download example indices for few-shot learning. Example indices are always built from the train set of a benchmark and called `train.example-index`. For example, to get the example index for QALD-10 on Wikidata:
+
+Optionally, you can also download example indices for few-shot learning. Example indices are always
+built from the train set of a benchmark and called `train.example-index`.
+For example, to get the example index for QALD-10 on Wikidata:
+
 ```bash
 # create benchmark directory
 mkdir -p data/benchmark/wikidata/qald10
 # download example index
-wget -P data/benchmark/wikidata/qald10 https://iswc25-250.hopto.org/benchmark/wikidata/qald10/train.example-index.tar.gz
+wget -P data/benchmark/wikidata/qald10 https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.materials/benchmark/wikidata/qald10/train.example-index.tar.gz
 # extract example index
 tar -xzf data/benchmark/wikidata/qald10/train.example-index.tar.gz -C data/benchmark/wikidata/qald10
 ```
 
 6. Set `KG_INDEX_DIR` env variable: `export KG_INDEX_DIR=$(pwd)/data/kg-index`
+
 > We recommend to set it with conda, such that it is set automatically when you activate
 > the conda environment: `conda env config vars set KG_INDEX_DIR=$(pwd)/data/kg-index`
 
 7. Run GRASP:
+
 ```bash
 # MODEL, FN_SET, and KG need to be specified via env variables or
 # can be set directly in the config file. An example index for few-shot learning 
@@ -108,62 +118,76 @@ MODEL=openai/gpt-4.1 FN_SET=search_extended KG=wikidata grasp \
 --serve 8000 \
 --log-level DEBUG
 
-# For convenience, we also provide a config to run the server with all available KGs,
-# and model and function set already specified:
+# For convenience, we also provide a config to run the server with all available 
+# KGs, and model and function set already specified:
 grasp --config configs/serve.yaml --serve 8000 --log-level DEBUG
 ```
 
-## Run evaluation app
+### Run evaluation app
 
-Follow steps [here](apps/evaluation/README.md) to run the evaluation app.
+Follow [these instructions](apps/evaluation/README.md) to run the evaluation app.
 
-# Supported models
+## Supported models
 
 GRASP supports both commercial and open-source models.
 
-## OpenAI
+### OpenAI
 
 1. Set `OPENAI_API_KEY` or `API_KEY` env variable or `api_key` in the config file
-2. Set model to `openai/<model_name>` in the config file or with `MODEL` env variable, we used:
+2. Set model to `openai/<model_name>` in the config file or with
+`MODEL` env variable, we used:
+
 - `openai/gpt-4.1`
 - `openai/gpt-4.1-mini`
 - `openai/o4-mini`
 
-## Google Gemini
+### Google Gemini
 
 1. Set `GEMINI_API_KEY` or `API_KEY` env variable or `api_key` in the config file
-2. Set model to `gemini/<model_name>` in the config file or with `MODEL` env variable, we used:
+2. Set model to `gemini/<model_name>` in the config file or with
+`MODEL` env variable, we used:
+
 - `gemini/gemini-2.0-flash`
 - `gemini/gemini-2.5-flash-preview-04-17`
 
-## Local server with vLLM
+### Local server with vLLM
 
 1. Install vLLM with `pip install vllm`
 2. Run vLLM server with a model of your choice, see below
-3. Set model to `hosted_vllm/<model_name>` in the config file or with `MODEL` env variable, we used:
+3. Set model to `hosted_vllm/<model_name>` in the config file or with
+`MODEL` env variable, we used:
+
 - `hosted_vllm/Qwen/Qwen2.5-72B-Instruct` (and other sizes)
 - `hosted_vllm/Qwen/Qwen3-32B` (and other sizes)
-4. Set model_endpoint in the config file or with `MODEL_ENDPOINT` env variable to your vLLM server endpoint, by default this will be `http://localhost:8000/v1`
 
-### Run Qwen2.5
+4. Set model_endpoint in the config file or with `MODEL_ENDPOINT` env variable
+to your vLLM server endpoint, by default this will be `http://localhost:8000/v1`
 
-Change 72B to 7B, 14B, or 32B to run other sizes. Adapt the tensor parallel size to your GPU setup, we used two H100 GPUs for Qwen2.7 72B.
+#### Run Qwen2.5
+
+Change 72B to 7B, 14B, or 32B to run other sizes. Adapt the tensor parallel size to
+your GPU setup, we used two H100 GPUs for Qwen2.7 72B.
 
 ```bash
-vllm serve Qwen/Qwen2.5-72B-Instruct --tool-call-parser hermes --enable-auto-tool-choice --tensor-parallel-size 2
+vllm serve Qwen/Qwen2.5-72B-Instruct --tool-call-parser hermes \
+--enable-auto-tool-choice --tensor-parallel-size 2
 ```
 
-### Run Qwen3
+#### Run Qwen3
 
 Change 32B to 4B, 8B, or 14B to run other sizes.
 
 ```bash
-vllm serve Qwen/Qwen3-32B --enable-reasoning --reasoning-parser deepseek_r1 --tool-call-parser hermes --enable-auto-tool-choice
+vllm serve Qwen/Qwen3-32B --enable-reasoning --reasoning-parser deepseek_r1 \
+--tool-call-parser hermes --enable-auto-tool-choice
 ```
 
-# Misc
+## Misc
 
-To prepare some benchmark datasets with the [Makefile](Makefile), e.g. using `make wikidata-benchmarks`, you first need to clone [github.com/KGQA/KGQA-datasets](https://github.com/KGQA/KGQA-datasets) into `third_party`:
+To prepare some benchmark datasets with the [Makefile](Makefile),
+e.g. using `make wikidata-benchmarks`, you first need to clone
+[github.com/KGQA/KGQA-datasets](https://github.com/KGQA/KGQA-datasets) into `third_party`:
+
 ```bash
 mkdir -p third_party
 git clone https://github.com/KGQA/KGQA-datasets.git third_party/KGQA-datasets
