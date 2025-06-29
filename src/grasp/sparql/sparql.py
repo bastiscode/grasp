@@ -29,6 +29,10 @@ def get_index_dir() -> str | None:
     return os.getenv("KG_INDEX_DIR", None)
 
 
+def get_benchmark_dir() -> str | None:
+    return os.getenv("KG_BENCHMARK_DIR", None)
+
+
 def load_sparql_grammar() -> tuple[str, str]:
     sparql_grammar = resources.read_text("grasp.sparql.grammar", "sparql.y")
     sparql_lexer = resources.read_text("grasp.sparql.grammar", "sparql.l")

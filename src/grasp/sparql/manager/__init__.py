@@ -53,6 +53,32 @@ class WikidataPropertyMapping(Mapping):
         return set(WIKIDATA_PROPERTY_VARIANTS.keys())
 
 
+def load_data_and_mapping(
+    index_dir: str,
+    mapping_cls: Type[Mapping] | None = None,
+) -> tuple[IndexData, Mapping]:
+    try:
+        data = IndexData.load(
+            os.path.join(index_dir, "data.tsv"),
+            os.path.join(index_dir, "offsets.bin"),
+        )
+    except Exception as e:
+        raise ValueError(f"Failed to load index data from {index_dir}") from e
+
+    if mapping_cls is None:
+        mapping_cls = Mapping
+
+    try:
+        mapping = mapping_cls.load(
+            data,
+            os.path.join(index_dir, "mapping.bin"),
+        )
+    except Exception as e:
+        raise ValueError(f"Failed to load mapping from {index_dir}") from e
+
+    return data, mapping
+
+
 def load_index_and_mapping(
     index_dir: str,
     index_type: str,
@@ -69,13 +95,7 @@ def load_index_and_mapping(
     else:
         raise ValueError(f"Unknown index type {index_type}")
 
-    try:
-        data = IndexData.load(
-            os.path.join(index_dir, "data.tsv"),
-            os.path.join(index_dir, "offsets.bin"),
-        )
-    except Exception as e:
-        raise ValueError(f"Failed to load index data from {index_dir}") from e
+    data, mapping = load_data_and_mapping(index_dir, mapping_cls)
 
     try:
         index = index_cls.load(
@@ -86,18 +106,8 @@ def load_index_and_mapping(
     except Exception as e:
         raise ValueError(f"Failed to load {index_type} index from {index_dir}") from e
 
-    if mapping_cls is None:
-        mapping_cls = Mapping
-
-    try:
-        mapping = mapping_cls.load(
-            data,
-            os.path.join(index_dir, "mapping.bin"),
-        )
-    except Exception as e:
-        raise ValueError(f"Failed to load mapping from {index_dir}") from e
-
     end = time.perf_counter()
+
     logger.debug(f"Loading {index_type} index from {index_dir} took {end - start:.2f}s")
 
     return index, mapping
@@ -161,19 +171,23 @@ def load_kg_indices(
     name: str,
     entities_dir: str | None = None,
     entities_type: str | None = None,
+    entities_kwargs: dict[str, Any] | None = None,
     properties_dir: str | None = None,
     properties_type: str | None = None,
+    properties_kwargs: dict[str, Any] | None = None,
 ) -> tuple[SearchIndex, SearchIndex, Mapping, Mapping]:
     ent_index, ent_mapping = load_entity_index_and_mapping(
         name,
         entities_dir,
         entities_type,
+        **(entities_kwargs or {}),
     )
 
     prop_index, prop_mapping = load_property_index_and_mapping(
         name,
         properties_dir,
         properties_type,
+        **(properties_kwargs or {}),
     )
 
     return ent_index, prop_index, ent_mapping, prop_mapping
@@ -183,8 +197,10 @@ def load_kg_manager(
     name: str,
     entities_dir: str | None = None,
     entities_type: str | None = None,
+    entities_kwargs: dict[str, Any] | None = None,
     properties_dir: str | None = None,
     properties_type: str | None = None,
+    properties_kwargs: dict[str, Any] | None = None,
     prefix_file: str | None = None,
     endpoint: str | None = None,
 ) -> KgManager:
@@ -192,8 +208,10 @@ def load_kg_manager(
         name,
         entities_dir,
         entities_type,
+        entities_kwargs,
         properties_dir,
         properties_type,
+        properties_kwargs,
     )
     prefixes = load_kg_prefixes(name, prefix_file)
     return KgManager(name, *indices, prefixes, endpoint)

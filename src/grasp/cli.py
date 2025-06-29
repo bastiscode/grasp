@@ -295,10 +295,19 @@ def run(args: argparse.Namespace) -> None:
         example_index = SimilarityIndex.load(example_data, kg_config.example_index)
         example_indices[kg_config.name] = example_index
 
-    managers = [
-        load_kg_manager(**kg.model_dump(exclude={"example_index"}))
-        for kg in config.knowledge_graphs
-    ]
+    managers: list[KgManager] = []
+    for kg in config.knowledge_graphs:
+        kwargs = {}
+        if managers and isinstance(managers[0].property_index, SimilarityIndex):
+            # reuse embedding model
+            emb_model = managers[0].property_index.model
+            kwargs["model"] = emb_model
+
+        manager = load_kg_manager(
+            **kg.model_dump(exclude={"example_index"}),
+            properties_kwargs=kwargs,
+        )
+        managers.append(manager)
 
     functions = get_functions(
         args.task,
@@ -1061,11 +1070,21 @@ def serve(args: argparse.Namespace) -> None:
         example_index = SimilarityIndex.load(example_data, kg_config.example_index)
         example_indices[kg_config.name] = example_index
 
-    managers = [
-        load_kg_manager(**kg.model_dump(exclude={"example_index"}))
-        for kg in config.knowledge_graphs
-    ]
-    kgs = [manager.kg for manager in managers]
+    managers: list[KgManager] = []
+    kgs: list[str] = []
+    for kg in config.knowledge_graphs:
+        kwargs = {}
+        if managers and isinstance(managers[0].property_index, SimilarityIndex):
+            # reuse embedding model
+            emb_model = managers[0].property_index.model
+            kwargs["model"] = emb_model
+
+        manager = load_kg_manager(
+            **kg.model_dump(exclude={"example_index"}),
+            properties_kwargs=kwargs,
+        )
+        managers.append(manager)
+        kgs.append(manager.kg)
 
     @app.get("/knowledge_graphs")
     async def _knowledge_graphs():
