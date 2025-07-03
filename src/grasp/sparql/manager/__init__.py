@@ -154,6 +154,20 @@ def load_property_index_and_mapping(
     )
 
 
+def load_example_index(dir: str, **kwargs: Any) -> SimilarityIndex:
+    data = IndexData.load(
+        os.path.join(dir, "data.tsv"),
+        os.path.join(dir, "offsets.bin"),
+    )
+
+    index = SimilarityIndex.load(
+        data,
+        os.path.join(dir, "index"),
+        **kwargs,
+    )
+    return index
+
+
 def load_kg_prefixes(
     name: str,
     prefix_file: str | None = None,

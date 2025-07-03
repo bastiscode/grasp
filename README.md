@@ -1,6 +1,10 @@
 # GRASP - Generic Reasoning and SPARQL generation across Knowledge Graphs
 
-Code and data for the corresponding ISWC 2025 paper.
+## News
+
+- July Xth 2025:
+  - arXiv preprint available at [arxiv.org/abs/2407.XXXX](https://arxiv.org/abs/2407.XXXX)
+  - Web app for evaluation and model comparison online at [grasp.cs.uni-freiburg.de/evaluate](https://grasp.cs.uni-freiburg.de/evaluate)
 
 ## Overview and directory structure
 
@@ -46,32 +50,33 @@ Follow these steps to run GRASP and the evaluation app.
 2. Install Faiss (not supported to be installed with pip):
 `conda install -c pytorch -c nvidia faiss-gpu=1.11.0`
 
-3. Clone the repository: `git clone https://github.com/bastiscode/grasp`
+3. Clone the repository: `git clone https://github.com/ad-freiburg/grasp`
 
 4. Go to directory and install with pip: `cd grasp && pip install -e .`
 
 5. Get indices for the knowledge graphs you want to use. All indices are available
-[publicly](https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.materials/kg-index).
+[publicly](https://ad-publications.cs.uni-freiburg.de/grasp/kg-index).
 For example, to get the indices for Wikidata:
 
 ```bash
 # create index directory
 mkdir -p data/kg-index
 # download Wikidata index
-wget -P data/kg-index https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.materials/kg-index/wikidata.tar.gz
+wget -P data/kg-index https://ad-publications.cs.uni-freiburg.de/grasp/kg-index/wikidata.tar.gz
 # extract index
 tar -xzf data/kg-index/wikidata.tar.gz -C data/kg-index
 ```
 
-Optionally, you can also download example indices for few-shot learning. Example indices are always
-built from the train set of a benchmark and called `train.example-index`.
+Optionally, you can also download example indices for few-shot learning.
+Example indices are always built from the train set of a benchmark
+and called `train.example-index`.
 For example, to get the example index for QALD-10 on Wikidata:
 
 ```bash
 # create benchmark directory
 mkdir -p data/benchmark/wikidata/qald10
 # download example index
-wget -P data/benchmark/wikidata/qald10 https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.materials/benchmark/wikidata/qald10/train.example-index.tar.gz
+wget -P data/benchmark/wikidata/qald10 https://ad-publications.cs.uni-freiburg.de/grasp/benchmark/wikidata/qald10/train.example-index.tar.gz
 # extract example index
 tar -xzf data/benchmark/wikidata/qald10/train.example-index.tar.gz -C data/benchmark/wikidata/qald10
 ```
@@ -165,8 +170,8 @@ to your vLLM server endpoint, by default this will be `http://localhost:8000/v1`
 
 #### Run Qwen2.5
 
-Change 72B to 7B, 14B, or 32B to run other sizes. Adapt the tensor parallel size to
-your GPU setup, we used two H100 GPUs for Qwen2.7 72B.
+Change 72B to 7B, 14B, or 32B to run other sizes. Adapt the tensor parallel size
+to your GPU setup, we used two H100 GPUs for Qwen2.7 72B.
 
 ```bash
 vllm serve Qwen/Qwen2.5-72B-Instruct --tool-call-parser hermes \

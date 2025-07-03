@@ -19,6 +19,7 @@ random_examples: env(RANDOM_EXAMPLES:false)
 knowledge_graphs:
   - name: wikidata
     endpoint: env(WD_ENDPOINT:null)
+    example_index: env(WD_EXAMPLES:null)
   - name: freebase
   - name: dblp
   - name: dbpedia

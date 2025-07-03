@@ -3,7 +3,7 @@ import json
 import os
 import time
 
-from search_index import SimilarityIndex
+from search_index import IndexData, SimilarityIndex
 
 from grasp.utils import Sample
 
@@ -12,7 +12,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=str, help="File to index")
     parser.add_argument("out", type=str, help="Output index dir")
-    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
@@ -30,9 +29,11 @@ def clean(s: str) -> str:
 
 def build(args: argparse.Namespace) -> None:
     data_file = f"{args.out}/data.tsv"
+    offsets_file = f"{args.out}/offsets.bin"
     print(f"Building index from {args.input} to {args.out}")
+    index_dir = os.path.join(args.out, "index")
     if not os.path.exists(args.out) or args.overwrite:
-        os.makedirs(args.out, exist_ok=True)
+        os.makedirs(index_dir, exist_ok=True)
         with open(args.input, "r") as inf, open(data_file, "w") as of:
             # write header
             of.write("question\tscore (unused)\tparaphrases\tjson_data\n")
@@ -50,19 +51,24 @@ def build(args: argparse.Namespace) -> None:
                     )
                 )
 
+        IndexData.build(data_file, offsets_file)
+        data = IndexData.load(data_file, offsets_file)
+
         start = time.perf_counter()
         SimilarityIndex.build(
-            data_file,
-            args.out,
+            data,
+            index_dir,
             show_progress=True,
             batch_size=args.batch_size,
         )
         end = time.perf_counter()
         print(f"Built index in {end - start:.2f} seconds")
 
-    index = SimilarityIndex.load(data_file, args.out)
+    else:
+        data = IndexData.load(data_file, offsets_file)
+
     start = time.perf_counter()
-    index.load(data_file, args.out)
+    index = SimilarityIndex.load(data, index_dir)
     end = time.perf_counter()
     print(f"Loaded index in {end - start:.2f} seconds")
 
@@ -74,7 +80,7 @@ def build(args: argparse.Namespace) -> None:
     end = time.perf_counter()
     print(f"Found {len(matches)} matches in {1000 * (end - start):.2f} ms:")
     for i, (id, score) in enumerate(matches):
-        print(f"{i+1}. {score:.4f}: {index.get_name(id)}")
+        print(f"{i + 1}. {score:.4f}: {index.get_name(id)}")
 
 
 if __name__ == "__main__":

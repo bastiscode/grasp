@@ -30,7 +30,7 @@ from grasp.functions import (
     get_functions,
 )
 from grasp.sparql.data import get_sparql_items, selections_from_items
-from grasp.sparql.manager import KgManager, load_kg_manager
+from grasp.sparql.manager import KgManager, load_example_index, load_kg_manager
 from grasp.utils import get_answer_or_cancel, is_invalid_model_output
 
 MAX_FEEDBACKS = 2
@@ -291,8 +291,7 @@ def run(args: argparse.Namespace) -> None:
         if kg_config.example_index is None:
             continue
 
-        example_data = os.path.join(kg_config.example_index, "data.tsv")
-        example_index = SimilarityIndex.load(example_data, kg_config.example_index)
+        example_index = load_example_index(kg_config.example_index)
         example_indices[kg_config.name] = example_index
 
     managers: list[KgManager] = []
@@ -1066,8 +1065,7 @@ def serve(args: argparse.Namespace) -> None:
         if kg_config.example_index is None:
             continue
 
-        example_data = os.path.join(kg_config.example_index, "data.tsv")
-        example_index = SimilarityIndex.load(example_data, kg_config.example_index)
+        example_index = load_example_index(kg_config.example_index)
         example_indices[kg_config.name] = example_index
 
     managers: list[KgManager] = []
