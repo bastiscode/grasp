@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 // change this config to suit your setup
-const hostAndPort = "ad-sparql-kgqa.cs.uni-freiburg.de";
+const hostAndPort = "grasp.cs.uni-freiburg.de";
 const secure = true;
 const baseURL = "/api";
 
