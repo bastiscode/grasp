@@ -22,3 +22,5 @@ knowledge_graphs:
   - name: env(KG)
     endpoint: env(KG_ENDPOINT:null)
     example_index: env(KG_EXAMPLES:null)
+    entities_type: env(ENTITIES_TYPE:null)
+    properties_type: env(PROPERTIES_TYPE:null)

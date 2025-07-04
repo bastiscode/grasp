@@ -190,12 +190,28 @@ def load_kg_indices(
     properties_type: str | None = None,
     properties_kwargs: dict[str, Any] | None = None,
 ) -> tuple[SearchIndex, SearchIndex, Mapping, Mapping]:
+    if entities_type != "similarity" and entities_kwargs:
+        # entities kwargs only used for similarity index
+        entities_kwargs.clear()
+
     ent_index, ent_mapping = load_entity_index_and_mapping(
         name,
         entities_dir,
         entities_type,
         **(entities_kwargs or {}),
     )
+
+    if properties_type == "prefix" and properties_kwargs:
+        # properties kwargs only used for prefix index
+        properties_kwargs.clear()
+
+    # try to share embedding model between entities and properties
+    # if entities also use a similarity index
+    if entities_type == "similarity" and (
+        not properties_kwargs or properties_kwargs.get("model") is None
+    ):
+        properties_kwargs = properties_kwargs or {}
+        properties_kwargs["model"] = ent_index.model
 
     prop_index, prop_mapping = load_property_index_and_mapping(
         name,

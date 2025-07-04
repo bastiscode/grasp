@@ -1,4 +1,5 @@
 import argparse
+from itertools import dropwhile
 import json
 import os
 import random
@@ -12,16 +13,16 @@ import litellm
 from fastapi import WebSocketDisconnect
 from litellm import completion
 from pydantic import BaseModel, conlist
-from search_index.similarity import SimilarityIndex
+from search_index.similarity import EmbeddingModel, SimilarityIndex
 from termcolor import colored
 from universal_ml_utils.configuration import load_config
-from universal_ml_utils.io import load_jsonl
+from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import extract_field, partition_by
 
 from grasp.configs import Config
 from grasp.functions import (
-    MIN_SCORE,
+    MIN_EXAMPLE_SCORE,
     call_function,
     execute_sparql,
     find_examples,
@@ -271,10 +272,14 @@ def format_function_call(fn_name: str, fn_args: dict) -> str:
     return f"{fn_name}({fn_args_str})"
 
 
-def write_jsonl_file(items: list, file: str) -> None:
-    with open(file, "w") as f:
-        for item in items:
-            f.write(json.dumps(item) + "\n")
+def find_embedding_model(managers: list[KgManager]) -> EmbeddingModel | None:
+    return next(
+        dropwhile(
+            lambda m: m is None,
+            (manager.get_embedding_model() for manager in managers),
+        ),
+        None,
+    )
 
 
 def run(args: argparse.Namespace) -> None:
@@ -294,17 +299,18 @@ def run(args: argparse.Namespace) -> None:
         example_index = load_example_index(kg_config.example_index)
         example_indices[kg_config.name] = example_index
 
+    emb_model: EmbeddingModel | None = None
     managers: list[KgManager] = []
     for kg in config.knowledge_graphs:
-        kwargs = {}
-        if managers and isinstance(managers[0].property_index, SimilarityIndex):
-            # reuse embedding model
-            emb_model = managers[0].property_index.model
-            kwargs["model"] = emb_model
+        if emb_model is None:
+            # find and set embedding model
+            emb_model = find_embedding_model(managers)
 
         manager = load_kg_manager(
             **kg.model_dump(exclude={"example_index"}),
-            properties_kwargs=kwargs,
+            # pass model as kwargs for the correct index types
+            entities_kwargs={"model": emb_model},
+            properties_kwargs={"model": emb_model},
         )
         managers.append(manager)
 
@@ -381,7 +387,7 @@ def run(args: argparse.Namespace) -> None:
         else:
             outputs.append(output)
 
-        write_jsonl_file(outputs, args.output_file)
+        dump_jsonl(outputs, args.output_file)
 
 
 def get_sparql_qa_feedback_system_message(managers: list[KgManager]) -> dict:
@@ -675,7 +681,7 @@ def generate(
                 question,
                 config.num_examples,
                 known,
-                min_score=MIN_SCORE,
+                min_score=MIN_EXAMPLE_SCORE,
             )
             fn_name = "find_similar_examples"
             fn_args["question"] = question
@@ -1068,18 +1074,18 @@ def serve(args: argparse.Namespace) -> None:
         example_index = load_example_index(kg_config.example_index)
         example_indices[kg_config.name] = example_index
 
+    emb_model: EmbeddingModel | None = None
     managers: list[KgManager] = []
     kgs: list[str] = []
     for kg in config.knowledge_graphs:
-        kwargs = {}
-        if managers and isinstance(managers[0].property_index, SimilarityIndex):
-            # reuse embedding model
-            emb_model = managers[0].property_index.model
-            kwargs["model"] = emb_model
+        if emb_model is None:
+            # find and set embedding model
+            emb_model = find_embedding_model(managers)
 
         manager = load_kg_manager(
             **kg.model_dump(exclude={"example_index"}),
-            properties_kwargs=kwargs,
+            entities_kwargs={"model": emb_model},
+            properties_kwargs={"model": emb_model},
         )
         managers.append(manager)
         kgs.append(manager.kg)

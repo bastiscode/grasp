@@ -36,7 +36,7 @@ def split_iri(iri: str) -> tuple[str, str]:
     if last == -1:
         return "", iri[1:-1]
     else:
-        return iri[1:last], iri[last + 1:-1]
+        return iri[1:last], iri[last + 1 : -1]
 
 
 def camel_case_split(s: str) -> str:
@@ -100,7 +100,7 @@ def get_osm_planet_score_from_wikidata_id(wid: str) -> str:
 
 
 def clean(s: str) -> str:
-    return s.replace("\n", " ").replace("\t", " ")
+    return " ".join(s.split())
 
 
 if __name__ == "__main__":

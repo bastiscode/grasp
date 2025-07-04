@@ -10,6 +10,7 @@ from search_index import (
     PrefixIndex,
     SearchIndex,  # type: ignore
 )
+from search_index.similarity import EmbeddingModel
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.table import generate_table
 
@@ -24,10 +25,7 @@ from grasp.sparql.constants import (
     SelectRow,
     get_endpoint,
 )
-from grasp.sparql.manager.utils import (
-    get_common_sparql_prefixes,
-    get_index_desc,
-)
+from grasp.sparql.manager.utils import get_common_sparql_prefixes, is_sim_index
 from grasp.sparql.mapping import Mapping
 from grasp.sparql.selection import Alternative, Selection, group_selections
 from grasp.sparql.sparql import (
@@ -73,10 +71,6 @@ class KgManager:
         self.entity_mapping = entity_mapping
         self.property_mapping = property_mapping
 
-        self.entity_index_desc = get_index_desc(self.entity_index)
-        self.property_index_desc = get_index_desc(self.property_index)
-        self.default_index_desc = get_index_desc()
-
         self.sparql_parser = load_sparql_parser()
         self.iri_literal_parser = load_iri_and_literal_parser()
 
@@ -95,6 +89,14 @@ class KgManager:
         self.endpoint = endpoint or get_endpoint(self.kg)
 
         self.logger = get_logger(f"{self.kg.upper()} KG MANAGER")
+
+    def get_embedding_model(self) -> EmbeddingModel | None:
+        if is_sim_index(self.entity_index):
+            return self.entity_index.model
+        elif is_sim_index(self.property_index):
+            return self.property_index.model
+        else:
+            return None
 
     def prettify(
         self,

@@ -34,7 +34,11 @@ from grasp.sparql.sparql import (
 
 # set up some global variables
 MAX_RESULTS = 65536
+# avoid negative cos sims for fp32 indices, does
+# not restrict ubinary indices
 MIN_SCORE = 0.5
+# similar examples should be at least have this cos sim
+MIN_EXAMPLE_SCORE = 0.5
 
 
 def get_feedback_functions() -> list[dict]:
@@ -642,7 +646,7 @@ def call_function(
             fn_args["question"],
             kwargs["num_examples"],
             known,
-            min_score=MIN_SCORE,
+            min_score=MIN_EXAMPLE_SCORE,
         )
 
     elif fn_name == "execute":

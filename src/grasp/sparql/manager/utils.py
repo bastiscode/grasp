@@ -1,4 +1,4 @@
-from search_index import PrefixIndex, SearchIndex
+from search_index import SearchIndex
 
 
 def get_common_sparql_prefixes() -> dict[str, str]:
@@ -24,14 +24,17 @@ def get_common_sparql_prefixes() -> dict[str, str]:
     }
 
 
-def get_index_desc(index: SearchIndex | None = None) -> str:
-    # prefix index is the default
-    if isinstance(index, PrefixIndex) or index is None:
-        index_type = "Keyword index"
+def get_index_desc(index: SearchIndex) -> str:
+    if not is_sim_index(index):
+        index_type = "Prefix-keyword index"
         dist_info = "number of exact and prefix keyword matches"
 
     else:
-        index_type = "Vector embedding index"
-        dist_info = "cosine similarity"
+        index_type = "Similarity index"
+        dist_info = "vector embedding distance"
 
     return f"{index_type} ranking by {dist_info}"
+
+
+def is_sim_index(index: SearchIndex) -> bool:
+    return index.get_type() == "similarity"
