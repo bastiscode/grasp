@@ -7,9 +7,12 @@ seed: env(SEED:null)
 fn_set: env(FN_SET)
 
 list_k: env(LIST_K:10)
+search_top_k: env(SEARCH_TOP_K:10)
+result_max_rows: env(RESULT_MAX_ROWS:10)
+result_max_columns: env(RESULT_MAX_COLUMNS:10)
 
-temperature: env(TEMPERATURE:0.2)
-top_p: env(TOP_P:0.9)
+temperature: env(TEMPERATURE:0.1)
+top_p: env(TOP_P:0.7)
 reasoning_effort: env(REASONING_EFFORT:null)
 
 feedback: env(FEEDBACK:false)

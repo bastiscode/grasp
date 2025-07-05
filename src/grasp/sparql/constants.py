@@ -133,6 +133,15 @@ class SelectResult:
     def __len__(self) -> int:
         return len(self.data)
 
+    def bindings(
+        self,
+        start: int = 0,
+        end: int | None = None,
+    ) -> Iterator[tuple[Binding, ...]]:
+        for row in self.rows(start, end):
+            bindings = tuple(row[var] for var in self.variables if var in row)
+            yield bindings
+
     def rows(self, start: int = 0, end: int | None = None) -> Iterator[SelectRow]:
         start = max(start, 0)
 
@@ -147,7 +156,7 @@ class SelectResult:
                 yield {}
             else:
                 yield {
-                    var: Binding.from_dict(data[var]) 
+                    var: Binding.from_dict(data[var])
                     for var in self.variables
                     if var in data
                 }

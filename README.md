@@ -3,8 +3,8 @@
 ## News
 
 - July Xth 2025:
+  - Code release
   - arXiv preprint available at [arxiv.org/abs/2407.XXXX](https://arxiv.org/abs/2407.XXXX)
-  - Web app for evaluation and model comparison online at [grasp.cs.uni-freiburg.de/evaluate](https://grasp.cs.uni-freiburg.de/evaluate)
 
 ## Overview and directory structure
 

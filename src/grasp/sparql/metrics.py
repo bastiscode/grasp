@@ -5,13 +5,13 @@ from typing import Any, Iterable
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from grasp.sparql.constants import AskResult, SelectResult, SelectRow
+from grasp.sparql.constants import AskResult, SelectResult
 from grasp.sparql.sparql import execute
 
 
-def exact_f1_score(pred: Iterable[SelectRow], target: Iterable[SelectRow]) -> float:
-    pred_set = Counter(tuple(p) for p in pred)
-    target_set = Counter(tuple(t) for t in target)
+def exact_f1_score(pred: Iterable[tuple], target: Iterable[tuple]) -> float:
+    pred_set = Counter(pred)
+    target_set = Counter(target)
 
     tp = (pred_set & target_set).total()
     if tp == 0:
@@ -25,12 +25,12 @@ def exact_f1_score(pred: Iterable[SelectRow], target: Iterable[SelectRow]) -> fl
 
 
 def assignment_f1_score(
-    pred: Iterable[SelectRow],
-    target: Iterable[SelectRow],
+    pred: Iterable[Iterable],
+    target: Iterable[Iterable],
 ) -> float:
     # create a matrix of distances between pred and target
-    pred = [Counter(p) for p in pred]
-    target = [Counter(t) for t in target]
+    pred = [Counter(p) for p in pred]  # type: ignore
+    target = [Counter(t) for t in target]  # type: ignore
 
     scores = np.zeros((len(pred), len(target)), dtype=np.float32)
 
@@ -76,9 +76,9 @@ def f1_score(
         exact_after = exact
 
     if len(pred) > exact_after or len(target) > exact_after:
-        return exact_f1_score(pred.rows(), target.rows())
+        return exact_f1_score(pred.bindings(), target.bindings())
     else:
-        return assignment_f1_score(pred.rows(), target.rows())
+        return assignment_f1_score(pred.bindings(), target.bindings())
 
 
 def get_result_size(result: SelectResult | AskResult | None) -> int:
@@ -243,9 +243,10 @@ class PerformanceTests(unittest.TestCase):
 
         for size in sizes:
             # Create test data with 'size' rows, each with 5 elements
-            pred = [tuple(f"val{i*j}" for j in range(5)) for i in range(size)]
+            pred = [tuple(f"val{i * j}" for j in range(5)) for i in range(size)]
             target = [
-                tuple(f"val{(i+size//2)*j}" for j in range(5)) for i in range(size)
+                tuple(f"val{(i + size // 2) * j}" for j in range(5))
+                for i in range(size)
             ]
 
             # Measure execution time
