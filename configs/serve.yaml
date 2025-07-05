@@ -6,8 +6,8 @@ seed: env(SEED:null)
 
 fn_set: env(FN_SET:search_extended)
 
-temperature: env(TEMPERATURE:0.2)
-top_p: env(TOP_P:0.9)
+temperature: env(TEMPERATURE:0.1)
+top_p: env(TOP_P:0.7)
 reasoning_effort: env(REASONING_EFFORT:null)
 
 feedback: env(FEEDBACK:true)
