@@ -2,9 +2,9 @@
 
 ## News
 
-- July Xth 2025:
+- July 10th 2025:
   - Code release
-  - arXiv preprint available at [arxiv.org/abs/2407.XXXX](https://arxiv.org/abs/2407.XXXX)
+  - Data available at [ad-publications.cs.uni-freiburg.de/grasp](https://ad-publications.cs.uni-freiburg.de/grasp)
 
 ## Overview and directory structure
 
