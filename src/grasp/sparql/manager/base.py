@@ -588,8 +588,6 @@ class KgManager:
         max_candidates: int | None = None,
         timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
         max_retries: int = 1,
-        skip_autocomplete: bool = False,
-        fail_on_invalid: bool = False,
     ) -> dict[ObjType, Any]:
         # start with defaults
         search_items = self.get_default_search_items(position)
@@ -637,7 +635,9 @@ class KgManager:
         # split result into entities, properties, other iris
         # and literals
         start = time.perf_counter()
-        parsed_search_items = self.parse_bindings(row[0] for row in result.rows())
+        parsed_search_items = self.parse_bindings(
+            next(iter(bindings), None) for bindings in result.bindings()
+        )
         end = time.perf_counter()
         self.logger.debug(
             f"Parsing {len(result):,} search items took {1000 * (end - start):.2f}ms"
