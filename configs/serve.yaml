@@ -10,7 +10,7 @@ temperature: env(TEMPERATURE:0.1)
 top_p: env(TOP_P:0.7)
 reasoning_effort: env(REASONING_EFFORT:null)
 
-feedback: env(FEEDBACK:true)
+feedback: env(FEEDBACK:false)
 know_before_use: env(KNOW_BEFORE_USE:false)
 
 force_examples: env(FORCE_EXAMPLES:false)
