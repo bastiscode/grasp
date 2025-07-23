@@ -16,12 +16,17 @@ from grasp.sparql.sparql import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     type_group = parser.add_mutually_exclusive_group()
-    type_group.add_argument("--dblp", action="store_true")
-    type_group.add_argument("--uniprot", action="store_true")
-    type_group.add_argument("--osm-planet-entities", action="store_true")
-    type_group.add_argument("--osm-planet", action="store_true")
-    type_group.add_argument("--imdb-properties", action="store_true")
-    type_group.add_argument("--orkg", action="store_true")
+    type_group.add_argument(
+        "--osm-planet-entities",
+        action="store_true",
+        help="Inputs are OSM Planet entities",
+    )
+    type_group.add_argument(
+        "--kg",
+        type=str,
+        default=None,
+        help="Specify knowledge graph for label fallback",
+    )
     return parser.parse_args()
 
 
@@ -72,6 +77,11 @@ def get_label_from_camel_case_id(kg: str, obj_id: str) -> str:
         obj_name = obj_id[len(long) : -1]
 
     return camel_case_split(obj_name)
+
+
+def replace_underscores_and_hyphens(s: str) -> str:
+    # replace underscores and hyphens with spaces
+    return s.replace("_", " ").replace("-", " ")
 
 
 WD_DATA: IndexData | None = None
@@ -130,16 +140,9 @@ if __name__ == "__main__":
 
         if not label:
             # label is empty, try to get it from the object id
-            if args.dblp:
-                label = get_label_from_camel_case_id("dblp", id)
-            elif args.uniprot:
-                label = get_label_from_camel_case_id("uniprot", id)
-            elif args.osm_planet or args.osm_planet_entities:
-                label = get_label_from_camel_case_id("osm-planet", id)
-            elif args.imdb_properties:
-                label = get_label_from_camel_case_id("imdb", id)
-            elif args.orkg:
-                label = get_label_from_camel_case_id("orkg", id)
+            if args.kg is not None:
+                label = get_label_from_camel_case_id(args.kg, id)
+                label = replace_underscores_and_hyphens(label)
             elif syns:
                 # use the first synonym as label
                 # keep rest of synonyms
