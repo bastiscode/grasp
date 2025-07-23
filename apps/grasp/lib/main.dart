@@ -113,14 +113,16 @@ class _GRASPState extends State<GRASP> {
       await channel?.sink.close();
       channel = null;
 
+      // open new ws connection
+      final newChannel = WebSocketChannel.connect(Uri.parse(wsEndpoint));
+      await newChannel.ready;
+
       // get stuff
       var res = await http.get(Uri.parse(configEndpoint));
       final newConfig = jsonDecode(res.body);
       res = await http.get(Uri.parse(kgEndpoint));
       final newKgs = jsonDecode(res.body).cast<String>() as List<String>;
       assert(newKgs.isNotEmpty);
-      final newChannel = WebSocketChannel.connect(Uri.parse(wsEndpoint));
-      await newChannel.ready;
 
       // set stuff
       final prefs = await SharedPreferences.getInstance();
@@ -210,17 +212,31 @@ class _GRASPState extends State<GRASP> {
     setState(() {});
   }
 
-  @override
-  void initState() {
-    super.initState();
-
+  void startConnectTimer() {
     timer = Timer.periodic(Duration(seconds: retry), (_) async {
       if (connected) return;
 
       await connect();
-      initial = false;
       setState(() {});
     });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    connect().then(
+      (_) {
+        startConnectTimer();
+        initial = false;
+        setState(() {});
+      },
+      onError: (_) {
+        startConnectTimer();
+        initial = false;
+        setState(() {});
+      },
+    );
   }
 
   @override
