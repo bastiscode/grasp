@@ -835,10 +835,6 @@ def generate(
                 )
             except Exception as e:
                 result = f"Failed to call function {fn_name}:\n{e}"
-                # useful for debugging
-                # import traceback
-                #
-                # logger.debug(traceback.format_exc())
 
             tool_msg = {"role": "tool", "content": result, "tool_call_id": tool_call.id}
             logger.debug(format_message(tool_msg))
