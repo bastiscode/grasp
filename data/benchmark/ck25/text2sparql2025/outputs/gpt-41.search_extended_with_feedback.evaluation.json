@@ -1,0 +1,652 @@
+{
+  "46": {
+    "target": {
+      "err": null,
+      "size": 5
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?supplier ( AVG( ?reliability ) AS ?avgReliability ) ( SAMPLE( ?label ) AS ?supplierLabel ) WHERE {\n  ?product pv:hasSupplier ?supplier .\n  ?product pv:reliabilityIndex ?reliability .\n  OPTIONAL {\n    ?supplier rdfs:label ?label\n  }\n}\nGROUP BY ?supplier\nORDER BY DESC ( ?avgReliability )\nLIMIT 5",
+      "err": null,
+      "size": 5,
+      "score": 1.0,
+      "elapsed": 29.51435738801956
+    }
+  },
+  "36": {
+    "target": {
+      "err": null,
+      "size": 3
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?category ( COUNT( ?agent ) AS ?count ) ( SAMPLE( ?label ) AS ?categoryLabel ) WHERE {\n  ?agent pv:areaOfExpertise ?category .\n  OPTIONAL {\n    ?category rdfs:label ?label\n  }\n}\nGROUP BY ?category\nORDER BY DESC ( ?count )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 0.5,
+      "elapsed": 88.24564767896663
+    }
+  },
+  "22": {
+    "target": {
+      "err": null,
+      "size": 6
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?compatibleProduct ?label WHERE {\n  prodi:hw-U990-5234138 pv:compatibleProduct ?compatibleProduct .\n  OPTIONAL {\n    ?compatibleProduct rdfs:label ?label\n  }\n}",
+      "err": null,
+      "size": 6,
+      "score": 1.0,
+      "elapsed": 25.16297614807263
+    }
+  },
+  "25": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?coil ?weight ?depth ?width ?height ( ( ?weight / ( ?depth * ?width * ?height ) ) AS ?density ) WHERE {\n  ?coil pv:hasCategory prodi:prod-cat-Coil ; pv:weight_g ?weight ; pv:depth_mm ?depth ; pv:width_mm ?width ; pv:height_mm ?height .\n}\nORDER BY DESC ( ?density )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 38.667128880973905
+    }
+  },
+  "44": {
+    "target": {
+      "err": null,
+      "size": 93
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?item ?label ?width WHERE {\n  {\n    SELECT ?item ?label ?width ?rowNum WHERE {\n      {\n        SELECT ?item ?label ?width ( COUNT( ?other ) + 1 AS ?rowNum ) WHERE {\n          ?item a pv:Hardware ; pv:width_mm ?width .\n          OPTIONAL {\n            ?item rdfs:label ?label .\n          }\n          ?other a pv:Hardware ; pv:width_mm ?otherWidth .\n          FILTER ( ?otherWidth > ?width )\n        }\n        GROUP BY ?item ?label ?width\n      }\n    }\n  }\n  {\n    SELECT ( CEIL( COUNT( ?item ) * 0.1 ) AS ?topN ) WHERE {\n      ?item a pv:Hardware ; pv:width_mm ?width .\n    }\n  }\n  FILTER ( ?rowNum <= ?topN )\n}\nORDER BY DESC ( ?width )",
+      "err": null,
+      "size": 93,
+      "score": 0.45856353241839604,
+      "elapsed": 46.87206692399923
+    }
+  },
+  "1": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "SELECT ?property ?object WHERE {\n  <http://ld.company.org/prod-instances/empl-Karen.Brant@company.org> ?property ?object\n}",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 23.88728289701976
+    }
+  },
+  "27": {
+    "target": {
+      "err": null,
+      "size": 47
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?employee ?name ?email ?phone WHERE {\n  ?employee a pv:Employee .\n  OPTIONAL {\n    ?employee pv:name ?name\n  }\n  OPTIONAL {\n    ?employee pv:email ?email\n  }\n  OPTIONAL {\n    ?employee pv:phone ?phone\n  }\n  FILTER NOT EXISTS {\n    ?other pv:hasManager ?employee\n  }\n}\nORDER BY ?name",
+      "err": null,
+      "size": 47,
+      "score": 1.0,
+      "elapsed": 35.412631804007106
+    }
+  },
+  "30": {
+    "target": {
+      "err": null,
+      "size": 4
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?department ?name ?label ( COUNT( ?employee ) AS ?employeeCount ) WHERE {\n  ?department rdf:type pv:Department .\n  OPTIONAL {\n    ?department pv:name ?name\n  }\n  OPTIONAL {\n    ?department rdfs:label ?label\n  }\n  ?employee pv:memberOf ?department .\n}\nGROUP BY ?department ?name ?label\nHAVING ( COUNT( ?employee ) > 5 )\nORDER BY DESC ( ?employeeCount )",
+      "err": null,
+      "size": 5,
+      "score": 0.5714285714285715,
+      "elapsed": 44.45182765298523
+    }
+  },
+  "31": {
+    "target": {
+      "err": null,
+      "size": 26
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?category ?categoryLabel ?minWeight ( GROUP_CONCAT( DISTINCT ?lightest ; SEPARATOR = \", \" ) AS ?lightestItems ) ( GROUP_CONCAT( DISTINCT ?lightestLabel ; SEPARATOR = \", \" ) AS ?lightestLabels ) ?maxWeight ( GROUP_CONCAT( DISTINCT ?heaviest ; SEPARATOR = \", \" ) AS ?heaviestItems ) ( GROUP_CONCAT( DISTINCT ?heaviestLabel ; SEPARATOR = \", \" ) AS ?heaviestLabels ) WHERE {\n  {\n    SELECT ?category ( MIN( ?weight ) AS ?minWeight ) ( MAX( ?weight ) AS ?maxWeight ) WHERE {\n      ?h rdf:type pv:Hardware ; pv:hasCategory ?category ; pv:weight_g ?weight .\n    }\n    GROUP BY ?category\n  }\n  ?lightest rdf:type pv:Hardware ; pv:hasCategory ?category ; pv:weight_g ?minWeight .\n  OPTIONAL {\n    ?lightest rdfs:label ?lightestLabel\n  }\n  ?heaviest rdf:type pv:Hardware ; pv:hasCategory ?category ; pv:weight_g ?maxWeight .\n  OPTIONAL {\n    ?heaviest rdfs:label ?heaviestLabel\n  }\n  OPTIONAL {\n    ?category rdfs:label ?categoryLabel\n  }\n}\nGROUP BY ?category ?categoryLabel ?minWeight ?maxWeight\nORDER BY ?category",
+      "err": null,
+      "size": 26,
+      "score": 1.0,
+      "elapsed": 74.24431740795262
+    }
+  },
+  "47": {
+    "target": {
+      "err": null,
+      "size": 7
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT DISTINCT ?country WHERE {\n  prodi:bom-17 pv:hasBomPart ?bomPart .\n  ?bomPart pv:hasPart ?hw .\n  ?hw pv:hasSupplier ?supplier .\n  ?supplier pv:country ?country .\n}",
+      "err": null,
+      "size": 7,
+      "score": 1.0,
+      "elapsed": 63.992334680981
+    }
+  },
+  "3": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?manager WHERE {\n  <http://ld.company.org/prod-instances/empl-Heinrich.Hoch@company.org> pv:hasManager ?manager\n}",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 10.933318129973486
+    }
+  },
+  "39": {
+    "target": {
+      "err": null,
+      "size": 485
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?item ?width ?height ?depth WHERE {\n  ?item rdf:type pv:Hardware .\n  ?item pv:width_mm ?width .\n  ?item pv:height_mm ?height .\n  ?item pv:depth_mm ?depth .\n  FILTER ( ?width > ?height ) .\n  FILTER ( ?depth < 50 ) .\n}",
+      "err": null,
+      "size": 485,
+      "score": 1.0,
+      "elapsed": 10.484888224047609
+    }
+  },
+  "43": {
+    "target": {
+      "err": null,
+      "size": 969
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?productA ?productB ( SAMPLE( ?labelA_ ) AS ?labelA ) ( SAMPLE( ?labelB_ ) AS ?labelB ) WHERE {\n  ?productA pv:compatibleProduct ?productB .\n  ?productB pv:compatibleProduct ?productA .\n  FILTER ( ?productA < ?productB ) OPTIONAL {\n    ?productA rdfs:label ?labelA_\n  }\n  OPTIONAL {\n    ?productB rdfs:label ?labelB_\n  }\n}\nGROUP BY ?productA ?productB",
+      "err": null,
+      "size": 969,
+      "score": 1.0,
+      "elapsed": 15.48153332597576
+    }
+  },
+  "49": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ( COUNT( DISTINCT ?supplier ) AS ?supplierCount ) WHERE {\n  prodi:hw-K367-1320550 pv:compatibleProduct ?altProduct .\n  ?altProduct pv:hasSupplier ?supplier .\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 21.416021540993825
+    }
+  },
+  "5": {
+    "target": {
+      "err": null,
+      "size": 4
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?agent ?label WHERE {\n  ?agent pv:areaOfExpertise prodi:prod-cat-Transistor .\n  OPTIONAL {\n    ?agent rdfs:label ?label\n  }\n  OPTIONAL {\n    ?agent foaf:name ?label\n  }\n}",
+      "err": null,
+      "size": 4,
+      "score": 1.0,
+      "elapsed": 14.584989305003546
+    }
+  },
+  "13": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX dbpedia: <http://dbpedia.org/resource/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ( COUNT( DISTINCT ?supplier ) AS ?count ) WHERE {\n  ?supplier rdf:type pv:Supplier .\n  ?supplier pv:country dbpedia:France .\n}",
+      "err": null,
+      "size": 1,
+      "score": 0.0,
+      "elapsed": 17.52607199002523
+    }
+  },
+  "35": {
+    "target": {
+      "err": null,
+      "size": 1938
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?product ?productLabel ?compatible ?compatibleLabel ?price1 ?price2 ( ABS( ?price1 - ?price2 ) AS ?priceDifference ) WHERE {\n  ?product a pv:Hardware .\n  ?product pv:compatibleProduct ?compatible .\n  ?product pv:price ?priceNode1 .\n  ?compatible pv:price ?priceNode2 .\n  ?priceNode1 pv:amount ?price1 .\n  ?priceNode2 pv:amount ?price2 .\n  OPTIONAL {\n    ?product rdfs:label ?productLabel\n  }\n  OPTIONAL {\n    ?compatible rdfs:label ?compatibleLabel\n  }\n}",
+      "err": null,
+      "size": 1938,
+      "score": 0.0,
+      "elapsed": 29.52373304089997
+    }
+  },
+  "50": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?department ( COUNT( ?product ) AS ?productCount ) ( SAMPLE( ?label ) AS ?departmentLabel ) WHERE {\n  ?department pv:responsibleFor ?product .\n  OPTIONAL {\n    ?department rdfs:label ?label\n  }\n}\nGROUP BY ?department\nORDER BY DESC ( ?productCount )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 9.241396080004051
+    }
+  },
+  "37": {
+    "target": {
+      "err": null,
+      "size": 7
+    },
+    "prediction": {
+      "sparql": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nSELECT ?bom ?bomLabel ( COUNT( ?bomPart ) AS ?partCount ) ( SUM( xsd:integer ( ?quantity ) ) AS ?totalQuantity ) WHERE {\n  ?bom a pv:BillOfMaterial .\n  OPTIONAL {\n    ?bom rdfs:label ?bomLabel\n  }\n  ?bom pv:hasBomPart ?bomPart .\n  ?bomPart pv:quantity ?quantity .\n}\nGROUP BY ?bom ?bomLabel\nHAVING ( SUM( xsd:integer ( ?quantity ) ) > 600 )\nORDER BY DESC ( ?totalQuantity )",
+      "err": null,
+      "size": 7,
+      "score": 1.0,
+      "elapsed": 30.498053592047654
+    }
+  },
+  "20": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?service ?serviceLabel ?manager ?managerLabel ?amount WHERE {\n  ?service rdf:type pv:Service ; pv:price ?price ; pv:hasProductManager ?manager .\n  ?price pv:amount ?amount .\n  OPTIONAL {\n    ?service rdfs:label ?serviceLabel\n  }\n  OPTIONAL {\n    ?manager rdfs:label ?managerLabel\n  }\n}\nORDER BY DESC ( xsd:decimal ( ?amount ) )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 28.137063405942172
+    }
+  },
+  "11": {
+    "target": {
+      "err": null,
+      "size": 2
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT DISTINCT ?department ?label WHERE {\n  ?agent pv:areaOfExpertise prodi:prod-cat-Transducer .\n  ?agent pv:memberOf ?department .\n  OPTIONAL {\n    ?department rdfs:label ?label\n  }\n}",
+      "err": null,
+      "size": 2,
+      "score": 1.0,
+      "elapsed": 26.363333438057452
+    }
+  },
+  "33": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nASK {\n  ?dept a pv:Department .\n  FILTER NOT EXISTS {\n    ?emp pv:memberOf ?dept .\n    ?emp pv:hasManager ?mgr .\n  }\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 53.96714061603416
+    }
+  },
+  "26": {
+    "target": {
+      "err": null,
+      "size": 10
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT DISTINCT ?city ?supplier WHERE {\n  ?product pv:hasCategory prodi:prod-cat-LCD .\n  ?product pv:hasSupplier ?supplier .\n  ?supplier pv:addressLocality ?city .\n  ?supplier pv:addressCountryCode \"US\" .\n}",
+      "err": null,
+      "size": 10,
+      "score": 1.0,
+      "elapsed": 46.103695185040124
+    }
+  },
+  "24": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?pot ?width ?height ?depth ( ( ?width * ?height * ?depth ) AS ?volume ) WHERE {\n  ?pot pv:hasCategory prodi:prod-cat-Potentiometer .\n  ?pot pv:width_mm ?width .\n  ?pot pv:height_mm ?height .\n  ?pot pv:depth_mm ?depth .\n}\nORDER BY ASC ( ?volume )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 26.78787676698994
+    }
+  },
+  "32": {
+    "target": {
+      "err": null,
+      "size": 246
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?supplier ?label ( ROUND( AVG( ?amount ) * 100 ) / 100 AS ?avgPriceEUR ) WHERE {\n  ?product pv:hasSupplier ?supplier .\n  ?supplier a pv:Supplier .\n  OPTIONAL {\n    ?supplier rdfs:label ?label\n  }\n  ?product pv:price ?price .\n  ?price pv:currency \"EUR\" .\n  ?price pv:amount ?amount .\n}\nGROUP BY ?supplier ?label\nORDER BY ?supplier",
+      "err": null,
+      "size": 246,
+      "score": 0.6666666666666666,
+      "elapsed": 23.054983971989714
+    }
+  },
+  "19": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nSELECT ?service ?serviceLabel ?amount ?currency WHERE {\n  ?service a pv:Service .\n  OPTIONAL {\n    ?service rdfs:label ?serviceLabel\n  }\n  ?service pv:price ?price .\n  ?price pv:amount ?amount .\n  ?price pv:currency ?currency .\n}\nORDER BY DESC ( xsd:decimal ( ?amount ) )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 28.652423882042058
+    }
+  },
+  "34": {
+    "target": {
+      "err": null,
+      "size": 250
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX wgs84: <http://www.w3.org/2003/01/geo/wgs84_pos#>\nSELECT ?supplier ?name ?label ?addressCountry ?addressCountryCode ?addressLocality ?lat ?long WHERE {\n  ?supplier rdf:type pv:Supplier .\n  OPTIONAL {\n    ?supplier pv:name ?name .\n  }\n  OPTIONAL {\n    ?supplier rdfs:label ?label .\n  }\n  OPTIONAL {\n    ?supplier pv:addressCountry ?addressCountry .\n  }\n  OPTIONAL {\n    ?supplier pv:addressCountryCode ?addressCountryCode .\n  }\n  OPTIONAL {\n    ?supplier pv:addressLocality ?addressLocality .\n  }\n  OPTIONAL {\n    ?supplier wgs84:lat ?lat .\n  }\n  OPTIONAL {\n    ?supplier wgs84:long ?long .\n  }\n}",
+      "err": null,
+      "size": 250,
+      "score": 1.0,
+      "elapsed": 23.811279484070837
+    }
+  },
+  "41": {
+    "target": {
+      "err": null,
+      "size": 6
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?manager ( SAMPLE( ?label ) AS ?managerLabel ) ( COUNT( ?teamMember ) AS ?teamSize ) ( SUM( IF( ?teamDept = ?managerDept , 1 , 0 ) ) AS ?sameDeptCount ) ( ( SUM( IF( ?teamDept = ?managerDept , 1 , 0 ) ) * 100.0 ) / COUNT( ?teamMember ) AS ?sameDeptPercent ) WHERE {\n  ?manager rdf:type pv:Manager .\n  OPTIONAL {\n    ?manager rdfs:label ?label\n  }\n  ?teamMember pv:hasManager ?manager .\n  ?manager pv:memberOf ?managerDept .\n  ?teamMember pv:memberOf ?teamDept .\n}\nGROUP BY ?manager",
+      "err": null,
+      "size": 6,
+      "score": 1.0,
+      "elapsed": 28.676399650983512
+    }
+  },
+  "7": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?manager ?managerLabel ?email WHERE {\n  ?dept a pv:Department ; rdfs:label \"Data Services\" ; pv:id \"41622\" .\n  ?employee pv:memberOf ?dept ; pv:hasManager ?manager .\n  ?manager a pv:Manager ; rdfs:label ?managerLabel .\n  OPTIONAL {\n    ?manager pv:email ?email\n  }\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 56.259496062994
+    }
+  },
+  "14": {
+    "target": {
+      "err": null,
+      "size": 3
+    },
+    "prediction": {
+      "sparql": "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX dbpedia: <http://dbpedia.org/resource/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?supplier ( COALESCE ( ?name , ?label ) AS ?supplierName ) WHERE {\n  ?product pv:hasCategory prodi:prod-cat-Compensator .\n  ?product pv:hasSupplier ?supplier .\n  ?supplier pv:country dbpedia:France .\n  OPTIONAL {\n    ?supplier foaf:name ?name\n  }\n  OPTIONAL {\n    ?supplier rdfs:label ?label\n  }\n}",
+      "err": null,
+      "size": 3,
+      "score": 1.0,
+      "elapsed": 25.47136521700304
+    }
+  },
+  "10": {
+    "target": {
+      "err": null,
+      "size": 2
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?person ?name1 ?name2 WHERE {\n  ?person pv:areaOfExpertise prodi:prod-cat-Network .\n  ?person pv:memberOf prodi:dept-85880 .\n  OPTIONAL {\n    ?person foaf:name ?name1\n  }\n  OPTIONAL {\n    ?person pv:name ?name2\n  }\n}",
+      "err": null,
+      "size": 2,
+      "score": 1.0,
+      "elapsed": 54.13963432004675
+    }
+  },
+  "17": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?supplier ?name WHERE {\n  ?supplier rdf:type pv:Supplier ; pv:addressLocality ?city .\n  OPTIONAL {\n    ?supplier foaf:name ?name\n  }\n  FILTER ( lcase( str( ?city ) ) = \"toulouse\" )\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 24.987980726989917
+    }
+  },
+  "48": {
+    "target": {
+      "err": null,
+      "size": 3
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX dbpedia: <http://dbpedia.org/resource/>\nSELECT DISTINCT ?bom ?bomLabel WHERE {\n  ?bom pv:hasBomPart ?bomPart .\n  ?bomPart pv:hasPart ?part .\n  ?part pv:hasSupplier ?supplier .\n  ?supplier pv:country dbpedia:Poland .\n  OPTIONAL {\n    ?bom rdfs:label ?bomLabel\n  }\n}",
+      "err": null,
+      "size": 3,
+      "score": 1.0,
+      "elapsed": 23.295394592918456
+    }
+  },
+  "38": {
+    "target": {
+      "err": null,
+      "size": 53
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT ?employee ?employeeName ?employeeLabel ?employeeFoafName ?email ?phone ?department ?departmentLabel ?manager ?managerName ?managerLabel ?managerFoafName WHERE {\n  ?employee a pv:Employee .\n  OPTIONAL {\n    ?employee pv:name ?employeeName\n  }\n  OPTIONAL {\n    ?employee rdfs:label ?employeeLabel\n  }\n  OPTIONAL {\n    ?employee foaf:name ?employeeFoafName\n  }\n  OPTIONAL {\n    ?employee pv:email ?email\n  }\n  OPTIONAL {\n    ?employee pv:phone ?phone\n  }\n  OPTIONAL {\n    ?employee pv:memberOf ?department .\n    OPTIONAL {\n      ?department rdfs:label ?departmentLabel\n    }\n  }\n  OPTIONAL {\n    ?employee pv:hasManager ?manager .\n    OPTIONAL {\n      ?manager pv:name ?managerName\n    }\n    OPTIONAL {\n      ?manager rdfs:label ?managerLabel\n    }\n    OPTIONAL {\n      ?manager foaf:name ?managerFoafName\n    }\n  }\n}",
+      "err": null,
+      "size": 47,
+      "score": 0.9400000000000001,
+      "elapsed": 37.0421657509869
+    }
+  },
+  "28": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX dbpedia: <http://dbpedia.org/resource/>\nASK {\n  ?service a pv:Service ; pv:eligibleFor ?bom .\n  ?bom a pv:BillOfMaterial ; pv:hasBomPart ?bomPart .\n  ?bomPart pv:hasPart ?part .\n  ?part pv:hasSupplier ?supplier .\n  ?supplier pv:country dbpedia:Russia .\n}",
+      "err": null,
+      "size": 1,
+      "score": 0.0,
+      "elapsed": 40.027667704969645
+    }
+  },
+  "45": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?supplier ?inductor ?reliabilityIndex WHERE {\n  ?inductor pv:hasCategory prodi:prod-cat-Inductor ; pv:reliabilityIndex ?reliabilityIndex ; pv:hasSupplier ?supplier .\n}\nORDER BY DESC ( ?reliabilityIndex )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 31.29641954903491
+    }
+  },
+  "21": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?coil ?weight ?width ?depth ?label WHERE {\n  ?coil pv:hasCategory prodi:prod-cat-Coil .\n  ?coil pv:weight_g ?weight .\n  ?coil pv:width_mm ?width .\n  ?coil pv:depth_mm ?depth .\n  OPTIONAL {\n    ?coil rdfs:label ?label\n  }\n  FILTER ( ?width <= 15 && ?depth <= 15 && ( ?width * ?depth ) <= 225 )\n}\nORDER BY DESC ( ?weight )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 91.81434295594227
+    }
+  },
+  "4": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?sabrina ?email WHERE {\n  ?sabrina rdfs:label ?label .\n  FILTER ( CONTAINS( LCASE( STR( ?label ) ) , \"sabrina\" ) ) ?sabrina pv:memberOf ?dept .\n  ?dept rdfs:label ?deptLabel .\n  FILTER ( LCASE( STR( ?deptLabel ) ) = \"marketing\" ) ?sabrina pv:email ?email\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 12.213575416011736
+    }
+  },
+  "18": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?product ?price ?amount ?currency ?name ?name2 WHERE {\n  ?product pv:hasCategory prodi:prod-cat-Oscillator .\n  ?product pv:price ?price .\n  ?price pv:amount ?amount .\n  OPTIONAL {\n    ?price pv:currency ?currency\n  }\n  OPTIONAL {\n    ?product foaf:name ?name\n  }\n  OPTIONAL {\n    ?product pv:name ?name2\n  }\n}\nORDER BY ASC ( xsd:decimal ( ?amount ) )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 23.616718653938733
+    }
+  },
+  "15": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX dbpedia: <http://dbpedia.org/resource/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?product ?productName ?supplier ?supplierName ?amount WHERE {\n  ?product pv:hasCategory prodi:prod-cat-Encoder ; pv:hasSupplier ?supplier ; pv:price ?priceSpec .\n  ?priceSpec pv:amount ?amount .\n  ?supplier pv:country ?country .\n  FILTER ( ?country IN ( dbpedia:France , dbpedia:Germany ) ) OPTIONAL {\n    ?product pv:name ?productName\n  }\n  OPTIONAL {\n    ?supplier pv:name ?supplierName\n  }\n}\nORDER BY ASC ( ?amount )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 34.37545416702051
+    }
+  },
+  "6": {
+    "target": {
+      "err": null,
+      "size": 7
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?expert ?name WHERE {\n  ?expert pv:areaOfExpertise prodi:prod-cat-Sensor .\n  OPTIONAL {\n    ?expert foaf:name ?name\n  }\n  OPTIONAL {\n    ?expert rdfs:label ?name\n  }\n}",
+      "err": null,
+      "size": 7,
+      "score": 1.0,
+      "elapsed": 13.391392929945141
+    }
+  },
+  "23": {
+    "target": {
+      "err": null,
+      "size": 2
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?product ?productLabel ?supplier ?supplierLabel WHERE {\n  VALUES ?u990 {\n    prodi:hw-U990-5234138\n  }\n  ?u990 pv:compatibleProduct ?product .\n  ?product pv:hasSupplier ?supplier .\n  OPTIONAL {\n    ?product rdfs:label ?productLabel\n  }\n  OPTIONAL {\n    ?supplier rdfs:label ?supplierLabel\n  }\n  ?supplier pv:addressCountryCode ?countryCode .\n  FILTER ( ?countryCode = \"US\" )\n}",
+      "err": null,
+      "size": 2,
+      "score": 1.0,
+      "elapsed": 21.006880898959935
+    }
+  },
+  "42": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?bom ( AVG( ?amount ) AS ?avgUnitCost ) WHERE {\n  ?bom rdf:type pv:BillOfMaterial .\n  ?bom pv:hasBomPart ?bomPart .\n  ?bomPart pv:hasPart ?product .\n  ?product rdf:type pv:Hardware .\n  ?product pv:price ?price .\n  ?price pv:amount ?amount .\n}\nGROUP BY ?bom\nORDER BY DESC ( ?avgUnitCost )\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 0.6666666666666666,
+      "elapsed": 32.656817034003325
+    }
+  },
+  "8": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?dept ?deptLabel WHERE {\n  ?dept pv:responsibleFor prodi:hw-M558-2275045 .\n  OPTIONAL {\n    ?dept rdfs:label ?deptLabel\n  }\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 36.48850093095098
+    }
+  },
+  "12": {
+    "target": {
+      "err": null,
+      "size": 90
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT DISTINCT ?supplier ?label WHERE {\n  ?product pv:hasCategory prodi:prod-cat-Compensator .\n  ?product pv:hasSupplier ?supplier .\n  OPTIONAL {\n    ?supplier rdfs:label ?label\n  }\n}",
+      "err": null,
+      "size": 90,
+      "score": 1.0,
+      "elapsed": 39.63605341303628
+    }
+  },
+  "29": {
+    "target": {
+      "err": null,
+      "size": 5
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?hardware ?hardwareLabel ?price ?supplier ?supplierName ?country WHERE {\n  {\n    SELECT ?hardware ?price WHERE {\n      ?hardware rdf:type pv:Hardware ; pv:price ?priceEntity .\n      ?priceEntity pv:amount ?price .\n    }\n    ORDER BY DESC ( ?price )\n    OFFSET 5\n    LIMIT 5\n  }\n  OPTIONAL {\n    ?hardware pv:hasSupplier ?supplier .\n    ?supplier pv:name ?supplierName ; pv:country ?country .\n  }\n  OPTIONAL {\n    ?hardware rdfs:label ?hardwareLabel\n  }\n}\nORDER BY DESC ( ?price ) ?hardware ?supplier",
+      "err": null,
+      "size": 5,
+      "score": 0.1250000069849195,
+      "elapsed": 60.42643028404564
+    }
+  },
+  "40": {
+    "target": {
+      "err": null,
+      "size": 48
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?hardware ?id ?name WHERE {\n  ?hardware rdf:type pv:Hardware .\n  OPTIONAL {\n    ?hardware pv:id ?id\n  }\n  OPTIONAL {\n    ?hardware pv:name ?name\n  }\n  FILTER NOT EXISTS {\n    ?hardware pv:hasProductManager ?pm\n  }\n}",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 31.474599391920492
+    }
+  },
+  "2": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?phone WHERE {\n  <http://ld.company.org/prod-instances/empl-Baldwin.Dirksen%40company.org> pv:phone ?phone\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 6.572596904006787
+    }
+  },
+  "16": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nASK WHERE {\n  ?supplier a pv:Supplier ; pv:addressLocality ?locality .\n  FILTER ( LCASE( ?locality ) = \"toulouse\" )\n}",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 22.40872358798515
+    }
+  },
+  "9": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ( COUNT( DISTINCT ?product ) AS ?count ) WHERE {\n  ?product a pv:Product ; pv:hasCategory prodi:prod-cat-Sensor , prodi:prod-cat-Switch .\n}",
+      "err": null,
+      "size": 1,
+      "score": 0.0,
+      "elapsed": 29.90754922805354
+    }
+  }
+}

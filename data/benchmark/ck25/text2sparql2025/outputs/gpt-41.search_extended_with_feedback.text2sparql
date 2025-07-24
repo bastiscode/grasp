@@ -1,0 +1,402 @@
+[
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "In which department is Ms. Brant?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?department ?departmentLabel WHERE {\n  <http://ld.company.org/prod-instances/empl-Karen.Brant%40company.org> pv:memberOf ?department .\n  OPTIONAL {\n    ?department rdfs:label ?departmentLabel\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:1-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/1-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the telephone of Baldwin Dirksen?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?phone WHERE {\n  <http://ld.company.org/prod-instances/empl-Baldwin.Dirksen%40company.org> pv:phone ?phone .\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:2-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/2-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Who is the manager of Heinrich Hoch?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?manager ?managerName WHERE {\n  <http://ld.company.org/prod-instances/empl-Heinrich.Hoch%40company.org> pv:hasManager ?manager .\n  OPTIONAL {\n    ?manager rdfs:label ?managerName\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:3-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/3-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the email of Sabrina from Marketing?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?email WHERE {\n  <http://ld.company.org/prod-instances/empl-Sabrina.Geiger%40company.org> pv:email ?email .\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:4-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/4-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Who has expertise in Transistors?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?agent ?agentLabel WHERE {\n  ?agent pv:areaOfExpertise prodi:prod-cat-Transistor .\n  OPTIONAL {\n    ?agent rdfs:label ?agentLabel\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:5-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/5-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Who is our Sensor expert?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?agent WHERE {\n  ?agent pv:areaOfExpertise prodi:prod-cat-Sensor .\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:6-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/6-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Who is the manager of the Data Services department?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?manager WHERE {\n  ?employee pv:memberOf prodi:dept-41622 .\n  ?employee pv:hasManager ?manager\n}\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:7-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/7-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which department is responsible for the Sensor Switch M558-2275045?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?department ?departmentLabel WHERE {\n  ?department pv:responsibleFor prodi:hw-M558-2275045 .\n  OPTIONAL {\n    ?department rdfs:label ?departmentLabel\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:8-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/8-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "How many Sensor Switches do we offer?",
+    "query": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ( COUNT( ?entity ) AS ?count ) WHERE {\n  ?entity rdfs:label ?label .\n  FILTER ( CONTAINS( LCASE( ?label ) , \"sensor switch\" ) )\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:9-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/9-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the name of the Network expert from the Marketing Department?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?employee ?name WHERE {\n  ?employee pv:memberOf prodi:dept-85880 .\n  ?employee pv:areaOfExpertise prodi:prod-cat-Network .\n  OPTIONAL {\n    ?employee pv:name ?name\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:10-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/10-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which departments have Transducer Experts?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?department ?departmentLabel WHERE {\n  ?employee pv:areaOfExpertise prodi:prod-cat-Transducer .\n  ?employee pv:memberOf ?department .\n  OPTIONAL {\n    ?department rdfs:label ?departmentLabel\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:11-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/11-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which supplier are available to deliver Compensators?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?supplier ?supplierLabel WHERE {\n  ?product pv:hasSupplier ?supplier .\n  ?product rdfs:label ?productLabel .\n  FILTER ( CONTAINS( LCASE( ?productLabel ) , \"compensator\" ) ) OPTIONAL {\n    ?supplier rdfs:label ?supplierLabel\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:12-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/12-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "How many suppliers do we have in France?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX dbpedia: <http://dbpedia.org/resource/>\nSELECT ( COUNT( DISTINCT ?supplier ) AS ?count ) WHERE {\n  ?supplier rdf:type pv:Supplier ; pv:country dbpedia:France .\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:13-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/13-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which supplier in France delivers Compensators?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?supplier ?supplierLabel WHERE {\n  ?product pv:hasCategory prodi:prod-cat-Compensator .\n  ?product pv:hasSupplier ?supplier .\n  ?supplier pv:country ?country .\n  ?country rdfs:label ?countryLabel .\n  FILTER ( CONTAINS( LCASE( ?countryLabel ) , \"france\" ) ) OPTIONAL {\n    ?supplier rdfs:label ?supplierLabel\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:14-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/14-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the cheapest Encoder we can get from a french or german supplier?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?product ?productLabel ?price ?supplier ?supplierLabel ?country WHERE {\n  ?product pv:hasCategory prodi:prod-cat-Encoder .\n  ?product pv:price ?price .\n  ?product pv:hasSupplier ?supplier .\n  ?supplier ( pv:addressCountry | pv:country ) ?country .\n  FILTER ( ?country IN ( \"France\" , \"Germany\" ) ) OPTIONAL {\n    ?product rdfs:label ?productLabel\n  }\n  OPTIONAL {\n    ?supplier rdfs:label ?supplierLabel\n  }\n}\nORDER BY ?price\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:15-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/15-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Do we have suppliers in Toulouse?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?supplier WHERE {\n  ?supplier rdf:type pv:Supplier .\n  ?supplier pv:addressLocality \"Toulouse\" .\n}\nLIMIT 10",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:16-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/16-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which suppliers do we have in Toulouse?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?supplier ?label WHERE {\n  ?supplier rdf:type pv:Supplier .\n  ?supplier pv:addressLocality \"Toulouse\" .\n  OPTIONAL {\n    ?supplier rdfs:label ?label\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:17-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/17-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the cheapest Oscillator we have?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?product ?productLabel ?priceAmount WHERE {\n  ?product pv:hasCategory prodi:prod-cat-Oscillator .\n  ?product pv:price ?price .\n  ?price pv:amount ?priceAmount .\n  OPTIONAL {\n    ?product rdfs:label ?productLabel\n  }\n}\nORDER BY ASC ( ?priceAmount )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:18-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/18-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the most expensive service we offer?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?service ?serviceLabel ?priceAmount WHERE {\n  ?service a pv:Service .\n  ?service pv:price ?price .\n  ?price pv:amount ?priceAmount .\n  OPTIONAL {\n    ?service rdfs:label ?serviceLabel\n  }\n}\nORDER BY DESC ( ?priceAmount )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:19-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/19-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Who is responsible for the most expensive service we offer?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?service ?serviceLabel ?manager ?managerLabel ?priceAmount WHERE {\n  ?service rdf:type pv:Service .\n  ?service pv:price ?price .\n  ?price pv:amount ?priceAmount .\n  ?service pv:hasProductManager ?manager .\n  OPTIONAL {\n    ?service rdfs:label ?serviceLabel\n  }\n  OPTIONAL {\n    ?manager rdfs:label ?managerLabel\n  }\n}\nORDER BY DESC ( ?priceAmount )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:20-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/20-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the heaviest coil that does not exceed a base area of 15x15 milimeter?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?hardware ?weight ?width ?depth WHERE {\n  ?hardware pv:weight_g ?weight .\n  ?hardware pv:width_mm ?width .\n  ?hardware pv:depth_mm ?depth .\n  ?hardware rdfs:label ?label .\n  FILTER ( CONTAINS( LCASE( ?label ) , \"coil\" ) && ?width <= 15 && ?depth <= 15 )\n}\nORDER BY DESC ( ?weight )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:21-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/21-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What products are compatible with the U990 LCD Inductor?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?compatibleProduct ?compatibleProductLabel WHERE {\n  prodi:hw-U990-5234138 pv:compatibleProduct ?compatibleProduct .\n  OPTIONAL {\n    ?compatibleProduct rdfs:label ?compatibleProductLabel\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:22-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/22-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What products can I get from US suppliers that are compatible with the U990 LCD Inductor?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ?product ?supplier ?supplierName WHERE {\n  prodi:hw-U990-5234138 pv:compatibleProduct ?product .\n  ?product pv:hasSupplier ?supplier .\n  ?supplier pv:addressCountry \"United States\" .\n  OPTIONAL {\n    ?supplier pv:name ?supplierName\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:23-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/23-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What is the pontiometer with the smallest volume?",
+    "query": "",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:24-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/24-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which coil has the highest density?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?coil ?label ?weight ?depth ?height ?width ( ( ?weight / ( ?depth * ?height * ?width ) ) AS ?density ) WHERE {\n  ?coil pv:hasCategory prodi:prod-cat-Coil .\n  ?coil pv:weight_g ?weight .\n  ?coil pv:depth_mm ?depth .\n  ?coil pv:height_mm ?height .\n  ?coil pv:width_mm ?width .\n  OPTIONAL {\n    ?coil rdfs:label ?label\n  }\n}\nORDER BY DESC ( ?density )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:25-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/25-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "In which cities are our US suppliers for LCDs?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT DISTINCT ?city WHERE {\n  ?product pv:hasSupplier ?supplier .\n  ?product rdf:type prodi:prod-cat-LCD .\n  ?supplier rdf:type pv:Supplier .\n  ?supplier pv:addressCountry ?country .\n  ?supplier pv:addressLocality ?city .\n  FILTER ( CONTAINS( LCASE( STR( ?country ) ) , \"united states\" ) )\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:26-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/26-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Give me a phone directory of everyone on staff who does not manage anyone, I need name, email, and phone, sorted by name?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?employee ?name ?email ?phone WHERE {\n  ?employee a pv:Employee .\n  ?employee rdfs:label ?name .\n  OPTIONAL {\n    ?employee pv:email ?email\n  }\n  .\n  OPTIONAL {\n    ?employee pv:phone ?phone\n  }\n  .\n  FILTER NOT EXISTS {\n    ?otherEmployee pv:hasManager ?employee .\n  }\n}\nORDER BY ?name",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:27-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/27-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Do we have any service that does apply to a BOM where parts are sourced from Russia?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX dbpedia: <http://dbpedia.org/resource/>\nSELECT DISTINCT ?bom WHERE {\n  ?bom rdf:type pv:Bom .\n  ?bom pv:hasBomPart ?bomPart .\n  ?bomPart pv:hasPart ?product .\n  ?product pv:hasSupplier ?supplier .\n  ?supplier pv:country dbpedia:Russia .\n}\nLIMIT 10",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:28-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/28-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What suppliers - I need name, country and price - deliver the 6th to 10th most expensive hardware items.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?supplier ?supplierName ?country ?priceAmount WHERE {\n  ?hardware rdf:type pv:Hardware .\n  ?hardware pv:price ?price .\n  ?price pv:amount ?priceAmount .\n  ?hardware pv:hasSupplier ?supplier .\n  ?supplier pv:name ?supplierName .\n  ?supplier pv:addressCountry ?country .\n}\nORDER BY DESC ( ?priceAmount )\nOFFSET 5\nLIMIT 5",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:29-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/29-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which department have more than 5 employees? I need their names and the number of employees.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?department ?departmentName ( COUNT( ?employee ) AS ?employeeCount ) WHERE {\n  ?employee rdf:type pv:Employee .\n  ?employee pv:memberOf ?department .\n  OPTIONAL {\n    ?department rdfs:label ?departmentName\n  }\n}\nGROUP BY ?department ?departmentName\nHAVING ( COUNT( ?employee ) > 5 )",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:30-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/30-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Per product category, what's our lightest and heaviest hardware item?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?category ?categoryLabel ?lightestHardware ?lightestHardwareLabel ?heaviestHardware ?heaviestHardwareLabel ?minWeight ?maxWeight WHERE {\n  {\n    SELECT ?category ( MIN( ?weight ) AS ?minWeight ) ( MAX( ?weight ) AS ?maxWeight ) WHERE {\n      ?hardware a pv:Hardware ; pv:hasCategory ?category ; pv:weight_g ?weight .\n    }\n    GROUP BY ?category\n  }\n  ?hardwareMin a pv:Hardware ; pv:hasCategory ?category ; pv:weight_g ?minWeight .\n  ?hardwareMax a pv:Hardware ; pv:hasCategory ?category ; pv:weight_g ?maxWeight .\n  OPTIONAL {\n    ?hardwareMin rdfs:label ?lightestHardwareLabel\n  }\n  OPTIONAL {\n    ?hardwareMax rdfs:label ?heaviestHardwareLabel\n  }\n  OPTIONAL {\n    ?category rdfs:label ?categoryLabel\n  }\n  BIND( ?hardwareMin AS ?lightestHardware ) BIND( ?hardwareMax AS ?heaviestHardware )\n}\nORDER BY ?category\nLIMIT 100",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:31-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/31-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "For each supplier, what's the average price (in EUR) of what they sell, round reasonably?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?supplier ( ROUND( AVG( ?amount ) ) AS ?averagePriceEUR ) WHERE {\n  ?product pv:hasSupplier ?supplier .\n  ?product pv:price ?price .\n  ?price pv:amount ?amount ; pv:currency \"EUR\" .\n}\nGROUP BY ?supplier",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:32-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/32-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Are there departments with no manager assigned?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?department WHERE {\n  ?department rdf:type pv:Department .\n  FILTER NOT EXISTS {\n    ?manager rdf:type pv:Manager .\n    ?manager pv:memberOf ?department\n  }\n}\nLIMIT 10",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:33-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/33-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "I need to update my supplier rolodex, give me every supplier's name and all address details.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?supplier ?name ?addressText ?addressCountry ?addressLocality WHERE {\n  ?supplier a pv:Supplier .\n  OPTIONAL {\n    ?supplier pv:name ?name\n  }\n  OPTIONAL {\n    ?supplier pv:addressText ?addressText\n  }\n  OPTIONAL {\n    ?supplier pv:addressCountry ?addressCountry\n  }\n  OPTIONAL {\n    ?supplier pv:addressLocality ?addressLocality\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:34-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/34-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "For every product, list what other products it is compatible with and the price differences between both.",
+    "query": "",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:35-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/35-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which area of expertise is most relevant among our products, what are the top three skills?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?areaOfExpertise ( COUNT( ?agent ) AS ?count ) WHERE {\n  ?agent pv:areaOfExpertise ?areaOfExpertise\n}\nGROUP BY ?areaOfExpertise\nORDER BY DESC ( ?count )\nLIMIT 3",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:36-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/36-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "For each Bill of Material, how many parts does it contain and what is the total material quantity \u2014 show me only those BOMs exceeding 600 total items and order them descending.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?bom ?bomLabel ( COUNT( ?bomPart ) AS ?partCount ) ( SUM( ?quantity ) AS ?totalQuantity ) WHERE {\n  ?bom rdf:type pv:BillOfMaterial .\n  OPTIONAL {\n    ?bom rdfs:label ?bomLabel\n  }\n  ?bom pv:hasBomPart ?bomPart .\n  ?bomPart pv:quantity ?quantity .\n}\nGROUP BY ?bom ?bomLabel\nHAVING ( SUM( ?quantity ) > 600 )\nORDER BY DESC ( ?totalQuantity )",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:37-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/37-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "I want to update my contact list, for each Employee give me name, email, phone number and the department they belong to as well as their direct report.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT DISTINCT ?employee ?employeeName ?email ?phone ?department ?departmentName ?directReport ?directReportName WHERE {\n  ?employee a pv:Employee .\n  OPTIONAL {\n    ?employee pv:name ?employeeName\n  }\n  OPTIONAL {\n    ?employee foaf:name ?employeeName\n  }\n  OPTIONAL {\n    ?employee rdfs:label ?employeeName\n  }\n  OPTIONAL {\n    ?employee pv:email ?email\n  }\n  OPTIONAL {\n    ?employee pv:phone ?phone\n  }\n  OPTIONAL {\n    ?employee pv:memberOf ?department .\n    OPTIONAL {\n      ?department rdfs:label ?departmentName\n    }\n  }\n  OPTIONAL {\n    ?directReport pv:hasManager ?employee .\n    OPTIONAL {\n      ?directReport pv:name ?directReportName\n    }\n    OPTIONAL {\n      ?directReport foaf:name ?directReportName\n    }\n    OPTIONAL {\n      ?directReport rdfs:label ?directReportName\n    }\n  }\n}\nORDER BY ?employee ?directReport",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:38-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/38-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which hardware items are wider than they are tall, and have a depth under 50 mm? List their dimensions.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?hardware ?width ?height ?depth WHERE {\n  ?hardware a pv:Hardware .\n  ?hardware pv:width_mm ?width .\n  ?hardware pv:height_mm ?height .\n  ?hardware pv:depth_mm ?depth .\n  FILTER ( ?width > ?height && ?depth < 50 )\n}\nORDER BY ?hardware",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:39-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/39-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which hardware items - list id and name - have no active product manager?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?hardware ?id ?name WHERE {\n  ?hardware rdf:type pv:Hardware .\n  OPTIONAL {\n    ?hardware pv:hasProductManager ?pm .\n  }\n  FILTER ( ! BOUND( ?pm ) ) OPTIONAL {\n    ?hardware pv:id ?id .\n  }\n  OPTIONAL {\n    ?hardware pv:name ?name .\n  }\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:40-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/40-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "For each manager, what percentage of their entire team work in the same department as the manager?",
+    "query": "",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:41-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/41-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which Bill-of-Material has the highest average unit cost of its hardware parts, and what is that average?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?bom ?bomLabel ( AVG( ?unitCost ) AS ?avgUnitCost ) WHERE {\n  ?bom rdf:type pv:BillOfMaterial .\n  OPTIONAL {\n    ?bom rdfs:label ?bomLabel\n  }\n  ?bom pv:hasBomPart ?bomPart .\n  ?bomPart pv:hasPart ?hardware .\n  ?hardware pv:price ?price .\n  ?price pv:amount ?unitCost .\n}\nGROUP BY ?bom ?bomLabel\nORDER BY DESC ( ?avgUnitCost )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:42-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/42-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Show me any cycles of product compatibility \u2014 i.e. product A says it's compatible with B, and B says it's compatible with A (mutual pairs).",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?productA ?labelA ?productB ?labelB WHERE {\n  ?productA pv:compatibleProduct ?productB .\n  ?productB pv:compatibleProduct ?productA .\n  OPTIONAL {\n    ?productA rdfs:label ?labelA\n  }\n  OPTIONAL {\n    ?productB rdfs:label ?labelB\n  }\n}\nLIMIT 100",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:43-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/43-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which hardware items have dimensions in the top 10 % of all widths, and what are their IDs, names and widths?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?hw ?id ?name ?width WHERE {\n  ?hw pv:width_mm ?width .\n  FILTER ( ?width >= 73 ) .\n  OPTIONAL {\n    ?hw pv:id ?id\n  }\n  .\n  OPTIONAL {\n    ?hw pv:name ?name\n  }\n  .\n}\nORDER BY DESC ( ?width )",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:44-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/44-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which supplier delivers the most reliable Inductor?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?supplier WHERE {\n  ?product rdfs:label ?label .\n  FILTER ( CONTAINS( LCASE( ?label ) , \"inductor\" ) ) ?product pv:hasSupplier ?supplier .\n  ?product pv:reliabilityIndex ?reliabilityIndex .\n}\nORDER BY DESC ( ?reliabilityIndex )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:45-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/45-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "What are the top 5 suppliers with best average reliability over their products.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?supplier ?supplierLabel ( AVG( ?reliability ) AS ?avgReliability ) WHERE {\n  ?product pv:hasSupplier ?supplier .\n  ?product pv:reliabilityIndex ?reliability .\n  OPTIONAL {\n    ?supplier rdfs:label ?supplierLabel\n  }\n}\nGROUP BY ?supplier ?supplierLabel\nORDER BY DESC ( ?avgReliability )\nLIMIT 5",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:46-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/46-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "From which countries are the BOM parts of our SkySync MechWave delivered?",
+    "query": "",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:47-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/47-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Show me all BOMs which have at least on part from a polish supplier.",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT DISTINCT ?bom WHERE {\n  ?bom rdf:type pv:BillOfMaterial .\n  ?bom pv:hasBomPart ?bomPart .\n  ?bomPart pv:hasPart ?part .\n  ?part pv:hasSupplier ?supplier .\n  ?supplier ( pv:addressCountry | pv:country ) ?country .\n  FILTER ( CONTAINS( LCASE( STR( ?country ) ) , \"poland\" ) )\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:48-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/48-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "How many suppliers can deliver alternative compatible products for the K367 Strain Encoder?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nPREFIX prodi: <http://ld.company.org/prod-instances/>\nSELECT ( COUNT( DISTINCT ?supplier ) AS ?countSuppliers ) WHERE {\n  prodi:hw-K367-1320550 pv:compatibleProduct ?compatibleProduct .\n  ?compatibleProduct pv:hasSupplier ?supplier .\n}",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:49-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/49-en"
+  },
+  {
+    "dataset": "https://text2sparql.aksw.org/2025/corporate/",
+    "question": "Which department is resposible for the most product and how many product are this?",
+    "query": "PREFIX pv: <http://ld.company.org/prod-vocab/>\nSELECT ?department ( COUNT( ?productOrService ) AS ?count ) WHERE {\n  ?department a pv:Department .\n  ?department pv:responsibleFor ?productOrService .\n}\nGROUP BY ?department\nORDER BY DESC ( ?count )\nLIMIT 1",
+    "endpoint": "http://localhost:8000",
+    "qname": "ck25:50-en",
+    "uri": "https://text2sparql.aksw.org/2025/corporate/50-en"
+  }
+]
