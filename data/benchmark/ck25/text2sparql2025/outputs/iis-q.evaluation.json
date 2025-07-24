@@ -1,0 +1,652 @@
+{
+  "1": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?department WHERE { <http://ld.company.org/prod-instances/empl-Karen.Brant%40company.org> ns1:memberOf ?department . }",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "2": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?telephone WHERE { <http://ld.company.org/prod-instances/empl-Baldwin.Dirksen%40company.org> ns1:phone ?telephone . }",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "3": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?managerName WHERE { <http://ld.company.org/prod-instances/empl-Heinrich.Hoch%40company.org> ns1:hasManager ?manager . ?manager ns1:name ?managerName . }",
+      "err": null,
+      "size": 1,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "4": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?email WHERE { <http://ld.company.org/prod-instances/empl-Sabrina.Geiger%40company.org> ns1:email ?email . }",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "5": {
+    "target": {
+      "err": null,
+      "size": 4
+    },
+    "prediction": {
+      "sparql": "",
+      "err": "Invalid SPARQL query: Unexpected end of input: mismatched input '<EOF>' expecting {SELECT, CONSTRUCT, DESCRIBE, ASK}",
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "6": {
+    "target": {
+      "err": null,
+      "size": 7
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?employee ?name (COUNT(?product) AS ?sensorProducts) WHERE { ?employee ns1:areaOfExpertise <http://ld.company.org/prod-instances/prod-cat-Sensor> ; ns1:name ?name ; ns1:hasProductManager ?product . ?product ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Sensor> . } GROUP BY ?employee ?name ORDER BY DESC(?sensorProducts) LIMIT 1",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "7": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?employee WHERE { ?employee ns1:memberOf <http://ld.company.org/prod-instances/dept-41622> . }",
+      "err": null,
+      "size": 10,
+      "score": 0.18181818181818182,
+      "elapsed": 0
+    }
+  },
+  "8": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?label WHERE { <http://ld.company.org/prod-instances/dept-41622> rdfs:label ?label . }",
+      "err": "Invalid SPARQL query: Prefix rdfs was not registered using a PREFIX declaration",
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "9": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT (COUNT(?product) AS ?count) WHERE { ?product ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Switch> ; ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Sensor> . }",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "10": {
+    "target": {
+      "err": null,
+      "size": 2
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?person ?name WHERE { ?person ns1:memberOf <http://ld.company.org/prod-instances/dept-85880> ; ns1:areaOfExpertise <http://ld.company.org/prod-instances/prod-cat-Network> . ?person ns1:name ?name . }",
+      "err": null,
+      "size": 2,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "11": {
+    "target": {
+      "err": null,
+      "size": 2
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?department WHERE { ?employee :areaOfExpertise <http://ld.company.org/prod-instances/prod-cat-Transducer> . ?employee :memberOf ?department . }",
+      "err": null,
+      "size": 2,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "12": {
+    "target": {
+      "err": null,
+      "size": 90
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?supplier WHERE { ?hardware ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Compensator> ; ns1:hasSupplier ?supplier . }",
+      "err": null,
+      "size": 90,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "13": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> PREFIX dbpedia: <http://dbpedia.org/resource/> SELECT (COUNT(DISTINCT ?supplier) AS ?count) WHERE { ?supplier a ns1:Supplier ; ns1:country dbpedia:France . }",
+      "err": null,
+      "size": 1,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "14": {
+    "target": {
+      "err": null,
+      "size": 3
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?supplier WHERE { ?product ns1:hasSupplier ?supplier . ?product ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Compensator> . ?supplier ns1:addressCountry 'France' . }",
+      "err": null,
+      "size": 3,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "15": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "",
+      "err": "Invalid SPARQL query: Unexpected end of input: mismatched input '<EOF>' expecting {SELECT, CONSTRUCT, DESCRIBE, ASK}",
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "16": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?supplier WHERE { ?supplier a ns1:Supplier ; ns1:addressLocality 'Toulouse' . }",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "17": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?supplier WHERE { ?supplier a ns1:Supplier ; ns1:addressLocality 'Toulouse' . }",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "18": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?oscillator ?price WHERE { ?oscillator a ns1:Hardware ; ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Oscillator> ; ns1:price ?priceResource . ?priceResource ns1:amount ?price . } ORDER BY ASC(?price) LIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "19": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?service ?price WHERE { ?service a :Service ; :price ?price . } ORDER BY DESC(?price) LIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "20": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?service ?price ?person WHERE { ?service a :Service ; :price ?priceSpec . ?priceSpec a :Price ; :amount ?price . ?service :hasProductManager ?person . } ORDER BY DESC(?price) LIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "21": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?coil ?width ?height WHERE { ?coil a ns1:Hardware ; ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Coil> ; ns1:width_mm ?width ; ns1:height_mm ?height }",
+      "err": null,
+      "size": 93,
+      "score": 0.021276595744680854,
+      "elapsed": 0
+    }
+  },
+  "22": {
+    "target": {
+      "err": null,
+      "size": 6
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?compatibleProduct ?label ?id WHERE { <http://ld.company.org/prod-instances/hw-U990-5234138> ns1:compatibleProduct ?compatibleProduct . ?compatibleProduct rdfs:label ?label . ?compatibleProduct ns1:id ?id . }",
+      "err": "Invalid SPARQL query: Prefix rdfs was not registered using a PREFIX declaration",
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "23": {
+    "target": {
+      "err": null,
+      "size": 2
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?product WHERE { <http://ld.company.org/prod-instances/hw-U990-5234138> ns1:compatibleProduct ?product . ?product ns1:hasSupplier ?supplier . ?supplier ns1:country <http://dbpedia.org/resource/United_States> . FILTER(?product = <http://ld.company.org/prod-instances/hw-A360-3041803>) }",
+      "err": null,
+      "size": 1,
+      "score": 0.6666666666666666,
+      "elapsed": 0
+    }
+  },
+  "24": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?potentiometer ?volume WHERE { ?potentiometer a ns1:Hardware ; ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Potentiometer> ; ns1:depth_mm ?depth ; ns1:height_mm ?height ; ns1:width_mm ?width . BIND(?depth * ?height * ?width AS ?volume) } ORDER BY ASC(?volume) LIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "25": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT ?coil ?weight ?depth ?height ?width WHERE { ?coil a ns1:Hardware ; ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-Coil> ; ns1:weight_g ?weight ; ns1:depth_mm ?depth ; ns1:height_mm ?height ; ns1:width_mm ?width . }",
+      "err": null,
+      "size": 93,
+      "score": 0.021276595744680854,
+      "elapsed": 0
+    }
+  },
+  "26": {
+    "target": {
+      "err": null,
+      "size": 10
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?city WHERE { ?product ns1:hasCategory <http://ld.company.org/prod-instances/prod-cat-LCD> . ?product ns1:hasSupplier ?supplier . ?supplier ns1:country <http://dbpedia.org/resource/United_States> . ?supplier ns1:addressLocality ?city . }",
+      "err": null,
+      "size": 10,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "27": {
+    "target": {
+      "err": null,
+      "size": 47
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT ?name ?email ?phone\nWHERE {\n  ?employee a :Employee ;\n            :name ?name ;\n            :email ?email ;\n            :phone ?phone .\n  FILTER NOT EXISTS { ?otherEmployee :hasManager ?employee }\n}\nORDER BY ?name",
+      "err": null,
+      "size": 36,
+      "score": 0.7297297297297298,
+      "elapsed": 0
+    }
+  },
+  "28": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT DISTINCT ?service\nWHERE {\n  ?service a :Service ;\n           :eligibleFor ?product .\n  ?bom :hasBomPart ?bomPart .\n  ?bomPart :hasPart ?product .\n  ?product :hasSupplier ?supplier .\n  ?supplier :addressCountry 'Russian Federation' .\n}",
+      "err": null,
+      "size": 8,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "29": {
+    "target": {
+      "err": null,
+      "size": 5
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?item ?price ?supplier ?supplierName ?country WHERE { ?item a :Hardware ; :price ?price ; :hasSupplier ?supplier . ?supplier :name ?supplierName ; :country ?country . } ORDER BY DESC(?price) OFFSET 5 LIMIT 5",
+      "err": null,
+      "size": 5,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "30": {
+    "target": {
+      "err": null,
+      "size": 4
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT ?department ?employeeName (COUNT(?employee) AS ?employeeCount)\nWHERE {\n  ?employee a :Employee ;\n            :memberOf ?department ;\n            :name ?employeeName .\n}\nGROUP BY ?department ?employeeName\nHAVING (COUNT(?employee) > 5)",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "31": {
+    "target": {
+      "err": null,
+      "size": 26
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT ?category ?lightestItem ?lightestWeight ?heaviestItem ?heaviestWeight\nWHERE {\n  {\n    SELECT ?category ?item AS ?lightestItem (MIN(?weight) AS ?lightestWeight)\n    WHERE {\n      ?item a :Hardware ;\n            :weight_g ?weight ;\n            :hasCategory ?category .\n    }\n    GROUP BY ?category\n  }\n  {\n    SELECT ?category ?item AS ?heaviestItem (MAX(?weight) AS ?heaviestWeight)\n    WHERE {\n      ?item a :Hardware ;\n            :weight_g ?weight ;\n            :hasCategory ?category .\n    }\n    GROUP BY ?category\n  }\n}\nGROUP BY ?category ?lightestItem ?lightestWeight ?heaviestItem ?heaviestWeight",
+      "err": "Invalid SPARQL query: Token \"AS\": mismatched input 'AS' expecting {'{', WHERE}",
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "32": {
+    "target": {
+      "err": null,
+      "size": 246
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?supplier (ROUND(AVG(?amount) * 100) / 100 AS ?averagePrice) WHERE { ?product :hasSupplier ?supplier . ?product :price ?price . ?price :currency 'EUR' . ?price :amount ?amount . } GROUP BY ?supplier ORDER BY ?supplier",
+      "err": null,
+      "size": 246,
+      "score": 0.6666666666666666,
+      "elapsed": 0
+    }
+  },
+  "33": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?department WHERE { ?department a :Department . FILTER NOT EXISTS { ?employee a :Employee ; :memberOf ?department ; :hasManager ?manager } }",
+      "err": null,
+      "size": 0,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "34": {
+    "target": {
+      "err": null,
+      "size": 250
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?supplierName ?addressCountry ?addressLocality ?addressText ?addressCountryCode WHERE { ?supplier a :Supplier . OPTIONAL { ?supplier :addressCountry ?addressCountry } . OPTIONAL { ?supplier :addressLocality ?addressLocality } . OPTIONAL { ?supplier :addressText ?addressText } . OPTIONAL { ?supplier :addressCountryCode ?addressCountryCode } . OPTIONAL { ?supplier :name ?supplierName } }",
+      "err": null,
+      "size": 250,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "35": {
+    "target": {
+      "err": null,
+      "size": 1938
+    },
+    "prediction": {
+      "sparql": "PREFIX prod: <http://ld.company.org/prod-vocab/>\nSELECT ?product ?property ?value\nWHERE {\n  ?product a prod:Product ;\n           ?property ?value\n}",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "36": {
+    "target": {
+      "err": null,
+      "size": 3
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?agent ?category WHERE { ?agent :areaOfExpertise ?category . VALUES ?category { <http://ld.company.org/prod-instances/prod-cat-Compensator> <http://ld.company.org/prod-instances/prod-cat-Crystal> <http://ld.company.org/prod-instances/prod-cat-LCD> }",
+      "err": "Invalid SPARQL query: Unexpected end of input: missing '}' at '<EOF>'",
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "37": {
+    "target": {
+      "err": null,
+      "size": 7
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT (MAX(?partCount) AS ?maxPartCount)\nWHERE {\n  ?bom a :BillOfMaterial ;\n       :hasBomPart ?bomPart .\n  {\n    SELECT ?bom (COUNT(?bomPart) AS ?partCount)\n    WHERE {\n      ?bom :hasBomPart ?bomPart .\n    }\n    GROUP BY ?bom\n  }\n}",
+      "err": null,
+      "size": 1,
+      "score": 0.09090909386469313,
+      "elapsed": 0
+    }
+  },
+  "38": {
+    "target": {
+      "err": null,
+      "size": 53
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT DISTINCT ?employee ?name ?email ?phone ?department ?directReport\nWHERE {\n  ?employee a :Employee ;\n            :name ?name ;\n            :email ?email ;\n            :phone ?phone ;\n            :memberOf ?department .\n  OPTIONAL { ?employee :hasDirectReport ?directReport }\n}",
+      "err": null,
+      "size": 36,
+      "score": 0.5790885154451514,
+      "elapsed": 0
+    }
+  },
+  "39": {
+    "target": {
+      "err": null,
+      "size": 485
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?item ?width ?height ?depth WHERE { ?item a :Hardware ; :width_mm ?width ; :height_mm ?height ; :depth_mm ?depth . FILTER(?width > ?height && ?depth < 50) }",
+      "err": null,
+      "size": 485,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "40": {
+    "target": {
+      "err": null,
+      "size": 48
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT DISTINCT ?item ?manager\nWHERE {\n  ?item a :Hardware ;\n        :hasProductManager ?manager\n}",
+      "err": null,
+      "size": 1000,
+      "score": 0.03149606311038184,
+      "elapsed": 0
+    }
+  },
+  "41": {
+    "target": {
+      "err": null,
+      "size": 6
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT ?manager ?managerDepartment ((COUNT(?sameDeptReport) * 100 / COUNT(?directReport)) AS ?percentage)\nWHERE {\n  ?manager a :Manager ;\n          :memberOf ?managerDepartment .\n  ?directReport :hasManager ?manager .\n  OPTIONAL {\n    ?directReport :memberOf ?managerDepartment .\n    BIND(?directReport AS ?sameDeptReport)\n  }\n}\nGROUP BY ?manager ?managerDepartment\nORDER BY ?manager",
+      "err": null,
+      "size": 6,
+      "score": 0.8000000190734868,
+      "elapsed": 0
+    }
+  },
+  "42": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT ?bom (AVG(?amount) AS ?averageCost)\nWHERE {\n  ?bom a :BillOfMaterial ;\n       :hasBomPart ?bomPart .\n  ?bomPart :hasPart ?product .\n  ?product a :Hardware ;\n           :price ?price .\n  ?price :amount ?amount .\n}\nGROUP BY ?bom\nORDER BY DESC(?averageCost)\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 0.6666666666666666,
+      "elapsed": 0
+    }
+  },
+  "43": {
+    "target": {
+      "err": null,
+      "size": 969
+    },
+    "prediction": {
+      "sparql": "PREFIX prod: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?productA ?productB WHERE { ?productA prod:compatibleProduct ?productB . ?productB prod:compatibleProduct ?productA . FILTER(?productA != ?productB) }",
+      "err": null,
+      "size": 1938,
+      "score": 0.6666666666666666,
+      "elapsed": 0
+    }
+  },
+  "44": {
+    "target": {
+      "err": null,
+      "size": 93
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?item ?id ?name ?width WHERE { ?item a :Hardware ; :width_mm ?width ; :id ?id ; :name ?name . } ORDER BY DESC(?width) LIMIT 100",
+      "err": null,
+      "size": 100,
+      "score": 0.9637305699481865,
+      "elapsed": 0
+    }
+  },
+  "45": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT ?supplier ?index WHERE { ?inductor :hasCategory :prod-cat-Inductor ; :reliabilityIndex ?index ; :hasSupplier ?supplier . } ORDER BY DESC(?index) LIMIT 1",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "46": {
+    "target": {
+      "err": null,
+      "size": 5
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT ?supplier (AVG(?reliabilityIndex) AS ?averageReliability)\nWHERE {\n  ?product a :Hardware ;\n          :hasSupplier ?supplier ;\n          :reliabilityIndex ?reliabilityIndex.\n}\nGROUP BY ?supplier\nORDER BY DESC(?averageReliability)\nLIMIT 5",
+      "err": null,
+      "size": 5,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "47": {
+    "target": {
+      "err": null,
+      "size": 7
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> PREFIX ns2: <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?country WHERE { <http://ld.company.org/prod-instances/bom-17> ns1:hasBomPart ?bomPart . ?bomPart ns1:hasPart ?hardwarePart . ?hardwarePart ns1:hasSupplier ?supplier . ?supplier ns1:addressCountry ?country . }",
+      "err": null,
+      "size": 7,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "48": {
+    "target": {
+      "err": null,
+      "size": 3
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/> SELECT DISTINCT ?bom WHERE { ?bom :hasBomPart ?part . ?part :hasSupplier ?supplier . }",
+      "err": null,
+      "size": 0,
+      "score": 0.0,
+      "elapsed": 0
+    }
+  },
+  "49": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX ns1: <http://ld.company.org/prod-vocab/> SELECT (COUNT(DISTINCT ?supplier) AS ?numSuppliers) WHERE { <http://ld.company.org/prod-instances/hw-K367-1320550> ns1:compatibleProduct ?compatibleProduct . ?compatibleProduct ns1:hasSupplier ?supplier . }",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  },
+  "50": {
+    "target": {
+      "err": null,
+      "size": 1
+    },
+    "prediction": {
+      "sparql": "PREFIX : <http://ld.company.org/prod-vocab/>\nSELECT ?department (COUNT(?product) AS ?productCount)\nWHERE {\n  ?department a :Department ;\n              :responsibleFor ?product .\n}\nGROUP BY ?department\nORDER BY DESC(?productCount)\nLIMIT 1",
+      "err": null,
+      "size": 1,
+      "score": 1.0,
+      "elapsed": 0
+    }
+  }
+}
