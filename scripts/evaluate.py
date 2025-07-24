@@ -78,11 +78,11 @@ def evaluate(args: argparse.Namespace):
     else:
         manager = None
 
-    inputs = load_jsonl(args.input)
     inputs: dict[str, Sample] = {}
     for sample in load_jsonl(args.input):
         sample = Sample(**sample)
         assert sample.id not in inputs, f"Duplicate id {sample.id}"
+        assert sample.id is not None, "Sample id must not be None"
         inputs[sample.id] = sample
 
     exact = args.exact or args.exact_after

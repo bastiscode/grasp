@@ -2,6 +2,8 @@ import argparse
 import os
 import sys
 import csv
+from typing import Iterator
+from urllib.parse import unquote_plus
 
 from search_index import IndexData, Mapping
 
@@ -50,12 +52,12 @@ def camel_case_split(s: str) -> str:
     words = []
     last = 0
     for i, c in enumerate(s):
-        if c.isupper() and i > last and s[i - 1].islower():
-            words.append(s[last:i].lower())
+        if c.isupper() and i > 0 and s[i - 1].islower():
+            words.append(s[last:i])
             last = i
 
     if last < len(s):
-        words.append(s[last:].lower())
+        words.append(s[last:])
 
     return " ".join(words)
 
@@ -63,7 +65,7 @@ def camel_case_split(s: str) -> str:
 PREFIXES = None
 
 
-def get_label_from_camel_case_id(kg: str, obj_id: str) -> str:
+def get_label_from_id(kg: str, obj_id: str) -> str:
     global PREFIXES
     if PREFIXES is None:
         PREFIXES = load_kg_prefixes(kg)
@@ -76,12 +78,28 @@ def get_label_from_camel_case_id(kg: str, obj_id: str) -> str:
         _, long = pfx
         obj_name = obj_id[len(long) : -1]
 
-    return camel_case_split(obj_name)
+    # url decode the object name
+    obj_name = unquote_plus(obj_name)
+
+    label = " ".join(camel_case_split(part) for part in split_at_punctuation(obj_name))
+    return label.strip()
 
 
-def replace_underscores_and_hyphens(s: str) -> str:
-    # replace underscores and hyphens with spaces
-    return s.replace("_", " ").replace("-", " ")
+# we consider _, -, and . as url punctuation
+PUNCTUATION = {"_", "-", "."}
+
+
+def split_at_punctuation(s: str) -> Iterator[str]:
+    start = 0
+    for i, c in enumerate(s):
+        if c not in PUNCTUATION:
+            continue
+
+        yield s[start:i]
+        start = i + 1
+
+    if start < len(s):
+        yield s[start:]
 
 
 WD_DATA: IndexData | None = None
@@ -141,8 +159,7 @@ if __name__ == "__main__":
         if not label:
             # label is empty, try to get it from the object id
             if args.kg is not None:
-                label = get_label_from_camel_case_id(args.kg, id)
-                label = replace_underscores_and_hyphens(label)
+                label = get_label_from_id(args.kg, id)
             elif syns:
                 # use the first synonym as label
                 # keep rest of synonyms
