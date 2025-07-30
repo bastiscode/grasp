@@ -13,13 +13,13 @@ class KgConfig(BaseModel):
 
 
 class Config(BaseModel):
-    model: str
+    model: str = "openai/gpt-4.1"
     model_endpoint: str | None = None
     api_key: str | None = None
     seed: int | None = None
-    fn_set: str
+    fn_set: str = "search_extended"
 
-    knowledge_graphs: list[KgConfig]
+    knowledge_graphs: list[KgConfig] = [KgConfig(name="wikidata")]
 
     search_top_k: int = 10
     # 10 total rows, 5 top and 5 bottom
