@@ -2,6 +2,7 @@ import argparse
 import os
 
 from search_index import IndexData, PrefixIndex, SimilarityIndex
+from universal_ml_utils.logging import setup_logging
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +39,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Whether to overwrite existing index",
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        help="Logging level for the build process",
+    )
     return parser.parse_args()
 
 
@@ -45,6 +52,8 @@ def build(args: argparse.Namespace):
     if os.path.exists(args.output) and not args.overwrite:
         print(f"Index already exists at {args.output}")
         return
+
+    setup_logging(args.log_level)
 
     print(f"Building {args.type} index at {args.output}")
     os.makedirs(args.output, exist_ok=True)

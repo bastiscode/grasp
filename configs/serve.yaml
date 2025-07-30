@@ -10,16 +10,29 @@ temperature: env(TEMPERATURE:0.1)
 top_p: env(TOP_P:0.7)
 reasoning_effort: env(REASONING_EFFORT:null)
 
+list_k: env(LIST_K:10)
+search_top_k: env(SEARCH_TOP_K:10)
+result_max_rows: env(RESULT_MAX_ROWS:10)
+result_max_columns: env(RESULT_MAX_COLUMNS:10)
 feedback: env(FEEDBACK:false)
 know_before_use: env(KNOW_BEFORE_USE:false)
 
+max_completion_tokens: env(MAX_TOKENS:16384)
+completion_timeout: env(TIMEOUT:120)
+
 force_examples: env(FORCE_EXAMPLES:false)
 random_examples: env(RANDOM_EXAMPLES:false)
+num_examples: env(NUM_EXAMPLES:3)
 
 knowledge_graphs:
   - name: wikidata
     endpoint: env(WD_ENDPOINT:null)
     example_index: env(WD_EXAMPLES:null)
+    entities_dir: env(WD_ENT_DIR:null)
+    properties_dir: env(WD_PROP_DIR:null)
+    entities_type: env(WD_ENT_TYPE:null)
+    properties_type: env(WD_PROP_TYPE:null)
+    prefix_file: env(WD_PREFIX_FILE:null)
   - name: freebase
   - name: dblp
   - name: dbpedia

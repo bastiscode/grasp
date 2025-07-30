@@ -1,7 +1,7 @@
 import argparse
+import csv
 import os
 import sys
-import csv
 from typing import Iterator
 from urllib.parse import unquote_plus
 

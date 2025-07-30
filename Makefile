@@ -135,10 +135,10 @@ KG_URL=https://qlever.cs.uni-freiburg.de/api/generic
 generic-kg-data:
 	# entities
 	# representative query over IMDb:
-	# https://qlever.cs.uni-freiburg.de/imdb/9RZAO2
+	# https://qlever.cs.uni-freiburg.de/imdb/ihcOo6
 	@mkdir -p data/kg-index/$(KG_NAME)/entities
 	@curl -s $(KG_URL) -H "Accept: text/csv" \
-	--data-urlencode query="PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> SELECT DISTINCT ?label (SUM(?count) AS ?score) (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?count) WHERE { ?id ?p ?o } GROUP BY ?id } UNION { SELECT ?id (COUNT(?id) AS ?count) WHERE { ?s ?p ?id . FILTER(ISIRI(?id)) } GROUP BY ?id } OPTIONAL { ?id rdfs:label ?label . FILTER(LANG(?label) = \"en\") } BIND(\"\" AS ?alias) OPTIONAL { { ?id @en@rdfs:comment ?info } UNION { ?id rdfs:domain/@en@rdfs:label ?domain . BIND(CONCAT(\"has domain \", ?domain) AS ?info) } UNION { ?id rdfs:range/@en@rdfs:label ?range . BIND(CONCAT(\"has range \", ?range) AS ?info) } UNION { ?id rdf:type/@en@rdfs:label ?type . BIND(CONCAT(\"is a \", ?type) AS ?info) } UNION { ?id rdfs:subClassOf/@en@rdfs:label ?superclass . BIND(CONCAT(\"is subclass of \", ?superclass) AS ?info) } } } GROUP BY ?label ?id ORDER BY DESC(?score)" \
+	--data-urlencode query="PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX skos: <http://www.w3.org/2004/02/skos/core#> SELECT DISTINCT ?label (SUM(?count) AS ?score) (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?count) WHERE { ?id ?p ?o } GROUP BY ?id } UNION { SELECT ?id (COUNT(?id) AS ?count) WHERE { ?s ?p ?id . FILTER(ISIRI(?id)) } GROUP BY ?id } OPTIONAL { ?id @en@rdfs:label ?label } OPTIONAL { ?id @en@skos:altLabel ?alias } OPTIONAL { { ?id @en@rdfs:comment ?info } UNION { ?id rdfs:domain/@en@rdfs:label ?domain . BIND(CONCAT(\"has domain \", ?domain) AS ?info) } UNION { ?id rdfs:range/@en@rdfs:label ?range . BIND(CONCAT(\"has range \", ?range) AS ?info) } UNION { ?id rdf:type/@en@rdfs:label ?type . BIND(CONCAT(\"is a \", ?type) AS ?info) } UNION { ?id rdfs:subClassOf/@en@rdfs:label ?superclass . BIND(CONCAT(\"is subclass of \", ?superclass) AS ?info) } } } GROUP BY ?label ?id ORDER BY DESC(?score)" \
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(QLEVER_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_data.py \
@@ -153,10 +153,10 @@ generic-kg-data:
 
 	# properties
 	# representative query over IMDb:
-	# https://qlever.cs.uni-freiburg.de/imdb/0lbYLN
+	# https://qlever.cs.uni-freiburg.de/imdb/U8H0n1
 	@mkdir -p data/kg-index/$(KG_NAME)/properties
 	@curl -s $(KG_URL) -H "Accept: text/csv" \
-	--data-urlencode query="PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> SELECT DISTINCT ?label ?score (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?score) WHERE { ?s ?id ?o } GROUP BY ?id } OPTIONAL { ?id rdfs:label ?label . FILTER(LANG(?label) = \"en\") } BIND(\"\" AS ?alias) OPTIONAL { { ?id @en@rdfs:comment ?info } UNION { ?id rdfs:domain/@en@rdfs:label ?domain . BIND(CONCAT(\"has domain \", ?domain) AS ?info) } UNION { ?id rdfs:range/@en@rdfs:label ?range . BIND(CONCAT(\"has range \", ?range) AS ?info) } UNION { ?id rdf:type/@en@rdfs:label ?type . BIND(CONCAT(\"is a \", ?type) AS ?info) } UNION { ?id rdfs:subPropertyOf/@en@rdfs:label ?superclass . BIND(CONCAT(\"is subproperty of \", ?superclass) AS ?info) } } } GROUP BY ?label ?score ?id ORDER BY DESC(?score)" \
+	--data-urlencode query="PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> SELECT DISTINCT ?label ?score (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?score) WHERE { ?s ?id ?o } GROUP BY ?id } OPTIONAL { ?id @en@rdfs:label ?label } BIND(\"\" AS ?alias) OPTIONAL { { ?id @en@rdfs:comment ?info } UNION { ?id rdfs:domain/@en@rdfs:label ?domain . BIND(CONCAT(\"has domain \", ?domain) AS ?info) } UNION { ?id rdfs:range/@en@rdfs:label ?range . BIND(CONCAT(\"has range \", ?range) AS ?info) } UNION { ?id rdf:type/@en@rdfs:label ?type . BIND(CONCAT(\"is a \", ?type) AS ?info) } UNION { ?id rdfs:subPropertyOf/@en@rdfs:label ?superclass . BIND(CONCAT(\"is subproperty of \", ?superclass) AS ?info) } } } GROUP BY ?label ?score ?id ORDER BY DESC(?score)" \
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(QLEVER_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_data.py \
@@ -227,10 +227,10 @@ wikidata-kg-indices:
 
 imdb-kg-data:
 	# imdb entities
-	# https://qlever.cs.uni-freiburg.de/imdb/tTNlOT
+	# https://qlever.cs.uni-freiburg.de/imdb/iX7WAZ
 	@mkdir -p data/kg-index/imdb/entities
 	@curl -s $(IMDB_URL) -H "Accept: text/csv" \
-	--data-urlencode query="PREFIX imdb: <https://www.imdb.com/> SELECT DISTINCT ?label ?score (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { ?id imdb:title ?label . BIND(\"\" AS ?alias) BIND(\"\" AS ?info) OPTIONAL { ?id imdb:numVotes ?score } } GROUP BY ?label ?score ?id ORDER BY DESC(?score)" \
+	--data-urlencode query="PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX skos: <http://www.w3.org/2004/02/skos/core#> SELECT DISTINCT ?label (SUM(?count) AS ?score) (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?count) WHERE { ?id ?p ?o } GROUP BY ?id } UNION { SELECT ?id (COUNT(?id) AS ?count) WHERE { ?s ?p ?id . FILTER(ISIRI(?id)) } GROUP BY ?id } OPTIONAL { ?id rdfs:label ?label } OPTIONAL { ?id @en@skos:altLabel ?alias } BIND(\"\" AS ?info) } GROUP BY ?label ?id ORDER BY DESC(?score)" \
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(QLEVER_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_data.py \
@@ -244,10 +244,10 @@ imdb-kg-data:
 	--overwrite
 
 	# imdb properties
-	# https://qlever.cs.uni-freiburg.de/imdb/Mdoaa0
+	# https://qlever.cs.uni-freiburg.de/imdb/apnR5N
 	@mkdir -p data/kg-index/imdb/properties
 	@curl -s $(IMDB_URL) -H "Accept: text/csv" \
-	--data-urlencode query="SELECT DISTINCT ?label ?score (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?score) WHERE { ?s ?id ?o } GROUP BY ?id } BIND(\"\" AS ?label) BIND(\"\" AS ?alias) BIND(\"\" AS ?info) } GROUP BY ?label ?score ?id ORDER BY DESC(?score)" \
+	--data-urlencode query="PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX skos: <http://www.w3.org/2004/02/skos/core#> SELECT DISTINCT ?label ?score (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=\";;;\") AS ?synonyms) ?id (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=\";;;\") AS ?infos) WHERE { { SELECT ?id (COUNT(?id) AS ?score) WHERE { ?s ?id ?o } GROUP BY ?id } BIND(\"\" AS ?label) BIND(\"\" AS ?alias) BIND(\"\" AS ?info) } GROUP BY ?label ?score ?id ORDER BY DESC(?score)" \
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(QLEVER_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_data.py \
