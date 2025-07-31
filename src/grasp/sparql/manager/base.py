@@ -528,7 +528,7 @@ class KgManager:
                 no_refinement=search_kwargs.get("no_refinement", False),
             )
             for id, _ in matches[:k]:
-                raw, formatted, info = data[id]
+                formatted, _, _, raw, info = data.get_row(id)
                 alternatives.append(
                     Alternative(
                         identifier=raw,
