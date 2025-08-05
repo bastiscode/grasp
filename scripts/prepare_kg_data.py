@@ -17,17 +17,16 @@ from grasp.sparql.sparql import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    type_group = parser.add_mutually_exclusive_group()
-    type_group.add_argument(
-        "--osm-planet-entities",
-        action="store_true",
-        help="Inputs are OSM Planet entities",
-    )
-    type_group.add_argument(
+    parser.add_argument(
         "--kg",
         type=str,
         default=None,
         help="Specify knowledge graph for label fallback",
+    )
+    parser.add_argument(
+        "--osm-planet-entities",
+        action="store_true",
+        help="Inputs are OSM Planet entities",
     )
     return parser.parse_args()
 

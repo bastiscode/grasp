@@ -22,8 +22,13 @@ PROP_ARGS=
 ARGS=
 
 all:
-	@echo "This target does nothing, start with 'make wikidata-kg-data', \
-	'make freebase-kg-data', ... to prepare the knowledge graph data."
+	@echo "This target does nothing, you most likely want to use \
+	the pre-built indices to run GRASP; follow the README to do so. \n\
+	If you want to build an index for a supported knowledge graph yourself, e.g. Wikidata, \
+	start with 'make wikidata-kg-data QLEVER_ACCESS_TOKEN=...', \
+	followed by 'make wikidata-kg-indices'; analogously for other supported knowledge graphs. \n\
+	There is also a generic target 'make generic-kg-data KG_NAME=... KG_URL=... QLEVER_ACCESS_TOKEN=...' \
+	and 'make generic-kg-indices KG_NAME=...' to build indices for any knowledge graph."
 
 benchmarks: wikidata-benchmarks \
 	freebase-benchmarks \
@@ -326,8 +331,8 @@ osm-planet-kg-data:
 	--data-urlencode timeout=$(QLEVER_TIMEOUT) \
 	--data-urlencode access-token=$(QLEVER_ACCESS_TOKEN) \
 	| python scripts/prepare_kg_data.py \
-	--kg osm-planet \
 	--osm-planet-entities \
+	--kg osm-planet \
 	> data/kg-index/osm-planet/entities/data.tsv
 	# resort based on score (keep header, sort rest)
 	(head -n1 data/kg-index/osm-planet/entities/data.tsv && \

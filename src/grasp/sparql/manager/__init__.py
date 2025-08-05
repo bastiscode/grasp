@@ -1,15 +1,14 @@
-import json
 import os
 import time
 from typing import Any, Type
 
 from search_index import IndexData, PrefixIndex, SearchIndex, SimilarityIndex
+from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
 from grasp.sparql.manager.base import KgManager
 from grasp.sparql.mapping import Mapping
 from grasp.sparql.sparql import find_longest_prefix, get_index_dir
-
 
 WIKIDATA_PROPERTY_VARIANTS = {
     "wdt": "<http://www.wikidata.org/prop/direct/",
@@ -168,17 +167,16 @@ def load_example_index(dir: str, **kwargs: Any) -> SimilarityIndex:
     return index
 
 
-def load_kg_prefixes(
-    name: str,
-    prefix_file: str | None = None,
-) -> dict[str, str]:
+def load_kg_prefixes(name: str, prefix_file: str | None = None) -> dict[str, str]:
     if prefix_file is None:
         index_dir = get_index_dir()
         assert index_dir is not None, "KG_INDEX_DIR environment variable not set"
         prefix_file = os.path.join(index_dir, name, "prefixes.json")
 
-    with open(prefix_file) as f:
-        return json.load(f)
+    if not os.path.exists(prefix_file):
+        return {}
+
+    return load_json(prefix_file)
 
 
 def load_kg_indices(
