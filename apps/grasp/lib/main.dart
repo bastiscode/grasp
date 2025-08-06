@@ -9,6 +9,7 @@ import 'package:grasp/config.dart';
 import 'package:grasp/utils.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/link.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -81,8 +82,10 @@ class _GRASPState extends State<GRASP> {
   bool running = false;
   bool cancelling = false;
 
-  ScrollController selectionController = ScrollController();
   ScrollController scrollController = ScrollController();
+  bool showScrollButtons = false;
+  DateTime lastScroll = DateTime.now();
+
   TextEditingController questionController = TextEditingController();
   FocusNode questionFocus = FocusNode();
   WebSocketChannel? channel;
@@ -225,6 +228,23 @@ class _GRASPState extends State<GRASP> {
   void initState() {
     super.initState();
 
+    scrollController.addListener(() {
+      final scrolled = DateTime.now();
+      lastScroll = scrolled;
+      final sc = scrollController;
+      if (!sc.hasClients) return;
+      if (!showScrollButtons) {
+        showScrollButtons = true;
+        setState(() {});
+      }
+      Future.delayed(const Duration(seconds: 3), () {
+        if (scrolled != lastScroll) return;
+        setState(() {
+          showScrollButtons = false;
+        });
+      });
+    });
+
     connect().then(
       (_) {
         startConnectTimer();
@@ -246,7 +266,6 @@ class _GRASPState extends State<GRASP> {
     timer?.cancel();
     questionFocus.dispose();
     scrollController.dispose();
-    selectionController.dispose();
     super.dispose();
   }
 
@@ -294,6 +313,75 @@ class _GRASPState extends State<GRASP> {
       alignment: WrapAlignment.center,
       runAlignment: WrapAlignment.center,
       children: children,
+    );
+  }
+
+  Widget buildUpDown() {
+    final sc = scrollController;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        IconButton.outlined(
+          splashRadius: 16,
+          onPressed: () {
+            sc.animateTo(
+              sc.position.minScrollExtent,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+            );
+          },
+          tooltip: "Scroll to top",
+          icon: const Icon(Icons.keyboard_arrow_up_outlined),
+        ),
+        const SizedBox(width: 8),
+        IconButton.outlined(
+          onPressed: () {
+            sc.animateTo(
+              sc.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+            );
+          },
+          splashRadius: 16,
+          tooltip: "Scroll to bottom",
+          icon: const Icon(Icons.keyboard_arrow_down_outlined),
+        ),
+      ],
+    );
+  }
+
+  TextSpan makeLink(String uri, String text) {
+    return TextSpan(
+      text: text,
+      recognizer: TapGestureRecognizer()
+        ..onTap = () async => await launchUrl(Uri.parse(uri)),
+      style: TextTheme.of(context).bodyMedium?.copyWith(
+        color: uniBlue,
+        // decoration: TextDecoration.underline,
+        // decorationColor: uniBlue,
+      ),
+    );
+  }
+
+  Widget buildInfo() {
+    return Center(
+      child: RichText(
+        textAlign: TextAlign.center,
+        text: TextSpan(
+          children: [
+            TextSpan(
+              text: "\u00a9 ${DateTime.now().year} - University of Freiburg, ",
+            ),
+            makeLink(chair, "Chair for Algorithms and Data Structures"),
+            TextSpan(text: " - "),
+            makeLink(repo, "Code on GitHub"),
+            TextSpan(text: " - "),
+            makeLink(paper, "GRASP paper"),
+          ],
+        ),
+      ),
     );
   }
 
@@ -723,7 +811,7 @@ ${result ?? "No SPARQL result available."}
 
   Widget constrainWidth(Widget widget) {
     return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: 800),
+      constraints: BoxConstraints(maxWidth: 1000),
       child: widget,
     );
   }
@@ -775,11 +863,6 @@ ${result ?? "No SPARQL result available."}
                     }
                   }
                 }
-                final canScroll =
-                    scrollController.hasClients &&
-                    scrollController.position.pixels <=
-                        scrollController.position.maxScrollExtent -
-                            10; // some small tolerance
 
                 final items = histories.expand((h) => h).toList();
                 return Center(
@@ -798,49 +881,24 @@ ${result ?? "No SPARQL result available."}
                               child: Stack(
                                 alignment: AlignmentDirectional.bottomCenter,
                                 children: [
-                                  NotificationListener<ScrollNotification>(
-                                    onNotification: (_) {
-                                      final now = DateTime.now();
-                                      final diff = now.difference(lastScrolled);
-                                      if (diff.inMilliseconds > 200) {
-                                        lastScrolled = now;
-                                        setState(() {});
-                                      }
-                                      return false;
-                                    },
-                                    child: ListView.separated(
-                                      padding: EdgeInsets.zero,
-                                      controller: scrollController,
-                                      itemCount: items.length,
-                                      itemBuilder: (_, i) =>
-                                          buildHistoryItem(items[i]),
-                                      separatorBuilder: (_, i) =>
-                                          SizedBox(height: 8),
-                                    ),
+                                  ListView.separated(
+                                    padding: EdgeInsets.zero,
+                                    controller: scrollController,
+                                    itemCount: items.length,
+                                    itemBuilder: (_, i) =>
+                                        buildHistoryItem(items[i]),
+                                    separatorBuilder: (_, i) =>
+                                        SizedBox(height: 8),
                                   ),
-                                  if (canScroll)
-                                    FloatingActionButton(
-                                      mini: true,
-                                      backgroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                        side: BorderSide(color: uniGray),
-                                        borderRadius: BorderRadius.circular(
-                                          100,
+                                  if (showScrollButtons)
+                                    Align(
+                                      alignment: Alignment.bottomRight,
+                                      child: Padding(
+                                        padding: EdgeInsets.only(
+                                          right: 16,
+                                          bottom: 16,
                                         ),
-                                      ),
-                                      tooltip: "Scroll to bottom",
-                                      onPressed: () async {
-                                        await scrollController.animateTo(
-                                          scrollController
-                                              .position
-                                              .maxScrollExtent,
-                                          duration: Duration(milliseconds: 200),
-                                          curve: Curves.easeInOut,
-                                        );
-                                        setState(() {});
-                                      },
-                                      child: Icon(
-                                        Icons.arrow_downward_outlined,
+                                        child: buildUpDown(),
                                       ),
                                     ),
                                 ],
@@ -851,6 +909,8 @@ ${result ?? "No SPARQL result available."}
                           buildTextField(),
                           SizedBox(height: 8),
                           buildSelection(),
+                          SizedBox(height: 8),
+                          buildInfo(),
                         ],
                       ),
                     ),
