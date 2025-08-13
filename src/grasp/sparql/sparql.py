@@ -768,8 +768,8 @@ def is_iri(iri: str) -> bool:
     return iri.startswith("<") and iri.endswith(">")
 
 
-def is_fq_iri(iri: str) -> bool:
-    return is_iri(iri) and validators.url(iri[1:-1])  # type: ignore
+# def is_fq_iri(iri: str) -> bool:
+#     return is_iri(iri) and validators.url(iri[1:-1])  # type: ignore
 
 
 def format_iri(
@@ -780,12 +780,13 @@ def format_iri(
     if not is_iri(iri):
         return iri
 
-    elif not is_fq_iri(iri):
-        assert base_uri is not None, (
-            f"Could not find a scheme in the IRI {iri}, it seems "
-            f"you provided a relative IRI without a BASE URI"
-        )
-        iri = "<" + urljoin(base_uri[1:-1], iri[1:-1]) + ">"
+    # disabled for now because base is almost never needed
+    # elif not is_fq_iri(iri):
+    #     assert base_uri is not None, (
+    #         f"Could not find a scheme in the IRI {iri}, it seems "
+    #         f"you provided a relative IRI without a BASE URI"
+    #     )
+    #     iri = "<" + urljoin(base_uri[1:-1], iri[1:-1]) + ">"
 
     longest = find_longest_prefix(iri, prefixes)
     if longest is None:

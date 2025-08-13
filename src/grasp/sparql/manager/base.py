@@ -51,20 +51,22 @@ class KgManager:
     entity_mapping_cls: Type[Mapping] = Mapping
     property_mapping_cls: Type[Mapping] = Mapping
     prefixes: dict[str, str]
+    notes: list[str]
     kg: str
     endpoint: str
 
     def __init__(
         self,
-        name: str,
+        kg: str,
         entity_index: SearchIndex,
         property_index: SearchIndex,
         entity_mapping: Mapping,
         property_mapping: Mapping,
         prefixes: dict[str, str] | None = None,
+        notes: list[str] | None = None,
         endpoint: str | None = None,
     ):
-        self.kg = name
+        self.kg = kg
 
         self.entity_index = entity_index
         self.property_index = property_index
@@ -85,6 +87,8 @@ class KgManager:
                 continue
 
             self.prefixes[short] = long
+
+        self.notes = notes or []
 
         self.endpoint = endpoint or get_endpoint(self.kg)
 

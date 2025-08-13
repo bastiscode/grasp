@@ -565,7 +565,7 @@
   },
   "test_400": {
     "target": {
-      "err": "Assertion `variablesAreDisjoint` failed. Please report this to the developers. In file \"/qlever/src/engine/CartesianProductJoin.cpp \" at line 39",
+      "err": "Assertion `variablesAreDisjoint` failed. Please report this to the developers. In file \"/qlever/src/engine/CartesianProductJoin.cpp \" at line 47",
       "size": 0
     }
   },

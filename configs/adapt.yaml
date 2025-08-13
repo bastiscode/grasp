@@ -1,0 +1,44 @@
+model: env(MODEL)
+model_endpoint: env(MODEL_ENDPOINT:null)
+
+seed: env(SEED:null)
+
+fn_set: env(FN_SET)
+feedback: env(FEEDBACK:false)
+know_before_use: env(KNOW_BEFORE_USE:false)
+notes_file: env(NOTES_FILE:null)
+
+list_k: env(LIST_K:10)
+search_top_k: env(SEARCH_TOP_K:10)
+result_max_rows: env(RESULT_MAX_ROWS:10)
+result_max_columns: env(RESULT_MAX_COLUMNS:10)
+
+temperature: env(TEMPERATURE:0.2)
+top_p: env(TOP_P:0.8)
+reasoning_effort: env(REASONING_EFFORT:null)
+
+knowledge_graphs:
+  - kg: env(KG)
+    endpoint: env(KG_ENDPOINT:null)
+    entities_type: env(ENTITIES_TYPE:null)
+    properties_type: env(PROPERTIES_TYPE:null)
+    notes_file: env(KG_NOTES_FILE:null)
+
+# adapt configuration
+method: env(METHOD:iterative_note_taking)
+
+num_rounds: env(NUM_ROUNDS:5)
+
+input:
+  - kg: env(KG)
+    file: env(INPUT_FILE)
+
+samples_per_round: env(SAMPLES_PER_ROUND:8)
+samples_per_file: env(SAMPLES_PER_FILE:null)
+
+# custom adapt model and decoding parameters
+adapt_model: env(ADAPT_MODEL:null)
+adapt_model_endpoint: env(ADAPT_MODEL_ENDPOINT:null)
+adapt_temperature: env(ADAPT_TEMPERATURE:null)
+adapt_top_p: env(ADAPT_TOP_P:null)
+adapt_reasoning_effort: env(ADAPT_REASONING_EFFORT:null)

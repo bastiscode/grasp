@@ -11,7 +11,7 @@ from grasp.sparql.manager import load_kg_prefixes
 from grasp.sparql.sparql import (
     find_longest_prefix,
     get_index_dir,
-    is_fq_iri,
+    is_iri,
 )
 
 
@@ -24,6 +24,12 @@ def parse_args() -> argparse.Namespace:
         help="Specify knowledge graph for label fallback",
     )
     parser.add_argument(
+        "--add-id-as-synonym",
+        action="store_true",
+        help="Add object id as synonym if label is not empty, "
+        "otherwise we already use it as main label",
+    )
+    parser.add_argument(
         "--osm-planet-entities",
         action="store_true",
         help="Inputs are OSM Planet entities",
@@ -32,7 +38,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def split_iri(iri: str) -> tuple[str, str]:
-    if not is_fq_iri(iri):
+    if not is_iri(iri):
         return "", iri
 
     # split iri into prefix and last part after final / or #
@@ -64,7 +70,7 @@ def camel_case_split(s: str) -> str:
 PREFIXES = None
 
 
-def get_label_from_id(kg: str, obj_id: str) -> str:
+def get_object_name_from_id(kg: str, obj_id: str) -> str:
     global PREFIXES
     if PREFIXES is None:
         PREFIXES = load_kg_prefixes(kg)
@@ -78,8 +84,11 @@ def get_label_from_id(kg: str, obj_id: str) -> str:
         obj_name = obj_id[len(long) : -1]
 
     # url decode the object name
-    obj_name = unquote_plus(obj_name)
+    return unquote_plus(obj_name)
 
+
+def get_label_from_id(kg: str, obj_id: str) -> str:
+    obj_name = get_object_name_from_id(kg, obj_id)
     label = " ".join(camel_case_split(part) for part in split_at_punctuation(obj_name))
     return label.strip()
 
@@ -168,6 +177,14 @@ if __name__ == "__main__":
                 raise ValueError(
                     f"Label is empty and no ID fallback or synonyms provided: {row}"
                 )
+
+        elif args.add_id_as_synonym:
+            # add id of item to synonyms
+            object_name = get_object_name_from_id(args.kg, id)
+            if syns:
+                syns = f"{syns};;;{object_name}"
+            else:
+                syns = object_name
 
         if args.osm_planet_entities:
             # for osm planet entities, score is a wikidata id

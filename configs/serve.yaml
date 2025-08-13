@@ -1,31 +1,31 @@
 model: env(MODEL:openai/gpt-4.1)
 model_endpoint: env(MODEL_ENDPOINT:null)
 
-api_key: env(API_KEY:null)
 seed: env(SEED:null)
 
 fn_set: env(FN_SET:search_extended)
+feedback: env(FEEDBACK:false)
+know_before_use: env(KNOW_BEFORE_USE:false)
+notes_file: env(NOTES_FILE:null)
 
-temperature: env(TEMPERATURE:0.1)
-top_p: env(TOP_P:0.7)
+temperature: env(TEMPERATURE:0.2)
+top_p: env(TOP_P:0.8)
 reasoning_effort: env(REASONING_EFFORT:null)
 
 list_k: env(LIST_K:10)
 search_top_k: env(SEARCH_TOP_K:10)
 result_max_rows: env(RESULT_MAX_ROWS:10)
 result_max_columns: env(RESULT_MAX_COLUMNS:10)
-feedback: env(FEEDBACK:false)
-know_before_use: env(KNOW_BEFORE_USE:false)
-
-max_completion_tokens: env(MAX_TOKENS:16384)
-completion_timeout: env(TIMEOUT:120)
 
 force_examples: env(FORCE_EXAMPLES:false)
 random_examples: env(RANDOM_EXAMPLES:false)
 num_examples: env(NUM_EXAMPLES:3)
 
+max_completion_tokens: env(MAX_TOKENS:16384)
+completion_timeout: env(TIMEOUT:120)
+
 knowledge_graphs:
-  - name: wikidata
+  - kg: wikidata
     endpoint: env(WD_ENDPOINT:null)
     example_index: env(WD_EXAMPLES:null)
     entities_dir: env(WD_ENT_DIR:null)
@@ -33,10 +33,13 @@ knowledge_graphs:
     entities_type: env(WD_ENT_TYPE:null)
     properties_type: env(WD_PROP_TYPE:null)
     prefix_file: env(WD_PREFIX_FILE:null)
-  - name: freebase
-  - name: dblp
-  - name: dbpedia
-  - name: imdb
-  - name: orkg
-  - name: osm-planet
-  - name: uniprot
+    notes_file: env(WD_NOTES_FILE:null)
+  - kg: freebase
+  - kg: dblp
+  - kg: dbpedia
+  - kg: imdb
+  - kg: orkg
+  - kg: osm-planet
+  - kg: uniprot
+  - kg: dicom-v2
+    endpoint: http://localhost:7055

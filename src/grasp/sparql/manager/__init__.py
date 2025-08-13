@@ -132,7 +132,7 @@ def load_entity_index_and_mapping(
 
 
 def load_property_index_and_mapping(
-    name: str,
+    kg: str,
     index_dir: str | None = None,
     index_type: str | None = None,
     **kwargs: Any,
@@ -140,9 +140,9 @@ def load_property_index_and_mapping(
     if index_dir is None:
         default_dir = get_index_dir()
         assert default_dir is not None, "KG_INDEX_DIR environment variable not set"
-        index_dir = os.path.join(default_dir, name, "properties")
+        index_dir = os.path.join(default_dir, kg, "properties")
 
-    mapping_cls = WikidataPropertyMapping if name == "wikidata" else None
+    mapping_cls = WikidataPropertyMapping if kg == "wikidata" else None
 
     return load_index_and_mapping(
         index_dir,
@@ -159,19 +159,14 @@ def load_example_index(dir: str, **kwargs: Any) -> SimilarityIndex:
         os.path.join(dir, "offsets.bin"),
     )
 
-    index = SimilarityIndex.load(
-        data,
-        os.path.join(dir, "index"),
-        **kwargs,
-    )
-    return index
+    return SimilarityIndex.load(data, os.path.join(dir, "index"), **kwargs)
 
 
-def load_kg_prefixes(name: str, prefix_file: str | None = None) -> dict[str, str]:
+def load_kg_prefixes(kg: str, prefix_file: str | None = None) -> dict[str, str]:
     if prefix_file is None:
         index_dir = get_index_dir()
         assert index_dir is not None, "KG_INDEX_DIR environment variable not set"
-        prefix_file = os.path.join(index_dir, name, "prefixes.json")
+        prefix_file = os.path.join(index_dir, kg, "prefixes.json")
 
     if not os.path.exists(prefix_file):
         return {}
@@ -179,8 +174,32 @@ def load_kg_prefixes(name: str, prefix_file: str | None = None) -> dict[str, str
     return load_json(prefix_file)
 
 
+def load_kg_notes(kg: str, notes_file: str | None = None) -> list[str]:
+    if notes_file is None:
+        index_dir = get_index_dir()
+        assert index_dir is not None, "KG_INDEX_DIR environment variable not set"
+        notes_file = os.path.join(index_dir, kg, "notes.json")
+
+    if not os.path.exists(notes_file):
+        return []
+
+    return load_json(notes_file)  # type: ignore
+
+
+def load_general_notes(notes_file: str | None = None) -> list[str]:
+    if notes_file is None:
+        index_dir = get_index_dir()
+        assert index_dir is not None, "KG_INDEX_DIR environment variable not set"
+        notes_file = os.path.join(index_dir, "notes.json")
+
+    if not os.path.exists(notes_file):
+        return []
+
+    return load_json(notes_file)  # type: ignore
+
+
 def load_kg_indices(
-    name: str,
+    kg: str,
     entities_dir: str | None = None,
     entities_type: str | None = None,
     entities_kwargs: dict[str, Any] | None = None,
@@ -193,7 +212,7 @@ def load_kg_indices(
         entities_kwargs.clear()
 
     ent_index, ent_mapping = load_entity_index_and_mapping(
-        name,
+        kg,
         entities_dir,
         entities_type,
         **(entities_kwargs or {}),
@@ -212,7 +231,7 @@ def load_kg_indices(
         properties_kwargs["model"] = ent_index.model
 
     prop_index, prop_mapping = load_property_index_and_mapping(
-        name,
+        kg,
         properties_dir,
         properties_type,
         **(properties_kwargs or {}),
@@ -222,7 +241,7 @@ def load_kg_indices(
 
 
 def load_kg_manager(
-    name: str,
+    kg: str,
     entities_dir: str | None = None,
     entities_type: str | None = None,
     entities_kwargs: dict[str, Any] | None = None,
@@ -230,10 +249,11 @@ def load_kg_manager(
     properties_type: str | None = None,
     properties_kwargs: dict[str, Any] | None = None,
     prefix_file: str | None = None,
+    notes_file: str | None = None,
     endpoint: str | None = None,
 ) -> KgManager:
     indices = load_kg_indices(
-        name,
+        kg,
         entities_dir,
         entities_type,
         entities_kwargs,
@@ -241,5 +261,6 @@ def load_kg_manager(
         properties_type,
         properties_kwargs,
     )
-    prefixes = load_kg_prefixes(name, prefix_file)
-    return KgManager(name, *indices, prefixes, endpoint)
+    prefixes = load_kg_prefixes(kg, prefix_file)
+    notes = load_kg_notes(kg, notes_file)
+    return KgManager(kg, *indices, prefixes, notes, endpoint)

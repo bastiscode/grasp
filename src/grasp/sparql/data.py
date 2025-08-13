@@ -1,12 +1,10 @@
 import random
-import string
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
 from itertools import chain
-from typing import Iterator, Optional
+from typing import Optional
 
-from search_index import SearchIndex, normalize
+from search_index import SearchIndex
 
 from grasp.sparql.constants import Binding, ObjType, Position
 from grasp.sparql.manager.base import KgManager
@@ -16,6 +14,7 @@ from grasp.sparql.sparql import (
     autocomplete_prefix,
     find_all,
     find_longest_prefix,
+    normalize,
     parse_string,
 )
 
@@ -341,41 +340,11 @@ def natural_sparql_from_items(
     return prefix
 
 
-def _get_indexed_prefixes(
-    index: SearchIndex,
-    prefixes: dict[str, str],
-) -> dict[str, str]:
-    indexed = {}
-    for i in range(len(index)):
-        iri = index.get_val(i, 3)
-        pfx = find_longest_prefix(iri, prefixes)
-        if pfx is None:
-            continue
-
-        short, long = pfx
-        indexed[short] = long
-
-    return indexed
-
-
-def get_indexed_prefixes(manager: KgManager) -> dict[str, str]:
-    entity_indexed = _get_indexed_prefixes(
-        manager.entity_index,
-        manager.prefixes,
-    )
-    property_indexed = _get_indexed_prefixes(
-        manager.property_index,
-        manager.prefixes,
-    )
-    return {**entity_indexed, **property_indexed}
-
-
 def get_sparql_items(
     sparql: str,
     manager: KgManager,
     normalized: bool = False,
     is_prefix: bool = False,
-    indexed_prefixes: dict[str, str] | None = None,
 ) -> tuple[str, list[Item]]:
     sparql = manager.fix_prefixes(
         sparql,
@@ -384,7 +353,7 @@ def get_sparql_items(
     )
 
     if normalized:
-        sparql = manager.normalize_sparql(sparql, is_prefix=is_prefix)
+        sparql = normalize(sparql, manager.sparql_parser, is_prefix=is_prefix)
 
     sparql_encoded = sparql.encode()
     parse, _ = parse_string(

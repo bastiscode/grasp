@@ -1,14 +1,57 @@
 import json
 import re
+from itertools import dropwhile
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
+from search_index.similarity import EmbeddingModel
+from termcolor import colored
+
+from grasp.sparql.manager import KgManager
+
+
+class FunctionCallException(Exception):
+    pass
+
+
+def find_embedding_model(managers: list[KgManager]) -> EmbeddingModel | None:
+    return next(
+        dropwhile(
+            lambda m: m is None,
+            (manager.get_embedding_model() for manager in managers),
+        ),
+        None,
+    )
+
+
+def format_enumerate(items: list[str]) -> str:
+    return "\n".join(f"{i + 1}. {item}" for i, item in enumerate(items))
 
 
 def format_model(model: BaseModel | None) -> str:
     if model is None:
         return "None"
     return model.model_dump_json(indent=2)
+
+
+def format_message(message: dict) -> str:
+    role = message["role"].upper()
+
+    content = ""
+
+    if message.get("reasoning_content"):
+        content += f"Reasoning:\n{message['reasoning_content'].strip()}\n\n"
+
+    content += message.get("content", "No content").strip()
+
+    header = colored(role, "blue")
+    return f"{header}\n{content}"
+
+
+def format_function_call(fn_name: str, fn_args: dict) -> str:
+    fn_name = colored(fn_name, "green")
+    fn_args_str = colored(json.dumps(fn_args, indent=2), "yellow")
+    return f"{fn_name}({fn_args_str})"
 
 
 class Sample(BaseModel):

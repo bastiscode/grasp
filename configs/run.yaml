@@ -1,29 +1,30 @@
 model: env(MODEL)
 model_endpoint: env(MODEL_ENDPOINT:null)
 
-api_key: env(API_KEY:null)
 seed: env(SEED:null)
 
 fn_set: env(FN_SET)
+feedback: env(FEEDBACK:false)
+know_before_use: env(KNOW_BEFORE_USE:false)
+notes_file: env(NOTES_FILE:null)
+
+temperature: env(TEMPERATURE:0.2)
+top_p: env(TOP_P:0.8)
+reasoning_effort: env(REASONING_EFFORT:null)
 
 list_k: env(LIST_K:10)
 search_top_k: env(SEARCH_TOP_K:10)
 result_max_rows: env(RESULT_MAX_ROWS:10)
 result_max_columns: env(RESULT_MAX_COLUMNS:10)
 
-temperature: env(TEMPERATURE:0.1)
-top_p: env(TOP_P:0.7)
-reasoning_effort: env(REASONING_EFFORT:null)
-
-feedback: env(FEEDBACK:false)
-know_before_use: env(KNOW_BEFORE_USE:false)
-
 force_examples: env(FORCE_EXAMPLES:false)
 random_examples: env(RANDOM_EXAMPLES:false)
+num_examples: env(NUM_EXAMPLES:3)
 
 knowledge_graphs:
-  - name: env(KG)
+  - kg: env(KG)
     endpoint: env(KG_ENDPOINT:null)
     example_index: env(KG_EXAMPLES:null)
     entities_type: env(ENTITIES_TYPE:null)
     properties_type: env(PROPERTIES_TYPE:null)
+    notes_file: env(KG_NOTES_FILE:null)
