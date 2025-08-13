@@ -58,3 +58,8 @@ const uniGray = Color.fromRGBO(180, 180, 180, 1);
 const uniGreen = Color.fromRGBO(0, 160, 130, 1);
 const uniYellow = Color.fromRGBO(190, 170, 60, 1);
 const uniPink = Color.fromRGBO(163, 83, 148, 1);
+
+const chair = "https://ad.cs.uni-freiburg.de";
+const repo = "https://github.com/ad-freiburg/grasp";
+const paper =
+    "https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.pdf";
