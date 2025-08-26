@@ -11,7 +11,7 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from universal_ml_utils.io import load_json, load_jsonl
 
-from grasp.sparql.sparql import load_sparql_parser, prettify
+from grasp.sparql.utils import load_sparql_parser, prettify
 from grasp.utils import is_invalid_evaluation, is_invalid_model_output
 
 # Set page configuration

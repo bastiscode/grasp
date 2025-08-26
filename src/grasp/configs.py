@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import BaseModel
 
 
@@ -20,6 +21,10 @@ class Config(BaseModel):
 
     knowledge_graphs: list[KgConfig] = [KgConfig(kg="wikidata")]
 
+    # optional task specific parameters
+    task: dict[str, Any] | None = None
+
+    # kg function parameters
     search_top_k: int = 10
     # 10 total rows, 5 top and 5 bottom
     result_max_rows: int = 10
@@ -40,8 +45,9 @@ class Config(BaseModel):
     max_completion_tokens: int = 16384  # 16k, leaves enough space for reasoning models
     completion_timeout: float = 120.0
 
+    # example parameters
     num_examples: int = 3
-    force_examples: bool = False
+    force_examples: str | None = None
     random_examples: bool = False
 
     # enable feedback loop

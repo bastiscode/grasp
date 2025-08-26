@@ -7,11 +7,10 @@ from universal_ml_utils.io import dump_json, load_jsonl
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import partition_by
 
+from grasp.adapt.note_taking import take_notes
 from grasp.adapt.utils import link
 from grasp.configs import Adapt
 from grasp.core import generate, setup
-from grasp.functions import get_functions
-from grasp.manager.utils import load_general_notes
 from grasp.utils import Sample
 
 
@@ -31,9 +30,7 @@ def adapt(
 
     logger = get_logger("GRASP ADAPTATION", log_level)
 
-    notes = load_general_notes(config.notes_file)
-
-    managers, example_indices, notes = setup(config)
+    managers, notes = setup(config)
 
     assert config.seed is not None, "Seed must be set for adaptation"
 
@@ -68,24 +65,7 @@ def adapt(
                 f"Expected exactly one manager for kg {kg}, got {len(sel_managers)}"
             )
 
-            functions = get_functions(
-                sel_managers,
-                task,
-                config.fn_set,
-                example_indices,
-                config.num_examples,
-                config.random_examples,
-            )
-
-            *_, output = generate(
-                task,
-                sample.question,
-                config,
-                sel_managers,
-                notes,
-                functions,
-                example_indices,
-            )
+            *_, output = generate(task, sample.question, config, sel_managers, notes)
             outputs.append(output)
 
         take_notes(samples, outputs, managers, notes, config, logger)

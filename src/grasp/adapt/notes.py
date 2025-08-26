@@ -3,13 +3,13 @@ from copy import deepcopy
 from universal_ml_utils.ops import partition_by
 
 from grasp.manager import KgManager
-from grasp.utils import FunctionCallException, format_enumerate
+from grasp.utils import FunctionCallException, format_list
 
 MAX_NOTES = 16
 MAX_NOTE_LENGTH = 256
 
 
-def get_note_functions(managers: list[KgManager]) -> list[dict]:
+def note_functions(managers: list[KgManager]) -> list[dict]:
     kgs = [manager.kg for manager in managers]
     return [
         {
@@ -83,13 +83,6 @@ def get_note_functions(managers: list[KgManager]) -> list[dict]:
     ]
 
 
-def format_general_notes(notes: list[str]) -> str:
-    if not notes:
-        return "No general notes for all knowledge graphs available"
-
-    return f"General notes for all knowledge graphs:\n{format_enumerate(notes)}"
-
-
 def check_note(note: str) -> None:
     if len(note) > MAX_NOTE_LENGTH:
         raise FunctionCallException(
@@ -104,7 +97,7 @@ def add_note_to_kg(manager: KgManager, note: str) -> str:
     check_note(note)
 
     manager.notes.append(note)
-    return f"Added note for {manager.kg}:\n{format_enumerate(manager.notes)}"
+    return f"Added note for {manager.kg}:\n{format_list(manager.notes)}"
 
 
 def delete_note_from_kg(manager: KgManager, num: int | float) -> str:
@@ -114,7 +107,7 @@ def delete_note_from_kg(manager: KgManager, num: int | float) -> str:
 
     num -= 1
     _ = manager.notes.pop(num)
-    return f"Deleted note for {manager.kg}:\n{format_enumerate(manager.notes)}"
+    return f"Deleted note for {manager.kg}:\n{format_list(manager.notes)}"
 
 
 def update_note_of_kg(manager: KgManager, num: int | float, note: str) -> str:
@@ -126,7 +119,7 @@ def update_note_of_kg(manager: KgManager, num: int | float, note: str) -> str:
 
     num -= 1
     manager.notes[num] = note
-    return f"Updated note for {manager.kg}:\n{format_enumerate(manager.notes)}"
+    return f"Updated note for {manager.kg}:\n{format_list(manager.notes)}"
 
 
 def add_note(notes: list[str], note: str) -> str:
@@ -136,7 +129,7 @@ def add_note(notes: list[str], note: str) -> str:
     check_note(note)
 
     notes.append(note)
-    return f"Added general note:\n{format_enumerate(notes)}"
+    return f"Added general note:\n{format_list(notes)}"
 
 
 def delete_note(notes: list[str], num: int | float) -> str:
@@ -146,7 +139,7 @@ def delete_note(notes: list[str], num: int | float) -> str:
 
     num -= 1
     _ = notes.pop(num)
-    return f"Deleted general note:\n{format_enumerate(notes)}"
+    return f"Deleted general note:\n{format_list(notes)}"
 
 
 def update_note(notes: list[str], num: int | float, note: str) -> str:
@@ -158,7 +151,7 @@ def update_note(notes: list[str], num: int | float, note: str) -> str:
 
     num -= 1
     notes[num] = note
-    return f"Updated general note:\n{format_enumerate(notes)}"
+    return f"Updated general note:\n{format_list(notes)}"
 
 
 def call_function(

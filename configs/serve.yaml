@@ -17,7 +17,7 @@ search_top_k: env(SEARCH_TOP_K:10)
 result_max_rows: env(RESULT_MAX_ROWS:10)
 result_max_columns: env(RESULT_MAX_COLUMNS:10)
 
-force_examples: env(FORCE_EXAMPLES:false)
+force_examples: env(FORCE_EXAMPLES:null)
 random_examples: env(RANDOM_EXAMPLES:false)
 num_examples: env(NUM_EXAMPLES:3)
 

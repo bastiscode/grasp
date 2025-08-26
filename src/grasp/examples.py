@@ -36,12 +36,20 @@ class ExampleIndex:
         return [self.samples[id] for id, _ in matches]
 
     @staticmethod
-    def load(dir: str) -> "ExampleIndex":
+    def load(dir: str, load_kwargs: dict[str, Any] | None = None) -> "ExampleIndex":
         data = IndexData.load(
             os.path.join(dir, "data.tsv"),
             os.path.join(dir, "offsets.bin"),
         )
-        index = SimilarityIndex.load(data, os.path.join(dir, "index"))
+
+        if load_kwargs is None:
+            load_kwargs = {}
+        index = SimilarityIndex.load(
+            data,
+            os.path.join(dir, "index"),
+            **load_kwargs,
+        )
+
         samples = [
             Sample(**sample)
             for sample in load_jsonl(os.path.join(dir, "samples.jsonl"))

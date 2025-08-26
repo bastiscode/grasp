@@ -1,54 +1,9 @@
 import json
 import os
 
-from universal_ml_utils.ops import partition_by
-
-from grasp.configs import Config
-from grasp.functions import execute_sparql
+from grasp.functions import execute_sparql, find_manager
 from grasp.manager import KgManager
 from grasp.sparql.item import get_sparql_items, selections_from_items
-
-
-def prepare_sparql(
-    kg: str,
-    sparql: str,
-    managers: list[KgManager],
-    config: Config,
-) -> str:
-    manager, others = partition_by(managers, lambda m: m.kg == kg)
-    assert len(manager) == 1, (
-        f"Expected exactly one manager for kg {kg}, got {len(manager)}"
-    )
-    manager = manager[0]
-
-    try:
-        result, sparql = execute_sparql(
-            manager,
-            others,
-            sparql,
-            config.result_max_rows,
-            config.result_max_columns,
-            set(),
-            return_sparql=True,
-        )
-        sparql = manager.prettify(sparql)
-    except Exception as e:
-        result = f"Failed to execute SPARQL query:\n{e}"
-
-    try:
-        _, items = get_sparql_items(sparql, manager)
-        selections = selections_from_items(items)
-        selections = manager.format_selections(selections)
-    except Exception as e:
-        selections = f"Failed to determine used entities and properties:\n{e}"
-
-    fmt = f"SPARQL query:\n{sparql.strip()}"
-
-    if selections:
-        fmt += f"\n\n{selections}"
-
-    fmt += f"\n\nExecution result:\n{result.strip()}"
-    return fmt
 
 
 def format_arguments(args, depth: int = 0) -> str:

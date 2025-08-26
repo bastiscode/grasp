@@ -1,9 +1,8 @@
 import json
 import os
-import re
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from termcolor import colored
 
 
@@ -23,8 +22,22 @@ class FunctionCallException(Exception):
     pass
 
 
-def format_enumerate(items: list[str]) -> str:
-    return "\n".join(f"{i + 1}. {item}" for i, item in enumerate(items))
+def format_prefixes(prefixes: dict[str, str]) -> str:
+    if not prefixes:
+        return "No prefixes defined"
+
+    return "\n".join(f"{short}: {long}" for short, long in prefixes.items())
+
+
+def format_notes(notes: list[str]) -> str:
+    if not notes:
+        return "No notes available"
+    else:
+        return format_list(notes)
+
+
+def format_list(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items)
 
 
 def format_model(model: BaseModel | None) -> str:
@@ -41,10 +54,18 @@ def format_message(message: dict) -> str:
     if message.get("reasoning_content"):
         content += f"Reasoning:\n{message['reasoning_content'].strip()}\n\n"
 
-    content += message.get("content", "No content").strip()
+    content += message.get("content", "").strip()
+    content += "\n\n"
+
+    for tool_call in message.get("tool_calls", []):
+        call = tool_call["function"]
+
+        fn_name = call["name"]
+        fn_args = json.loads(call["arguments"])
+        content += format_function_call(fn_name, fn_args) + "\n"
 
     header = colored(role, "blue")
-    return f"{header}\n{content}"
+    return f"{header}\n{content.strip()}"
 
 
 def format_function_call(fn_name: str, fn_args: dict) -> str:
@@ -59,36 +80,6 @@ class Sample(BaseModel):
     sparql: str
     paraphrases: list[str] = []
     info: dict[str, Any] = {}
-
-
-class SparqlQaAnswerModel(BaseModel):
-    kg: str
-    sparql: str
-    answer: str
-
-
-class GeneralQaAnswerModel(BaseModel):
-    answer: str
-
-
-class AnswerCallModel(BaseModel):
-    name: str
-    arguments: SparqlQaAnswerModel | GeneralQaAnswerModel
-
-
-class SparqlQaBestAttemptModel(BaseModel):
-    sparql: str
-    kg: str
-
-
-class CancelModel(BaseModel):
-    explanation: str
-    best_attempt: SparqlQaBestAttemptModel | str | None = None
-
-
-class CancelCallModel(BaseModel):
-    name: str
-    arguments: CancelModel
 
 
 def is_server_error(message: str | None) -> bool:
@@ -144,195 +135,6 @@ def is_invalid_model_output(model_output: dict | None) -> bool:
     )
 
 
-def get_tool_call_from_message(message: str) -> str | None:
-    # sometimes the model fails to call the answer function, but
-    # provides the output in one of the following formats:
-    # 1) within <tool_call>...</tool_call> tags:
-    #    in this case check whether the content is a valid answer JSON like
-    #    {"name": "answer", "arguments": "{...}"}
-    # 2) as JSON in ```json...``` code block:
-    #    do as in 1)
-
-    # check for tool_call tags
-    tool_call_match = re.search(
-        r"<tool_call>(.*?)</tool_call>",
-        message,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if tool_call_match is None:
-        # fall back to JSON code block
-        tool_call_match = re.search(
-            r"```json\s*(.*?)\s*```",
-            message,
-            re.IGNORECASE | re.DOTALL,
-        )
-
-    if tool_call_match is None:
-        return None
-    else:
-        return tool_call_match.group(1).strip()
-
-
-def get_answer_from_message(task: str, message: str | None) -> dict | None:
-    if message is None:
-        return None
-
-    tool_call = get_tool_call_from_message(message)
-    if tool_call is None:
-        return None
-
-    try:
-        return AnswerCallModel.model_validate_json(tool_call).arguments.model_dump()
-    except ValidationError:
-        pass
-
-    try:
-        if task == "sparql-qa":
-            return SparqlQaAnswerModel.model_validate_json(tool_call).model_dump()
-        elif task == "general-qa":
-            return GeneralQaAnswerModel.model_validate_json(tool_call).model_dump()
-        else:
-            raise ValueError(f"Unknown task: {task}")
-    finally:
-        return None
-
-
-def get_cancel_from_message(message: str | None) -> dict | None:
-    if message is None:
-        return None
-
-    tool_call = get_tool_call_from_message(message)
-    if tool_call is None:
-        return None
-
-    try:
-        return CancelCallModel.model_validate_json(tool_call).arguments.model_dump()
-    except ValidationError:
-        pass
-
-    try:
-        return CancelModel.model_validate_json(tool_call).model_dump()
-    finally:
-        return None
-
-
-def get_sparql_from_message(message: str | None) -> dict | None:
-    if message is None:
-        return None
-
-    # Check for SPARQL code blocks
-    sparql_match = re.search(
-        r"```sparql\s*(.*?)\s*```",
-        message,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if sparql_match:
-        sparql_query = sparql_match.group(1).strip()
-        return {"kg": None, "sparql": sparql_query, "answer": message}
-
-    return None
-
-
-def get_answer_or_cancel(
-    task: str,
-    messages: list[dict],
-) -> tuple[dict | None, dict | None]:
-    last_message: str | None = None
-    last_answer: dict | None = None
-    last_cancel: str | None = None
-    last_execute: dict | None = None
-    assert messages[0]["role"] == "system", "First message should be system"
-    assert messages[1]["role"] == "user", "Second message should be user"
-    for message in messages[2:]:
-        if message["role"] == "user" and message != messages[-1]:
-            # reset stuff after intermediate user feedback
-            last_answer = None
-            last_cancel = None
-            last_message = None
-            last_execute = None
-
-        if message["role"] != "assistant":
-            continue
-
-        if "content" in message:
-            last_message = message["content"]
-
-        if "tool_calls" not in message:
-            continue
-
-        for tool_call in message["tool_calls"]:
-            if tool_call["type"] != "function":
-                continue
-
-            tool_call = tool_call["function"]
-            name = tool_call["name"]
-            try:
-                args = json.loads(tool_call["arguments"])
-            except json.JSONDecodeError:
-                continue
-
-            if name == "answer":
-                last_answer = args
-                # reset last cancel
-                last_cancel = None
-
-            elif tool_call["name"] == "cancel":
-                last_cancel = args
-                # reset last answer
-                last_answer = None
-
-            elif tool_call["name"] == "execute":
-                last_execute = args
-
-    # try to parse answer from last message if neither are set
-    if last_answer is None and last_cancel is None:
-        last_answer = get_answer_from_message(task, last_message)
-
-    # try to parse cancel from last message if both are still None
-    if last_answer is None and last_cancel is None:
-        last_cancel = get_cancel_from_message(last_message)
-
-    # try to parse SPARQL from last message if both are still None
-    if last_answer is None and last_cancel is None:
-        last_answer = get_sparql_from_message(last_message)
-
-    # try last execute function call for SPARQL QA
-    if (
-        task == "sparql-qa"
-        and last_answer is None
-        and last_cancel is None
-        and last_execute is not None
-    ):
-        last_answer = {
-            **last_execute,
-            "answer": last_message or "No answer provided",
-        }
-
-    # and last message for general QA
-    elif (
-        task == "general-qa"
-        and last_answer is None
-        and last_cancel is None
-        and last_message is not None
-    ):
-        last_answer = {
-            "answer": last_message,
-        }
-
-    return last_answer, last_cancel
-
-
-def clip(s: str, max_len: int = 64) -> str:
-    if len(s) <= max_len + 3:  # 3 for "..."
-        return s
-
-    # clip string to max_len  + 3 by stripping out middle part
-    half = max_len // 2
-    first = s[:half]
-    last = s[-half:]
-    return first + "..." + last
-
-
 def parse_parameters(headers: list[str]) -> dict[str, str]:
     # each header is formatted as key:value
     header_dict = {}
@@ -340,3 +142,34 @@ def parse_parameters(headers: list[str]) -> dict[str, str]:
         key, value = header.split(":", 1)
         header_dict[key.strip()] = value.strip()
     return header_dict
+
+
+def clip(s: str, max_len: int = 128, respect_word_boundaries: bool = True) -> str:
+    if len(s) <= max_len:
+        return s
+
+    elif not respect_word_boundaries:
+        if max_len <= 3:
+            return s[:max_len]
+
+        half = (max_len - 3) // 2
+        return s[:half] + "..." + s[-half:]
+
+    if max_len <= 5:
+        return s[:max_len]
+
+    half = (max_len - 5) // 2  # account for spaces around "..."
+    first = half
+    while first > 0 and not s[first].isspace():
+        first -= 1
+
+    last = len(s) - half
+    while last < len(s) and last > 0 and not s[last - 1].isspace():
+        last += 1
+
+    if first <= 0 or last >= len(s):
+        # at least 1 word on either side, fall back
+        # to character clipping otherwise
+        return clip(s, max_len, respect_word_boundaries=False)
+
+    return s[:first] + " ... " + s[last:]

@@ -4,6 +4,8 @@ from enum import Enum
 from itertools import groupby
 from typing import Any, Iterator
 
+from grasp.utils import clip
+
 
 class ObjType(str, Enum):
     ENTITY = "entity"
@@ -169,17 +171,6 @@ class Example:
     sparql: str
 
 
-def clip(s: str, max_len: int = 64) -> str:
-    if len(s) <= max_len + 3:  # 3 for "..."
-        return s
-
-    # clip string to max_len  + 3 by stripping out middle part
-    half = max_len // 2
-    first = s[:half]
-    last = s[-half:]
-    return first + "..." + last
-
-
 class Alternative:
     def __init__(
         self,
@@ -244,7 +235,7 @@ class Alternative:
             s += f" ({self.get_identifier()} as {'/'.join(variants)})"
 
         if add_infos and self.infos:
-            s += ": " + ", ".join(clip(info, 128) for info in self.infos)
+            s += ": " + " / ".join(clip(info) for info in self.infos)
 
         return s
 

@@ -14,10 +14,9 @@ from universal_ml_utils.ops import extract_field, partition_by
 from grasp.adapt import adapt
 from grasp.build import build_indices, get_data
 from grasp.configs import Adapt, Config
-from grasp.core import generate, get_system_message, setup
+from grasp.core import generate, setup
 from grasp.evaluate import evaluate
 from grasp.examples import ExampleIndex
-from grasp.functions import get_functions
 from grasp.utils import is_invalid_model_output, parse_parameters
 
 
@@ -94,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     )
     add_config_arg(file_parser)
     file_parser.add_argument(
-        "question-file",
+        "question_file",
         type=str,
         help="Path to file in JSONL format to run GRASP on",
     )
@@ -284,18 +283,7 @@ def run_grasp(args: argparse.Namespace) -> None:
     logger = get_logger("GRASP", args.log_level)
     config = Config(**load_config(args.config))
 
-    managers, example_indices, notes = setup(config)
-
-    functions = get_functions(
-        managers,
-        args.task,
-        config.fn_set,
-        example_indices,
-        config.num_examples,
-        config.random_examples,
-    )
-
-    system_message = get_system_message(args.task, managers, notes)
+    managers, notes = setup(config)
 
     run_on_file = args.command == "file"
     outputs = []
@@ -319,15 +307,8 @@ def run_grasp(args: argparse.Namespace) -> None:
             # save info in config file next to output file
             output_stem, _ = os.path.splitext(args.output_file)
             config_file = output_stem + ".config.json"
-            dump_json(
-                {
-                    "config": config.model_dump(),
-                    "functions": functions,
-                    "system_message": system_message,
-                },
-                config_file,
-                indent=2,
-            )
+
+            dump_json(config.model_dump(), config_file, indent=2)
 
     else:
         inputs = [{"id": 0, "question": args.question}]
@@ -349,8 +330,6 @@ def run_grasp(args: argparse.Namespace) -> None:
             config,
             managers,
             notes,
-            functions,
-            example_indices,
             logger=logger,
         )
 
@@ -412,7 +391,7 @@ def serve_grasp(args: argparse.Namespace) -> None:
         allow_headers=["*"],
     )
 
-    managers, example_indices, notes = setup(config)
+    managers, notes = setup(config)
     kgs = [manager.kg for manager in managers]
 
     @app.get("/knowledge_graphs")
@@ -452,43 +431,15 @@ def serve_grasp(args: argparse.Namespace) -> None:
                     continue
 
                 sel_managers, _ = partition_by(managers, lambda m: m.kg in sel)
-                sel_example_indices = {
-                    kg: example_indices[kg] for kg in sel if kg in example_indices
-                }
 
-                functions = get_functions(
-                    sel_managers,
-                    request.task,
-                    config.fn_set,
-                    sel_example_indices,
-                    config.num_examples,
-                    config.random_examples,
-                )
-
-                system_message = get_system_message(request.task, sel_managers, notes)
-                past_questions = []
-                past_messages = []
-                known = set()
-                if request.past is None:
-                    past_messages.append(system_message)
-                else:
-                    # overwrite system message because new set of
-                    # knowledge graphs might be present
+                past_questions = None
+                past_messages = None
+                past_known = None
+                if request.past is not None:
+                    # set past
                     past_messages = request.past.messages
-                    past_messages[0] = system_message
-                    # update questions
                     past_questions = request.past.questions
-                    # update known set
-                    known = request.past.known
-
-                await websocket.send_json(
-                    {
-                        "typ": "system",
-                        "functions": functions,
-                        "system_message": system_message["content"],
-                    }
-                )
-                await websocket.receive_json()
+                    past_known = request.past.known
 
                 # Setup generator
                 generator = generate(
@@ -497,11 +448,9 @@ def serve_grasp(args: argparse.Namespace) -> None:
                     config,
                     sel_managers,
                     notes,
-                    functions,
-                    sel_example_indices,
                     past_questions,
                     past_messages,
-                    known,
+                    past_known,
                     logger=logger,
                 )
 

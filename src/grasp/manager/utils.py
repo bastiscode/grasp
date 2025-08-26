@@ -250,14 +250,3 @@ def get_index_desc(index: SearchIndex) -> str:
 
 def is_sim_index(index: SearchIndex) -> bool:
     return index.get_type() == "similarity"
-
-
-def clip(s: str, max_len: int = 64) -> str:
-    if len(s) <= max_len + 3:  # 3 for "..."
-        return s
-
-    # clip string to max_len  + 3 by stripping out middle part
-    half = max_len // 2
-    first = s[:half]
-    last = s[-half:]
-    return first + "..." + last
