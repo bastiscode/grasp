@@ -1,0 +1,54 @@
+model: hosted_vllm/Qwen/Qwen3-Next-80B-A3B-Instruct
+model_endpoint: env(MODEL_ENDPOINT:http://localhost:8336/v1)
+model_kwargs:
+  top_k: 20
+  min_p: 0.0
+  chat_template_kwargs:
+    enable_thinking: false
+
+seed: env(SEED:22)
+
+fn_set: env(FN_SET:all)
+feedback: env(FEEDBACK:false)
+know_before_use: env(KNOW_BEFORE_USE:true)
+notes_file: env(NOTES_FILE:null)
+
+list_k: env(LIST_K:20)
+search_top_k: env(SEARCH_TOP_K:20)
+result_max_rows: env(RESULT_MAX_ROWS:20)
+result_max_columns: env(RESULT_MAX_COLUMNS:10)
+
+temperature: env(TEMPERATURE:0.4)
+top_p: env(TOP_P:0.8)
+reasoning_effort: env(REASONING_EFFORT:null)
+reasoning_summary: env(REASONING_SUMMARY:null)
+api: env(API:null)
+
+knowledge_graphs:
+  - kg: wikidata-multilingual
+    endpoint: env(KG_ENDPOINT:http://localhost:7001)
+    entities_type: env(ENTITIES_TYPE:null)
+    properties_type: env(PROPERTIES_TYPE:null)
+    notes_file: env(KG_NOTES_FILE:null)
+
+# note configuration
+max_notes: env(MAX_NOTES:16)
+max_note_length: env(MAX_NOTE_LENGTH:512)
+
+num_rounds: env(NUM_ROUNDS:16)
+
+samples:
+  - kg: wikidata-multilingual
+    file: env(SAMPLES_FILE)
+
+samples_per_round: env(SAMPLES_PER_ROUND:8)
+samples_per_file: env(SAMPLES_PER_FILE:null)
+
+# custom note taking model and decoding parameters
+note_taking_model: env(NOTE_TAKING_MODEL:openai/gpt-5-mini)
+note_taking_model_endpoint: env(NOTE_TAKING_MODEL_ENDPOINT:null)
+note_taking_temperature: env(NOTE_TAKING_TEMPERATURE:1.0)
+note_taking_top_p: env(NOTE_TAKING_TOP_P:1.0)
+note_taking_reasoning_effort: env(NOTE_TAKING_REASONING_EFFORT:null)
+note_taking_reasoning_summary: env(NOTE_TAKING_REASONING_SUMMARY:null)
+note_taking_api: env(NOTE_TAKING_API:null)

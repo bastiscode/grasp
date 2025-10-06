@@ -1,0 +1,38 @@
+model: hosted_vllm/Qwen/Qwen3-Next-80B-A3B-Instruct
+model_endpoint: env(MODEL_ENDPOINT:http://localhost:8336/v1)
+model_kwargs:
+  top_k: 20
+  min_p: 0.0
+  chat_template_kwargs:
+    enable_thinking: false
+
+seed: env(SEED:22)
+
+fn_set: env(FN_SET:all)
+feedback: env(FEEDBACK:false)
+max_feedbacks: env(MAX_FEEDBACKS:1)
+know_before_use: env(KNOW_BEFORE_USE:true)
+notes_file: env(NOTES_FILE:null)
+
+temperature: env(TEMPERATURE:0.4)
+top_p: env(TOP_P:0.8)
+reasoning_effort: env(REASONING_EFFORT:null)
+
+max_steps: env(MAX_STEPS:1024)
+
+list_k: env(LIST_K:20)
+search_top_k: env(SEARCH_TOP_K:20)
+result_max_rows: env(RESULT_MAX_ROWS:20)
+result_max_columns: env(RESULT_MAX_COLUMNS:10)
+
+force_examples: env(FORCE_EXAMPLES:null)
+random_examples: env(RANDOM_EXAMPLES:false)
+num_examples: env(NUM_EXAMPLES:3)
+
+knowledge_graphs:
+  - kg: wikidata-multilingual
+    endpoint: env(KG_ENDPOINT:http://localhost:7001)
+    example_index: env(KG_EXAMPLES:null)
+    entities_type: env(ENTITIES_TYPE:null)
+    properties_type: env(PROPERTIES_TYPE:null)
+    notes_file: env(KG_NOTES_FILE:null)
