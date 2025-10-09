@@ -17,6 +17,16 @@
   - Code release
   - Data release
 
+## SemTab 2025 challenge
+
+Links:
+
+- Configs available [here](configs/semtab-2025)
+- Script to prepare data for prediction and
+to merge predictions afterwards [here](scripts/mammotab.py)
+- Prepared data, single and merged predictions
+available [here](https://ad-publications.cs.uni-freiburg.de/grasp/semtab-2025/mammotab-cea)
+
 ## Overview and directory structure
 
 Links:
