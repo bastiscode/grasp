@@ -19,7 +19,7 @@ class Sample(BaseModel):
     def input(self) -> Any:
         raise NotImplementedError
 
-    def inputs(self) -> list[str]:
+    def queries(self) -> list[str]:
         raise NotImplementedError
 
 

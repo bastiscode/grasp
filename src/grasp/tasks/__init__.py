@@ -5,6 +5,7 @@ from grasp.configs import GraspConfig
 from grasp.functions import TaskFunctions
 from grasp.manager import KgManager
 from grasp.model import Message
+from grasp.tasks.cea import CeaSample
 from grasp.tasks.cea import functions as cea_functions
 from grasp.tasks.cea import input_and_state as cea_input_and_state
 from grasp.tasks.cea import output as cea_output
@@ -208,5 +209,7 @@ def task_output(
 def task_to_sample(task: str) -> Type[Sample]:
     if task == "sparql-qa":
         return SparqlQaSample
+    elif task == "cea":
+        return CeaSample
 
     raise ValueError(f"Unsupported or unknown task {task}")
