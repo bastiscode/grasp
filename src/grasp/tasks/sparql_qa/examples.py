@@ -18,7 +18,7 @@ class SparqlQaSample(Sample):
     def input(self) -> str:
         return self.question
 
-    def inputs(self) -> list[str]:
+    def queries(self) -> list[str]:
         return [self.question] + self.paraphrases
 
 

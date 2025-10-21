@@ -97,10 +97,10 @@ class ExampleIndex:
             # write header
             of.write("id\tinputs\n")
             for i, sample in enumerate(samples):
-                inputs = sample.inputs()
-                if not inputs:
+                queries = sample.queries()
+                if not queries:
                     continue
-                of.write(f"{i}\t" + "\t".join(inputs) + "\n")
+                of.write(f"{i}\t" + "\t".join(queries) + "\n")
 
         IndexData.build(data_file, offsets_file)
         data = IndexData.load(data_file, offsets_file)

@@ -9,6 +9,7 @@ from grasp.functions import TaskFunctions, find_manager
 from grasp.manager import KgManager, format_kgs
 from grasp.sparql.types import Alternative
 from grasp.sparql.utils import parse_into_binding
+from grasp.tasks.examples import Sample
 from grasp.utils import FunctionCallException, format_list, format_notes
 
 
@@ -69,6 +70,18 @@ class Table(BaseModel):
             annotate_columns=self.annotate_columns,
         )
         return cleaned
+
+
+class CeaSample(Sample):
+    table: Table
+    annotations: list[CellAnnotation]
+
+    def input(self) -> Any:
+        return self.table.model_dump()
+
+    def queries(self) -> list[str]:
+        annots = AnnotationState(self.table)
+        return [annots.format()]
 
 
 class AnnotationState:
@@ -402,7 +415,10 @@ after the cell value.
     return instructions
 
 
-def input_and_state(input: Any) -> tuple[str, AnnotationState]:
+def input_and_state(
+    input: Any,
+    context_rows: int | None = None,
+) -> tuple[str, AnnotationState]:
     try:
         table = Table(**input)
     except Exception as e:
@@ -410,7 +426,7 @@ def input_and_state(input: Any) -> tuple[str, AnnotationState]:
             "CEA task input must be a dict with 'header' and 'data' fields"
         ) from e
 
-    annots = AnnotationState(table)
+    annots = AnnotationState(table, context_rows)
     instructions = input_instructions(annots)
     return instructions, annots
 
