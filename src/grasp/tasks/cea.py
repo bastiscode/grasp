@@ -9,7 +9,6 @@ from grasp.functions import TaskFunctions, find_manager
 from grasp.manager import KgManager, format_kgs
 from grasp.sparql.types import Alternative
 from grasp.sparql.utils import parse_into_binding
-from grasp.tasks.examples import Sample
 from grasp.utils import FunctionCallException, format_list, format_notes
 
 
@@ -40,33 +39,54 @@ class Table(BaseModel):
     def height(self) -> int:
         return len(self.data)
 
+    def trim(self, context: int) -> tuple["Table", int]:
+        if context >= self.height:
+            return self, 0
+        elif self.annotate_rows is None:
+            # all rows are to be annotated
+            # context_rows does not apply
+            return self, 0
 
-class CeaSample(Sample):
-    table: Table
-    annotations: list[CellAnnotation]
+        start = max(0, min(self.annotate_rows) - context)
+        end = min(self.height, max(self.annotate_rows) + context + 1)
 
-    def input(self) -> Any:
-        return self.table.model_dump()
+        trimmed = Table(
+            header=self.header,
+            data=self.data[start:end],
+            annotate_rows=[r - start for r in self.annotate_rows],
+            annotate_columns=self.annotate_columns,
+        )
+        return trimmed, start
 
-    def inputs(self) -> list[str]:
-        annots = AnnotationState(self.table)
-        instructions = input_instructions(annots)
-        return [instructions]
+    def clean(self) -> "Table":
+        def clean(s: str) -> str:
+            return " ".join(s.strip().split())
 
-
-def clean(s: str) -> str:
-    return " ".join(s.strip().split())
+        cleaned = Table(
+            header=[clean(h) for h in self.header],
+            data=[[clean(cell) for cell in row] for row in self.data],
+            annotate_rows=self.annotate_rows,
+            annotate_columns=self.annotate_columns,
+        )
+        return cleaned
 
 
 class AnnotationState:
-    def __init__(self, table: Table) -> None:
+    def __init__(self, table: Table, context_rows: int | None = None) -> None:
         assert len(table.header) > 0, "Header must not be empty"
         assert all(len(row) == len(table.header) for row in table.data), (
             "All rows must have the same length as the header"
         )
-        self.table = table
-        self.header = [clean(h) for h in table.header]
-        self.data = [[clean(cell) for cell in row] for row in table.data]
+
+        if context_rows is None:
+            self.table = table
+            self.offset = 0
+        else:
+            trimmed, offset = table.trim(context_rows)
+            self.table = trimmed
+            self.offset = offset
+
+        self.table = self.table.clean()
 
         self.rows = (
             set(table.annotate_rows) if table.annotate_rows is not None else None
@@ -77,10 +97,6 @@ class AnnotationState:
 
         # map from cell (row, column) to annoation
         self.annotations: dict[tuple[int, int], Annotation] = {}
-
-    def iter(self) -> Iterator[list[Annotation | None]]:
-        for r in range(self.table.height):
-            yield [self.get(r, c) for c in range(self.table.width)]
 
     def annotate(
         self,
@@ -113,13 +129,17 @@ class AnnotationState:
             "formatted": self.format(),
             "annotations": [
                 CellAnnotation(
-                    row=row,
+                    row=row + self.offset,
                     column=column,
                     **annot.model_dump(),
                 ).model_dump()
                 for (row, column), annot in self.annotations.items()
             ],
         }
+
+    def iter(self) -> Iterator[list[Annotation | None]]:
+        for r in range(self.table.height):
+            yield [self.get(r, c) for c in range(self.table.width)]
 
     def format(self) -> str:
         data = [
@@ -128,9 +148,11 @@ class AnnotationState:
                 col + (f" ({annot.entity})" if annot is not None else "")
                 for col, annot in zip(row, annots)
             ]
-            for i, (row, annots) in enumerate(zip(self.data, self.iter()))
+            for i, (row, annots) in enumerate(zip(self.table.data, self.iter()))
         ]
-        header = ["Row"] + [f"Column {i}: {name}" for i, name in enumerate(self.header)]
+        header = ["Row"] + [
+            f"Column {i}: {name}" for i, name in enumerate(self.table.header)
+        ]
         table = generate_table(
             data=data,
             headers=[header],

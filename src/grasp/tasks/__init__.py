@@ -5,7 +5,6 @@ from grasp.configs import GraspConfig
 from grasp.functions import TaskFunctions
 from grasp.manager import KgManager
 from grasp.model import Message
-from grasp.tasks.cea import CeaSample
 from grasp.tasks.cea import functions as cea_functions
 from grasp.tasks.cea import input_and_state as cea_input_and_state
 from grasp.tasks.cea import output as cea_output
@@ -137,7 +136,7 @@ def task_setup(
         )
         return input, None
     elif task == "cea":
-        return cea_input_and_state(input)
+        return cea_input_and_state(input, **config.task_kwargs)
     elif task == "wikidata-query-logs":
         assert isinstance(input, str), (
             "Input for wikidata-query-logs must be a string (SPARQL query)"
@@ -209,7 +208,5 @@ def task_output(
 def task_to_sample(task: str) -> Type[Sample]:
     if task == "sparql-qa":
         return SparqlQaSample
-    elif task == "cea":
-        return CeaSample
 
     raise ValueError(f"Unsupported or unknown task {task}")
