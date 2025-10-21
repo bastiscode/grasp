@@ -1,3 +1,6 @@
+# undo from parent .gitignore
+!*
+
 # Logs
 logs
 *.log
