@@ -6,6 +6,9 @@ model_kwargs:
   chat_template_kwargs:
     enable_thinking: false
 
+task_kwargs:
+  context_rows: env(CONTEXT_ROWS:10)
+
 seed: env(SEED:22)
 
 fn_set: env(FN_SET:all)
