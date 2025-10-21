@@ -1,6 +1,4 @@
 <script>
-  import CopyButton from './CopyButton.svelte';
-
   export let code = '';
   export let qleverLink = null;
   export let label = '';
@@ -11,9 +9,8 @@
     {#if label}
       <div class="sparql-block__label">{label}</div>
     {/if}
-    <div class="sparql-block__actions">
-      <CopyButton text={code} title="Copy SPARQL" />
-      {#if qleverLink}
+    {#if qleverLink}
+      <div class="sparql-block__actions">
         <a
           class="sparql-link"
           href={qleverLink}
@@ -22,8 +19,8 @@
         >
           Execute on QLever
         </a>
-      {/if}
-    </div>
+      </div>
+    {/if}
     <div class="sparql-block__code">
       <pre><code>{code}</code></pre>
     </div>
