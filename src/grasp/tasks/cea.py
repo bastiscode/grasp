@@ -101,11 +101,16 @@ class AnnotationState:
 
         self.table = self.table.clean()
 
+        # convert to sets for faster lookup
         self.rows = (
-            set(table.annotate_rows) if table.annotate_rows is not None else None
+            set(self.table.annotate_rows)
+            if self.table.annotate_rows is not None
+            else None
         )
         self.cols = (
-            set(table.annotate_columns) if table.annotate_columns is not None else None
+            set(self.table.annotate_columns)
+            if self.table.annotate_columns is not None
+            else None
         )
 
         # map from cell (row, column) to annoation
