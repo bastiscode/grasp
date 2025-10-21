@@ -613,7 +613,7 @@ def run_grasp(args: argparse.Namespace) -> None:
 
         dump_jsonl(outputs, args.output_file)
 
-    if run_on_file:
+    if run_on_file and args.output_file is not None:
         # final dump, necessary if no new outputs were added
         # but some outputs were updated with ids
         dump_jsonl(outputs, args.output_file)
