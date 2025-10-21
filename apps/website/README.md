@@ -1,16 +1,27 @@
-# GRASP Website
+# GRASP Website (SvelteKit)
 
-HTML-first port of the GRASP conversational interface. This project mirrors the Flutter-based web app while relying on semantic HTML, accessible styling, and a lightweight Svelte component layer.
+SvelteKit port of the GRASP conversational interface. The project mirrors the existing Flutter-based web app while relying on semantic HTML, accessible styling, and a lightweight Svelte component layer.
+
+## Requirements
+
+- Node.js 20.19+ (or 22.12+/24+) — the tooling enforces this.  
+  We recommend using `nvm` to manage versions.
+- npm (ships with Node).
+
+Install project dependencies once:
+
+```bash
+cd apps/website_svelte_kit
+npm install
+```
 
 ## Development
 
 ```bash
-cd apps/website
-npm install
 npm run dev
 ```
 
-The dev server runs at http://localhost:5173 by default and supports hot module reloading. The app code lives under `src/`, with shared configuration and components in `src/lib/`.
+The dev server runs at http://localhost:5173 with hot module replacement. Source code lives under `src/` with shared components in `src/lib/`. Static assets (favicons, robots.txt, etc.) reside in `static/`.
 
 ## Building for production
 
@@ -18,13 +29,17 @@ The dev server runs at http://localhost:5173 by default and supports hot module 
 npm run build
 ```
 
-The static site is emitted to `dist/`. You can copy that folder into an nginx (or any static) Docker image, similar to the existing Flutter build workflow.
+With the static adapter, the production build is emitted to `build/`. You can preview the output locally with:
 
-### Docker
+```bash
+npm run preview
+```
+
+## Docker
 
 ```bash
 docker build -t grasp-website .
 docker run -p 8080:80 grasp-website
 ```
 
-The image stages the Vite build on Node 22 Alpine and serves the static assets via `nginx:alpine-slim`.
+The multi-stage Dockerfile compiles the static build using Node 22 Alpine, then serves the exported site via `nginx:alpine-slim`.
