@@ -478,7 +478,7 @@ def feedback_instructions(questions: list[str], output: dict) -> str:
 1) The system was able to find an answer
 
 Answer:
-{output["answer"]}"""
+{output["formatted"]}"""
 
     else:
         prompt += f"""
@@ -486,17 +486,6 @@ Answer:
 2) The system failed to find an answer
 
 Explanation:
-{output["explanation"]}"""
-
-    if output["sparql"] is not None:
-        sparql = output["sparql"]
-        kg = output["kg"]
-        selections = output["selections"]
-        result = output["result"]
-
-        prompt += f"\n\n{format_sparql_result(sparql, selections, result, kg)}"
-
-    else:
-        prompt += "\n\nNo SPARQL query found"
+{output["formatted"]}"""
 
     return prompt
