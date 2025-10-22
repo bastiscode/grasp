@@ -1,16 +1,9 @@
 import argparse
-import asyncio
 import json
 import os
 import random
 import sys
-import threading
-import time
-from logging import INFO, FileHandler, Logger
-from typing import Any
 
-from fastapi import WebSocketDisconnect
-from pydantic import BaseModel, conlist
 from tqdm import tqdm
 from universal_ml_utils.configuration import load_config
 from universal_ml_utils.io import (
@@ -20,7 +13,7 @@ from universal_ml_utils.io import (
     load_text,
 )
 from universal_ml_utils.logging import get_logger, setup_logging
-from universal_ml_utils.ops import extract_field, partition_by
+from universal_ml_utils.ops import extract_field
 
 from grasp.build import build_indices, get_data
 from grasp.build.data import merge_kgs
@@ -34,12 +27,12 @@ from grasp.configs import (
 from grasp.core import generate, load_notes, setup
 from grasp.evaluate import evaluate_f1, evaluate_with_judge
 from grasp.manager import find_embedding_model
-from grasp.model import Message
 from grasp.notes import (
     take_notes_from_exploration,
     take_notes_from_outputs,
     take_notes_from_samples,
 )
+from grasp.server import serve
 from grasp.tasks import Task, default_input_field
 from grasp.tasks.examples import ExampleIndex, load_example_indices
 from grasp.utils import (
@@ -100,13 +93,13 @@ def parse_args() -> argparse.Namespace:
     server_parser.add_argument(
         "--port",
         type=int,
-        default=8000,
+        default=6789,
         help="Port to run the GRASP server on",
     )
     server_parser.add_argument(
         "--max-connections",
         type=int,
-        default=16,
+        default=10,
         help="Maximum number of concurrent connections",
     )
     server_parser.add_argument(
@@ -619,334 +612,17 @@ def run_grasp(args: argparse.Namespace) -> None:
         dump_jsonl(outputs, args.output_file)
 
 
-# keep track of connections and limit to 10 concurrent connections
-active_connections = 0
-
-
-class Past(BaseModel):
-    messages: conlist(Message, min_length=1)  # type: ignore
-    known: set[str]
-
-
-class Request(BaseModel):
-    task: Task
-    input: Any
-    knowledge_graphs: conlist(str, min_length=1)  # type: ignore
-    past: Past | None = None
-
-
 def serve_grasp(args: argparse.Namespace) -> None:
     config = GraspConfig(**load_config(args.config))
-
-    # create a fast api websocket server to serve the generate_sparql function
-    import uvicorn
-    from fastapi import FastAPI, HTTPException, WebSocket
-
-    app = FastAPI()
-    logger = get_logger("GRASP SERVER", args.log_level)
-    if args.log_outputs is not None:
-        os.makedirs(os.path.dirname(args.log_outputs), exist_ok=True)
-        output_logger = Logger("GRASP JSONL OUTPUTS")
-        output_logger.addHandler(
-            FileHandler(args.log_outputs, mode="a", encoding="utf-8")
-        )
-        output_logger.setLevel(INFO)
-    else:
-        output_logger = None
-
-    # add cors
-    from fastapi.middleware.cors import CORSMiddleware
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+    serve(
+        config,
+        args.port,
+        args.log_level,
+        args.log_outputs,
+        args.max_connections,
+        args.max_generation_time,
+        args.max_idle_time,
     )
-
-    managers = setup(config)
-    kgs = [manager.kg for manager in managers]
-
-    model = find_embedding_model(managers)
-
-    notes = {}
-    kg_notes = {}
-    example_indices = {}
-    for task in Task:
-        general_notes, kg_specific_notes = load_notes(config)
-        notes[task.value] = general_notes
-        kg_notes[task.value] = kg_specific_notes
-
-        task_indices = load_example_indices(task.value, config, model=model)
-        example_indices[task.value] = task_indices
-
-    @app.get("/knowledge_graphs")
-    async def _knowledge_graphs():
-        return kgs
-
-    @app.get("/config")
-    async def _config():
-        return config.model_dump()
-
-    @app.post("/run")
-    async def _run(request: Request):
-        global active_connections
-
-        if active_connections >= args.max_connections:
-            logger.warning(
-                "HTTP run request refused: "
-                f"maximum of {args.max_connections:,} active connections reached"
-            )
-            raise HTTPException(
-                status_code=503,
-                detail="Server too busy, try again later",
-            )
-
-        active_connections += 1
-        logger.info(f"HTTP run request started ({active_connections=:,})")
-
-        try:
-            sel = request.knowledge_graphs
-            if not sel or not all(kg in kgs for kg in sel):
-                logger.error(
-                    "Unsupported knowledge graph selection:\n"
-                    f"{request.model_dump_json(indent=2)}"
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail="Unsupported knowledge graph selection",
-                )
-
-            sel_managers, _ = partition_by(managers, lambda m: m.kg in sel)
-
-            past_messages = request.past.messages if request.past else None
-            past_known = request.past.known if request.past else None
-
-            def run_generate() -> dict:
-                try:
-                    *_, output = generate(
-                        request.task,
-                        request.input,
-                        config,
-                        sel_managers,
-                        kg_notes[request.task],
-                        notes[request.task],
-                        example_indices[request.task],
-                        past_messages,
-                        past_known,
-                        logger,
-                    )
-                except ValueError as exc:
-                    raise RuntimeError("No output produced") from exc
-
-                return output
-
-            try:
-                output = await asyncio.wait_for(
-                    asyncio.to_thread(run_generate),
-                    timeout=args.max_generation_time,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Generation hit time limit of {args.max_generation_time:,} seconds"
-                )
-                raise HTTPException(
-                    status_code=504,
-                    detail=(
-                        f"Generation hit time limit of {args.max_generation_time:,} seconds"
-                    ),
-                )
-            except HTTPException:
-                raise
-            except Exception as exc:
-                logger.error(f"Unexpected error with HTTP run request:\n{exc}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to handle request:\n{exc}",
-                )
-
-            return output
-
-        finally:
-            active_connections -= 1
-            logger.info(f"HTTP run request finished ({active_connections=:,})")
-
-    @app.websocket("/live")
-    async def _live(websocket: WebSocket):
-        global active_connections
-        assert websocket.client is not None
-        client = f"{websocket.client.host}:{websocket.client.port}"
-        await websocket.accept()
-
-        # Check if we've reached the maximum number of connections
-        if active_connections >= args.max_connections:
-            logger.warning(
-                f"Connection from {client} immediately closed: "
-                f"maximum of {args.max_connections:,} active connections reached"
-            )
-            await websocket.close(code=1013, reason="Server too busy, try again later")
-            return
-
-        active_connections += 1
-        logger.info(f"{client} connected ({active_connections=:,})")
-        last_active = time.perf_counter()
-
-        async def idle_checker():
-            nonlocal last_active
-            while True:
-                await asyncio.sleep(min(5, args.max_idle_time))
-
-                if time.perf_counter() - last_active <= args.max_idle_time:
-                    continue
-
-                msg = f"Connection closed due to inactivity after {args.max_idle_time:,} seconds"
-                logger.info(f"{client}: {msg}")
-                await websocket.close(code=1013, reason=msg)  # Try Again Later
-                break
-
-        idle_task = asyncio.create_task(idle_checker())
-
-        try:
-            while True:
-                data = await websocket.receive_json()
-                last_active = time.perf_counter()
-                try:
-                    request = Request(**data)
-                except Exception:
-                    logger.error(
-                        f"Invalid request from {client}:\n{json.dumps(data, indent=2)}"
-                    )
-                    await websocket.send_json({"error": "Invalid request format"})
-                    continue
-
-                sel = request.knowledge_graphs
-                if not sel or not all(kg in kgs for kg in sel):
-                    logger.error(
-                        f"Unsupported knowledge graph selection by {client}:\n"
-                        f"{request.model_dump_json(indent=2)}"
-                    )
-                    await websocket.send_json(
-                        {"error": "Unsupported knowledge graph selection"}
-                    )
-                    continue
-
-                logger.info(
-                    f"Processing request from {client}:\n"
-                    f"{request.model_dump_json(indent=2)}"
-                )
-
-                sel_managers, _ = partition_by(managers, lambda m: m.kg in sel)
-
-                past_messages = None
-                past_known = None
-                if request.past is not None:
-                    # set past
-                    past_messages = request.past.messages
-                    past_known = request.past.known
-
-                loop = asyncio.get_running_loop()
-                queue = asyncio.Queue()
-                stop_event = threading.Event()
-
-                def run_generate() -> None:
-                    try:
-                        generator = generate(
-                            request.task,
-                            request.input,
-                            config,
-                            sel_managers,
-                            kg_notes[request.task],
-                            notes[request.task],
-                            example_indices[request.task],
-                            past_messages,
-                            past_known,
-                            logger,
-                        )
-
-                        for output in generator:
-                            if stop_event.is_set():
-                                break
-                            asyncio.run_coroutine_threadsafe(
-                                queue.put(("data", output)),
-                                loop,
-                            ).result()
-
-                    except Exception as exc:
-                        asyncio.run_coroutine_threadsafe(
-                            queue.put(("error", exc)),
-                            loop,
-                        ).result()
-                    finally:
-                        asyncio.run_coroutine_threadsafe(
-                            queue.put(("done", None)),
-                            loop,
-                        ).result()
-
-                producer = asyncio.create_task(asyncio.to_thread(run_generate))
-                #
-                # Track start time for timeout
-                start_time = time.perf_counter()
-
-                try:
-                    while True:
-                        kind, payload = await queue.get()
-
-                        if kind == "data":
-                            # Check if we've exceeded the time limit
-                            current_time = time.perf_counter()
-                            if current_time - start_time > args.max_generation_time:
-                                msg = f"Generation hit time limit of {args.max_generation_time:,} seconds"
-                                logger.warning(msg)
-                                stop_event.set()
-                                await websocket.send_json({"error": msg})
-                                break
-
-                            output = payload
-                            await websocket.send_json(output)
-                            data = await websocket.receive_json()
-                            last_active = time.perf_counter()
-
-                            if data.get("cancel", False):
-                                logger.info(f"Generation cancelled by {client}")
-                                stop_event.set()
-                                await websocket.send_json({"cancelled": True})
-                                break
-
-                        elif kind == "error":
-                            exc = payload
-                            stop_event.set()
-                            logger.error(
-                                f"Unexpected error while generating for {client}:\n{exc}"
-                            )
-                            await websocket.send_json(
-                                {"error": f"Failed to handle request:\n{exc}"}
-                            )
-                            break
-
-                        elif kind == "done":
-                            break
-
-                finally:
-                    stop_event.set()
-                    try:
-                        await producer
-                    except Exception as exc:
-                        logger.error(f"Generator worker for {client} failed:\n{exc}")
-
-        except WebSocketDisconnect:
-            pass
-
-        except Exception as e:
-            logger.error(f"Unexpected error with {client}:\n{e}")
-            await websocket.send_json({"error": f"Failed to handle request:\n{e}"})
-
-        finally:
-            idle_task.cancel()
-            active_connections -= 1
-            logger.info(f"{client} disconnected ({active_connections=:,})")
-
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
 
 
 def get_grasp_data(args: argparse.Namespace) -> None:
