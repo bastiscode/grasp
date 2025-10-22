@@ -15,21 +15,15 @@
   .markdown {
     font-size: 0.95rem;
     line-height: 1.6;
-    display: grid;
-    gap: var(--spacing-sm);
     color: var(--text-primary);
     overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .markdown :global(*:not(pre):not(code):not(table):not(thead):not(tbody)) {
     overflow-wrap: anywhere;
     word-break: break-word;
     max-width: 100%;
-  }
-
-  .markdown :global(ul),
-  .markdown :global(ol) {
-    padding-left: var(--spacing-lg);
   }
 
   .markdown :global(pre) {
