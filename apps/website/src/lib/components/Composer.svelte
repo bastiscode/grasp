@@ -39,10 +39,10 @@
 
   $: isCeaTask = task === 'cea';
   $: trimmed = value.trim();
-  $: disableFileInput =
+  $: disableCeaInputs =
     disabled || isRunning || isCancelling || isParsingFile || ceaLocked;
-  $: disableRowSelection =
-    disabled || isRunning || isCancelling || isParsingFile || ceaLocked;
+  $: disableFileInput = disableCeaInputs;
+  $: disableRowSelection = disableCeaInputs;
   $: totalRowCount = ceaSummary?.rows ?? 0;
   $: selectedRowCount = ceaSelectedRows.length;
   $: annotateAllRows =
@@ -225,6 +225,42 @@
     fileInputEl?.click();
   }
 
+  function getByteSize(text) {
+    if (typeof TextEncoder !== 'undefined') {
+      return new TextEncoder().encode(text).length;
+    }
+    if (typeof Blob !== 'undefined') {
+      return new Blob([text]).size;
+    }
+    return text.length;
+  }
+
+  function applyCsvContent({ text, sizeBytes }) {
+    const byteLength =
+      typeof sizeBytes === 'number' ? sizeBytes : getByteSize(text);
+
+    if (byteLength > MAX_FILE_SIZE_BYTES) {
+      throw new Error(
+        `File is too large. Please choose a file smaller than ${MAX_FILE_SIZE_LABEL}.`
+      );
+    }
+
+    const { header, rows } = parseCsvTable(text);
+    const columnCount = header.length;
+
+    if (columnCount > MAX_COLUMNS) {
+      throw new Error(
+        `This table has ${columnCount} columns. Please upload a table with at most ${MAX_COLUMNS} columns.`
+      );
+    }
+
+    const data = rows.map((row) => row.slice());
+    ceaPayload = { header, data };
+    ceaSummary = { rows: data.length, columns: columnCount };
+    ceaSelectedRows = [];
+    ceaError = '';
+  }
+
   function clearCeaSelection() {
     ceaPayload = null;
     ceaError = '';
@@ -270,18 +306,7 @@
     isParsingFile = true;
     try {
       const text = await file.text();
-      const { header, rows } = parseCsvTable(text);
-      const columnCount = header.length;
-      if (columnCount > MAX_COLUMNS) {
-        throw new Error(
-          `This table has ${columnCount} columns. Please upload a table with at most ${MAX_COLUMNS} columns.`
-        );
-      }
-
-      const data = rows.map((row) => row.slice());
-      ceaPayload = { header, data };
-      ceaSummary = { rows: data.length, columns: columnCount };
-      ceaSelectedRows = [];
+      applyCsvContent({ text, sizeBytes: file.size });
     } catch (error) {
       ceaError = error?.message ?? 'Failed to read CSV file.';
       ceaPayload = null;
@@ -290,6 +315,85 @@
     } finally {
       isParsingFile = false;
       input.value = '';
+    }
+  }
+
+  async function importCsvFromUrl() {
+    if (disableCeaInputs) return;
+    if (typeof window === 'undefined') return;
+
+    const input = window.prompt('Enter the URL of a CSV file');
+    if (input == null) {
+      return;
+    }
+
+    const trimmedUrl = input.trim();
+    if (!trimmedUrl) {
+      ceaError = 'Please provide a valid URL.';
+      return;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(trimmedUrl);
+    } catch (error) {
+      ceaError = 'Please provide a valid URL.';
+      return;
+    }
+
+    const fileName =
+      parsedUrl.pathname.split('/').filter(Boolean).pop() ||
+      parsedUrl.hostname ||
+      parsedUrl.toString();
+
+    ceaError = '';
+    isParsingFile = true;
+    try {
+      const response = await fetch(parsedUrl.toString());
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+      const text = await response.text();
+      applyCsvContent({ text });
+      ceaFileName = fileName;
+    } catch (error) {
+      const reason = error?.message?.trim();
+      ceaError = reason
+        ? reason.startsWith('Failed to load CSV from URL')
+          ? reason
+          : `Failed to load CSV from URL. ${reason}`
+        : 'Failed to load CSV from URL.';
+    } finally {
+      isParsingFile = false;
+    }
+  }
+
+  async function importCsvFromClipboard() {
+    if (disableCeaInputs) return;
+    const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+    if (!nav?.clipboard?.readText) {
+      ceaError = 'Clipboard access is not supported in this browser.';
+      return;
+    }
+
+    ceaError = '';
+    isParsingFile = true;
+    try {
+      const text = await nav.clipboard.readText();
+      if (!text) {
+        throw new Error('Clipboard does not contain any text.');
+      }
+      applyCsvContent({ text });
+      ceaFileName = 'Clipboard';
+    } catch (error) {
+      const reason = error?.message?.trim();
+      ceaError = reason
+        ? reason.startsWith('Clipboard')
+          ? reason
+          : `Failed to read CSV from clipboard. ${reason}`
+        : 'Failed to read CSV from clipboard.';
+    } finally {
+      isParsingFile = false;
     }
   }
 
@@ -379,23 +483,39 @@
             disabled={disableFileInput}
           />
           <div class="composer__upload-controls">
-            <button
-              type="button"
-              class="composer__upload-trigger"
-              on:click={openFileDialog}
-              disabled={disableFileInput}
-              bind:this={uploadButtonEl}
-            >
-              {#if isParsingFile}
-                Reading CSV…
-              {:else if ceaPayload}
-                Replace CSV file
-              {:else}
-                Select CSV file
-              {/if}
-            </button>
+            <div class="composer__upload-options">
+              <button
+                type="button"
+                class="composer__upload-trigger"
+                on:click={openFileDialog}
+                disabled={disableFileInput}
+                bind:this={uploadButtonEl}
+              >
+                {#if isParsingFile}
+                  Reading CSV…
+                {:else}
+                  Upload file
+                {/if}
+              </button>
+              <button
+                type="button"
+                class="composer__upload-trigger"
+                on:click={importCsvFromUrl}
+                disabled={disableCeaInputs}
+              >
+                Load from URL
+              </button>
+              <button
+                type="button"
+                class="composer__upload-trigger"
+                on:click={importCsvFromClipboard}
+                disabled={disableCeaInputs}
+              >
+                Paste from Clipboard
+              </button>
+            </div>
             <span class="composer__upload-subtitle">
-              CSV tables up to 1MB with at most 100 columns.
+              CSV formatted tables up to 1MB and 100 columns are supported.
             </span>
           </div>
           {#if ceaPayload && ceaSummary}
@@ -712,6 +832,12 @@
   }
 
   .composer__upload-controls {
+    display: grid;
+    gap: var(--spacing-xs);
+    align-items: flex-start;
+  }
+
+  .composer__upload-options {
     display: flex;
     align-items: center;
     gap: var(--spacing-xs);

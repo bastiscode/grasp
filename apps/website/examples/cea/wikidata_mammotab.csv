@@ -1,0 +1,35 @@
+col0,col1,col2,col3,col4,col5,col6
+AMC-21,the US of A,GE Americom,Television broadcasting,24 Ku-band,Ariane 5 ECA,Active
+Amazonas 4A,Spain,Hispasat,Communications,24 Ku-band,Ariane 5 ECA,Active
+Azerspace-1/Africasat-1a,az,Azercosmos,Communications,"24 C-band, 12 Ku-band",Ariane 5 ECA,Active
+Eutelsat 5 West B,International,Eutelsat,Communications,35 Ku-band,Proton-M   Phase 4,Active
+Galaxy 12,United States,Pan American Satellite Corporation,Television broadcasting,20-24 C-band,Ariane V,Active
+Galaxy 14,United States,PanAmSat,Television broadcasting,20-24 C-band,Soyuz-FG,Active
+Galaxy 15,United States,PanAmSat,Television broadcasting,20-24 C-band,Ariane 5 GS,Active
+Galaxy 30,United States,Intelsat,Television broadcasting,"C-band, Ku-band, Ka-band,   and WAAS payload",Ariane V,Active
+Horizons-2,"United States, Japan","PanAmSat, SKY Perfect JSAT",Communications,20 Ku-band,Ariane 5 rocket,Active
+HYLAS 2,United Kingdom,Avanti Communications,Satellite internet,24 Ka-band,Ariane 5 ECA,Active
+Intelsat 11,United States,Intelsat,Communications,"16 C-band, 18 Ka-band",Ariane 5 rocket,Active
+Intelsat 15,United States,International Telecommunications Satellite Corporation,Communications,22 Ku-band,Zenit-3SLB,Active
+Intelsat 16,United States,Intelsat,Communications,24 Ku-band,Proton-M   Phase 1,Active
+Intelsat 18,United States,International Telecommunications Satellite Organization,Communications,"24 C-band, 12 Ku-band",Zenit-3SLB,Active
+Intelsat 23,United States,Intelsat,Communications,"24 C-band, 15 Ku-band",Proton-M   Phase 3,Active
+Koreasat 6,South Korea,KT Corporation,Television broadcasting,30 Ku-band,Ariane V,Active
+MEASAT-3a,Malaysia,MEASAT Satellite Systems,Television broadcasting,"12 C-band, 12 Ku-band",Zenit-3SLB,Active
+Mexsat-3,Mexico,Mexican Satellite System,Mobile communications,"12 C-band, 12 Ku-band",Ariane 5 ECA,Active
+N-STAR c,Japan,NTT Docomo,Mobile communications,"1 C-band, 20 S-band",Ariane 5 G,Retired
+New Dawn,United States,Intelsat,Television broadcasting,"28 C-band, 24 Ku-band",Ariane 5 ECA,Active
+NSS-9,Netherlands,SES World Skies,Communications,28 C-band,Ariane 5 ECA,Active
+Optus D1,Australia,Optus,Television broadcasting,24 Ku-band,Ariane 5 ECA,Active
+Optus D2,Australia,Optus,Television broadcasting,24 Ku-band,Ariane 5 GS,Active
+Optus D3,Australia,Optus,Television broadcasting,24 Ku-band,Ariane 5 ECA,Active
+SES-1,United States,SES Americom,Communications,"24 C-band, 24 Ku-band, 2 Ka-band",Proton-M   Phase 2,Active
+SES-2 and CHIRP   (Commercially Hosted InfraRed Payload),United States,SES Americom,Communications,"24 C-band, 24 Ku-band, 2 Ka-band",Ariane 5 ECA,Active
+SES-3,United States,SES Americom,Communications,"24 C-band, 24 Ku-band, 2 Ka-band",Proton-M   Phase 3,Active
+SES-8,Luxembourg,SES,Television broadcasting,33 Ku-band,Falcon 9,Active
+Sky-Mexico 1,Mexico,DirecTV,Television broadcasting,"24 Ku-band, 2 R-band",Ariane 5 ECA,Active
+Star One C3,Brazil,Star One,Communications,"28 C-band, 16 Ku-band",Ariane 5 ECA,Active
+Telkom-2,Indonesia,Telkom Indonesia,Communications,24 C-band,Ariane V,Retired
+Thaicom 6,Thailand,Thaicom,Communications,"24 C-band, 9 Ku-band",Falcon 9,Active
+Thaicom 8,Thailand,Thaicom,Communications,24 Ku-band,Falcon 9,Active
+Thor 5,Norway,Telenor,Television broadcasting,24 Ku-band,Proton-M   Phase 3,Active
