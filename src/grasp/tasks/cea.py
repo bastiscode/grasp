@@ -202,15 +202,13 @@ class AnnotationState:
 
 def rules() -> list[str]:
     return [
-        "Annotate cells only with entities that you verified to exist in "
-        "the knowledge graphs using the provided functions.",
         "If you cannot find a suitable entity for a cell, leave it unannotated.",
         "If there are multiple suitable entities for a cell, choose the one that "
         "fits best in the context of the table, or the one that is more popular/general.",
         "If you find common patterns within or across rows and columns, executing a corresponding SPARQL query "
         "to retrieve multiple entities at once might be easier than searching for each cell individually.",
-        "All of your annotations should be full or prefixed IRIs.",
         "If the same entity occurs multiple times in the table, annotate all occurrences.",
+        "Before stopping, always check your current annotations.",
     ]
 
 
@@ -225,10 +223,8 @@ You should follow a step-by-step approach to annotate the cells:
 might represent. Think about how the cells might be represented with entities \
 in the knowledge graphs.
 2. Annotate the cells, starting with the ones that are easiest to annotate. \
-Use the provided functions to search and query the knowledge graphs for the \
-corresponding entities. You may need to refine or rethink your annotations \
-based on new insights along the way and alter them if needed, possibly \
-multiple times.
+Use the provided functions to search and explore the knowledge graphs. \
+You may need to adapt your annotations based on new insights along the way.
 3. Use the stop function to finalize your annotations and stop the \
 annotation process."""
 

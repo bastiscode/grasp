@@ -142,6 +142,10 @@ def generate(
         config = deepcopy(config)
         config.force_examples = None
         logger.debug(f"Disabling examples for {task} task")
+    if task == "cea":
+        config = deepcopy(config)
+        config.know_before_use = True
+        logger.debug("Enabling know-before-use for CEA task")
 
     # setup functions
     fns = kg_functions(managers, config.fn_set)
