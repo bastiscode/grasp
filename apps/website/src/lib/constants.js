@@ -14,6 +14,8 @@ export const BRAND_LINKS = Object.freeze({
   repo: 'https://github.com/ad-freiburg/grasp',
   methodPaper: 'https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.pdf',
   systemPaper: 'https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_demo_WB_2025.pdf',
+  entityLinkingPaper:
+    'https://ad-publications.cs.uni-freiburg.de/SEMTAB_entity_linking_grasp_WB_2025.pdf',
   evaluation: 'https://grasp.cs.uni-freiburg.de/evaluate/',
   data: 'https://ad-publications.cs.uni-freiburg.de/grasp/'
 });
@@ -36,6 +38,12 @@ export const TASKS = Object.freeze([
     name: 'General QA',
     tooltip:
       'Answer questions by retrieving relevant information from knowledge graphs.'
+  },
+  {
+    id: 'cea',
+    name: 'Cell Entity Annotation',
+    tooltip:
+      'Upload a CSV table to annotate each cell with corresponding knowledge graph entities.'
   }
 ]);
 

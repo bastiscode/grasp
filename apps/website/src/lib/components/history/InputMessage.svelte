@@ -4,6 +4,6 @@
   export let message;
 </script>
 
-<MessageCard title="Question" accent="var(--color-uni-green)">
+<MessageCard title="Input" accent="var(--color-uni-green)">
   <MarkdownContent content={message?.input ?? ''} />
 </MessageCard>

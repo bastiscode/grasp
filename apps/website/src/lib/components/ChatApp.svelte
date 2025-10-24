@@ -33,6 +33,7 @@
   let composerOffset = 0;
   const COMPOSER_OFFSET_BUFFER = 0;
   let pendingCancelSignal = false;
+  let ceaSubmitted = false;
 
   $: hasHistory = histories.length > 0;
   $: knowledgeGraphList = Array.from(knowledgeGraphs.entries()).map(
@@ -59,14 +60,17 @@
 
   async function initialize() {
     restorePersistence();
+    ceaSubmitted = hasCeaHistory(histories);
     try {
       await Promise.all([loadConfig(), loadKnowledgeGraphs()]);
       await openConnection();
     } catch (error) {
       console.error('Failed to initialize', error);
-      statusMessage =
-        error?.message ??
-        'Failed to initialize. Please check your connection and reload.';
+      statusMessage = formatStatusMessage(
+        error,
+        error?.status,
+        'Failed to initialize. Please check your connection and reload.'
+      );
     }
   }
 
@@ -101,43 +105,51 @@
 
   async function loadConfig() {
     connectionStatus = 'initializing';
-    const response = await fetch(configEndpoint());
-    if (!response.ok) {
-      throw new Error(`Failed to fetch config (${response.status})`);
+    try {
+      const response = await fetch(configEndpoint());
+      if (!response.ok) {
+        throw createHttpError(response.status, 'Failed to load configuration.');
+      }
+      config = await response.json();
+    } catch (error) {
+      throw decorateError(error, 'Failed to load configuration.');
     }
-    config = await response.json();
   }
 
   async function loadKnowledgeGraphs() {
-    const response = await fetch(kgEndpoint());
-    if (!response.ok) {
-      throw new Error(`Failed to fetch knowledge graphs (${response.status})`);
-    }
-    const available = await response.json();
-    if (!Array.isArray(available) || available.length === 0) {
-      throw new Error('No knowledge graphs available.');
-    }
-
-    const next = new Map();
-    for (const kg of available) {
-      const selected = persistedSelectedKgs.includes(kg);
-      next.set(kg, selected);
-    }
-
-    if (![...next.values()].some(Boolean)) {
-      if (next.has('wikidata')) {
-        next.set('wikidata', true);
-      } else {
-        next.set(available[0], true);
+    try {
+      const response = await fetch(kgEndpoint());
+      if (!response.ok) {
+        throw createHttpError(response.status, 'Failed to load knowledge graphs.');
       }
+      const available = await response.json();
+      if (!Array.isArray(available) || available.length === 0) {
+        throw new Error('No knowledge graphs available.');
+      }
+
+      const next = new Map();
+      for (const kg of available) {
+        const selected = persistedSelectedKgs.includes(kg);
+        next.set(kg, selected);
+      }
+
+      if (![...next.values()].some(Boolean)) {
+        if (next.has('wikidata')) {
+          next.set('wikidata', true);
+        } else {
+          next.set(available[0], true);
+        }
+      }
+
+      const selectedList = Array.from(next.entries())
+        .filter(([, selected]) => selected)
+        .map(([name]) => name);
+
+      knowledgeGraphs = next;
+      persistSelectedKgs(selectedList);
+    } catch (error) {
+      throw decorateError(error, 'Failed to load knowledge graphs.');
     }
-
-    const selectedList = Array.from(next.entries())
-      .filter(([, selected]) => selected)
-      .map(([name]) => name);
-
-    knowledgeGraphs = next;
-    persistSelectedKgs(selectedList);
   }
 
   async function openConnection() {
@@ -148,7 +160,7 @@
         socket = new WebSocket(wsEndpoint());
       } catch (error) {
         connectionStatus = 'error';
-        return reject(error);
+        return reject(decorateError(error, 'Failed to open WebSocket connection.'));
       }
 
       socket.addEventListener('open', () => {
@@ -161,8 +173,16 @@
       socket.addEventListener('close', handleSocketClose);
       socket.addEventListener('error', (event) => {
         connectionStatus = 'error';
-        statusMessage = 'WebSocket error occurred.';
-        reject(event);
+        const decorated = decorateError(
+          event?.error ?? new Error('WebSocket error occurred.'),
+          'WebSocket error occurred.'
+        );
+        statusMessage = formatStatusMessage(
+          decorated,
+          decorated.status,
+          'WebSocket error occurred.'
+        );
+        reject(decorated);
       });
     });
   }
@@ -193,7 +213,11 @@
       const hasType = Object.prototype.hasOwnProperty.call(payload, 'type');
 
       if (!hasType && payload.error) {
-        statusMessage = payload.error;
+        statusMessage = formatStatusMessage(
+          payload.error,
+          typeof payload.status === 'number' ? payload.status : undefined,
+          'Request failed.'
+        );
         running = false;
         cancelling = false;
         return;
@@ -262,8 +286,8 @@
     );
   }
 
-  function startNewHistory(input) {
-    histories = [...histories, [{ type: 'input', input }]];
+  function startNewHistory() {
+    histories = [...histories, []];
   }
 
   function sendReceived() {
@@ -277,20 +301,47 @@
   }
 
   function handleSubmit(event) {
-    const question = event.detail;
-    if (!question || running || !connected) return;
+    if (running || !connected) return;
     if (!selectedKgs.length) return;
+    if (task === 'cea' && ceaSubmitted) return;
+
+    let payloadInput = null;
+    if (task === 'cea') {
+      const detail = event.detail;
+      if (!detail || detail.kind !== 'cea' || !detail.payload) return;
+      payloadInput = detail.payload;
+    } else {
+      const question = typeof event.detail === 'string' ? event.detail : '';
+      const trimmedQuestion = question.trim();
+      if (!trimmedQuestion) return;
+      payloadInput = trimmedQuestion;
+    }
+
     statusMessage = '';
-    startNewHistory(question);
+    startNewHistory();
     running = true;
+    if (task === 'cea') {
+      ceaSubmitted = true;
+    }
     const payload = {
       task,
-      input: question,
+      input: payloadInput,
       knowledge_graphs: selectedKgs,
       past: past ? { messages: past.messages, known: past.known } : null
     };
-    composerValue = '';
-    socket?.send(JSON.stringify(payload));
+    try {
+      composerValue = '';
+      socket?.send(JSON.stringify(payload));
+    } catch (error) {
+      const decorated = decorateError(error, 'Failed to send request.');
+      statusMessage = formatStatusMessage(
+        decorated,
+        decorated.status,
+        'Failed to send request.'
+      );
+      running = false;
+      ceaSubmitted = hasCeaHistory(histories);
+    }
   }
 
   function handleReset() {
@@ -310,6 +361,9 @@
     if (!nextTask || task === nextTask) return;
     task = nextTask;
     persistTask(task);
+    if (task === 'cea') {
+      ceaSubmitted = hasCeaHistory(histories);
+    }
   }
 
   function handleKnowledgeGraphChange(event) {
@@ -341,8 +395,10 @@
       histories = [];
       past = null;
       clearLastOutput();
+      ceaSubmitted = false;
     } else if (mode === 'last' && histories.length > 0) {
       histories = histories.slice(0, -1);
+      ceaSubmitted = hasCeaHistory(histories);
     }
   }
 
@@ -388,6 +444,69 @@
     await tick();
     composerOffset = COMPOSER_OFFSET_BUFFER;
   }
+
+  function createHttpError(status, fallbackMessage) {
+    const error = new Error(fallbackMessage);
+    error.status = status;
+    return error;
+  }
+
+  function decorateError(error, fallbackMessage) {
+    const isError = error instanceof Error;
+    const rawMessage = isError ? error.message : '';
+    const initialStatus =
+      isError && typeof error.status === 'number' ? error.status : undefined;
+    const status = initialStatus ?? extractStatusCode(rawMessage);
+    const message = formatStatusMessage(rawMessage, status, fallbackMessage);
+    const decorated = new Error(message);
+    if (status) {
+      decorated.status = status;
+    }
+    return decorated;
+  }
+
+  function formatStatusMessage(rawMessage, status, fallbackMessage) {
+    const rawString =
+      typeof rawMessage === 'string'
+        ? rawMessage
+        : rawMessage && typeof rawMessage.message === 'string'
+          ? rawMessage.message
+          : '';
+    const message = rawString.trim();
+    const effectiveStatus = status ?? extractStatusCode(message);
+
+    if (effectiveStatus && effectiveStatus >= 500 && effectiveStatus < 600) {
+      return `Server error (${effectiveStatus}). Please try again in a moment.`;
+    }
+
+    if (effectiveStatus && effectiveStatus >= 400 && effectiveStatus < 500) {
+      return `Request failed (${effectiveStatus}). Please check your input and try again.`;
+    }
+
+    if (!message || message.includes('Failed to fetch')) {
+      return message
+        ? 'Network error: Unable to reach the server. Please check your connection and try again.'
+        : fallbackMessage || 'Unexpected error occurred.';
+    }
+
+    return message;
+  }
+
+  function extractStatusCode(message) {
+    if (typeof message !== 'string') return undefined;
+    const match = message.match(/\b([45]\d{2})\b/);
+    if (!match) return undefined;
+    const code = Number.parseInt(match[1], 10);
+    return Number.isNaN(code) ? undefined : code;
+  }
+
+  function hasCeaHistory(historyList) {
+    if (!Array.isArray(historyList)) return false;
+    return historyList.some((history) =>
+      Array.isArray(history) &&
+      history.some((entry) => entry?.task === 'cea')
+    );
+  }
 </script>
 
 <section class="app-shell">
@@ -407,11 +526,7 @@
         />
       {/if}
 
-      <div
-        class="composer-wrapper"
-        class:composer-wrapper--sticky={hasHistory}
-        bind:this={composerWrapperEl}
-      >
+      <div class="composer-wrapper" class:composer-wrapper--sticky={hasHistory} bind:this={composerWrapperEl}>
         <Composer
           bind:value={composerValue}
           on:submit={handleSubmit}
@@ -425,6 +540,9 @@
           tasks={TASKS}
           knowledgeGraphs={knowledgeGraphList}
           hasHistory={hasHistory}
+          errorMessage={statusMessage}
+          ceaLocked={task === 'cea' && ceaSubmitted}
+          onReload={reloadPage}
           on:taskchange={handleTaskChange}
           on:kgchange={handleKnowledgeGraphChange}
         />
@@ -432,23 +550,6 @@
     </main>
   </div>
 </section>
-
-{#if statusMessage}
-  <div class="error-modal-backdrop" role="presentation">
-    <div
-      class="error-modal"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="error-modal-title"
-    >
-      <h2 id="error-modal-title">Connection issue</h2>
-      <p>{statusMessage}</p>
-      <button type="button" class="error-modal__button" on:click={reloadPage}>
-        Reload page
-      </button>
-    </div>
-  </div>
-{/if}
 
 <style>
   .app-shell {
@@ -509,61 +610,6 @@
       rgba(255, 255, 255, 0.92) 55%,
       rgba(255, 255, 255, 1) 100%
     );
-  }
-
-  .error-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.45);
-    display: grid;
-    place-items: center;
-    z-index: 999;
-    padding: 12px;
-  }
-
-  .error-modal {
-    width: min(520px, 100%);
-    background: #fff;
-    border-radius: var(--radius-md);
-    box-shadow: 0 24px 48px rgba(15, 15, 47, 0.25);
-    padding: 16px;
-    display: grid;
-    gap: var(--spacing-md);
-    text-align: left;
-  }
-
-  .error-modal h2 {
-    margin: 0;
-    font-size: 1.25rem;
-    color: var(--color-uni-red);
-  }
-
-  .error-modal p {
-    margin: 0;
-    color: var(--text-primary);
-    line-height: 1.5;
-  }
-
-  .error-modal__button {
-    justify-self: start;
-    padding: 0.55rem 1.4rem;
-    border-radius: var(--radius-sm);
-    border: none;
-    background: var(--color-uni-blue);
-    color: #fff;
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  .error-modal__button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 10px 18px rgba(52, 74, 154, 0.25);
-  }
-
-  .error-modal__button:focus-visible {
-    outline: 2px solid rgba(52, 74, 154, 0.4);
-    outline-offset: 2px;
   }
 
 </style>
