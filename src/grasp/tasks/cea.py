@@ -420,16 +420,16 @@ after the cell value.
     return instructions
 
 
-def input_and_state(
-    input: Any,
-    context_rows: int | None = None,
-) -> tuple[str, AnnotationState]:
+def input_and_state(input: Any, config: GraspConfig) -> tuple[str, AnnotationState]:
     try:
         table = Table(**input)
     except Exception as e:
         raise ValueError(
             "CEA task input must be a dict with 'header' and 'data' fields"
         ) from e
+
+    task_kwargs = config.task_kwargs.get("cea", {})
+    context_rows = task_kwargs.get("context_rows", None)
 
     annots = AnnotationState(table, context_rows)
     instructions = input_instructions(annots)

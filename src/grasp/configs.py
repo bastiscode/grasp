@@ -42,7 +42,8 @@ class GraspConfig(ModelConfig):
     knowledge_graphs: list[KgConfig] = [KgConfig(kg="wikidata")]
 
     # optional task specific parameters
-    task_kwargs: dict[str, Any] = {}
+    # map[task_name, map[param_name, param_value]]
+    task_kwargs: dict[str, dict[str, Any]] = {}
 
     # kg function parameters
     search_top_k: int = 10

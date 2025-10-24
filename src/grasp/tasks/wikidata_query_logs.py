@@ -79,7 +79,8 @@ def rules() -> list[str]:
 
 
 def system_information(config: GraspConfig) -> str:
-    max_questions = config.task_kwargs.get("max_questions", 3)
+    task_kwargs = config.task_kwargs.get("wikidata-query-logs", {})
+    max_questions = task_kwargs.get("max_questions", 3)
     return f"""\
 You are a Wikidata expert trying to find possible user questions for \
 anonymized SPARQL queries sent to the Wikidata Query Service. \
