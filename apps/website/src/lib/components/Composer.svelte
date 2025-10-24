@@ -74,7 +74,7 @@
   $: showCancel = isRunning || isCancelling;
   $: showClear = hasHistory && !isRunning && !isCancelling;
   $: showActions = true;
-  $: cancelLabel = isCancelling ? 'Cancellation in progress' : 'Cancel question';
+  $: cancelLabel = isCancelling ? 'Cancellation in progress' : 'Cancel';
   $: hasError = Boolean(errorMessage);
   $: summaryRowsLabel = ceaSummary
     ? `${ceaSummary.rows} ${ceaSummary.rows === 1 ? 'row' : 'rows'}`
@@ -508,8 +508,8 @@
             class="icon-button icon-button--primary"
             on:click={submit}
             disabled={!canSubmit}
-            aria-label="Ask question"
-            title="Ask question"
+            aria-label="Run"
+            title="Run"
           >
             <span class="paperplane-icon" aria-hidden="true">➤</span>
           </button>
@@ -532,13 +532,13 @@
           {/if}
           {#if showClear}
             <button
-              type="button"
-              class="icon-button icon-button--clear"
-              on:click={reset}
-              disabled={disabled}
-              aria-label="Clear conversation"
-              title="Clear conversation"
-            >
+            type="button"
+            class="icon-button icon-button--clear"
+            on:click={reset}
+            disabled={disabled}
+            aria-label="Clear"
+            title="Clear"
+          >
               <span aria-hidden="true">↺</span>
             </button>
           {/if}
@@ -714,7 +714,7 @@
   .composer__upload-controls {
     display: flex;
     align-items: center;
-    gap: var(--spacing-sm);
+    gap: var(--spacing-xs);
     flex-wrap: wrap;
   }
 

@@ -45,7 +45,7 @@
 
   .links {
     display: flex;
-    gap: var(--spacing-md);
+    gap: var(--spacing-sm);
     font-size: 0.85rem;
     flex-wrap: wrap;
     justify-content: center;
