@@ -7,7 +7,8 @@ model_kwargs:
     enable_thinking: false
 
 task_kwargs:
-  context_rows: env(CONTEXT_ROWS:10)
+  cea:
+    context_rows: env(CONTEXT_ROWS:10)
 
 seed: env(SEED:22)
 

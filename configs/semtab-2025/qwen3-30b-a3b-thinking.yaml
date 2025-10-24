@@ -5,7 +5,8 @@ model_kwargs:
   min_p: 0.0
 
 task_kwargs:
-  context_rows: env(CONTEXT_ROWS:10)
+  cea:
+    context_rows: env(CONTEXT_ROWS:10)
 
 seed: env(SEED:22)
 
