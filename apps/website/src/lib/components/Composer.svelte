@@ -25,6 +25,7 @@
   let textareaEl;
   let fileInputEl;
   let uploadButtonEl;
+  let urlModalInputEl;
   let cachedLineHeight = 0;
   let isMobile = false;
   let previousValue = '';
@@ -36,6 +37,10 @@
   let isParsingFile = false;
   let lastTask = task;
   let ceaSelectedRows = [];
+  let isUrlModalOpen = false;
+  let urlModalInput = '';
+  let urlModalError = '';
+  let isUrlModalSubmitting = false;
 
   $: isCeaTask = task === 'cea';
   $: trimmed = value.trim();
@@ -225,6 +230,37 @@
     fileInputEl?.click();
   }
 
+  async function openUrlModal() {
+    if (disableCeaInputs) return;
+    isUrlModalOpen = true;
+    urlModalInput = '';
+    urlModalError = '';
+    await tick();
+    urlModalInputEl?.focus();
+  }
+
+  function closeUrlModal() {
+    if (isUrlModalSubmitting || isParsingFile) return;
+    isUrlModalOpen = false;
+    urlModalInput = '';
+    urlModalError = '';
+    tick().then(() => {
+      uploadButtonEl?.focus();
+    });
+  }
+
+  function handleUrlModalBackdropClick() {
+    closeUrlModal();
+  }
+
+  function handleUrlModalKeydown(event) {
+    if (!isUrlModalOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeUrlModal();
+    }
+  }
+
   function getByteSize(text) {
     if (typeof TextEncoder !== 'undefined') {
       return new TextEncoder().encode(text).length;
@@ -318,38 +354,29 @@
     }
   }
 
-  async function importCsvFromUrl() {
-    if (disableCeaInputs) return;
-    if (typeof window === 'undefined') return;
-
-    const input = window.prompt('Enter the URL of a CSV file');
-    if (input == null) {
-      return;
-    }
-
-    const trimmedUrl = input.trim();
-    if (!trimmedUrl) {
-      ceaError = 'Please provide a valid URL.';
-      return;
+  async function importCsvFromUrl(url) {
+    if (disableCeaInputs) {
+      throw new Error('CSV input is currently disabled.');
     }
 
     let parsedUrl;
     try {
-      parsedUrl = new URL(trimmedUrl);
+      parsedUrl = new URL(url);
     } catch (error) {
-      ceaError = 'Please provide a valid URL.';
-      return;
+      const message = 'Please provide a valid URL.';
+      ceaError = message;
+      throw new Error(message);
     }
 
     const fileName =
       parsedUrl.pathname.split('/').filter(Boolean).pop() ||
       parsedUrl.hostname ||
       parsedUrl.toString();
+    const urlString = parsedUrl.toString();
 
-    ceaError = '';
     isParsingFile = true;
     try {
-      const response = await fetch(parsedUrl.toString());
+      const response = await fetch(urlString);
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}`);
       }
@@ -358,13 +385,41 @@
       ceaFileName = fileName;
     } catch (error) {
       const reason = error?.message?.trim();
-      ceaError = reason
+      const message = reason
         ? reason.startsWith('Failed to load CSV from URL')
           ? reason
           : `Failed to load CSV from URL. ${reason}`
         : 'Failed to load CSV from URL.';
+      ceaError = message;
+      throw new Error(message);
     } finally {
       isParsingFile = false;
+    }
+  }
+
+  async function submitUrlModal(event) {
+    event?.preventDefault?.();
+    if (isUrlModalSubmitting) return;
+    const trimmedUrl = urlModalInput.trim();
+    if (!trimmedUrl) {
+      urlModalError = 'Please provide a URL.';
+      urlModalInputEl?.focus();
+      return;
+    }
+
+    urlModalError = '';
+    isUrlModalSubmitting = true;
+    try {
+      await importCsvFromUrl(trimmedUrl);
+      isUrlModalOpen = false;
+      urlModalInput = '';
+      await tick();
+      uploadButtonEl?.focus();
+    } catch (error) {
+      const message = error?.message?.trim() || 'Failed to load CSV from URL.';
+      urlModalError = message;
+    } finally {
+      isUrlModalSubmitting = false;
     }
   }
 
@@ -444,6 +499,8 @@
   }
 </script>
 
+<svelte:window on:keydown={handleUrlModalKeydown} />
+
 <form
   class="composer"
   class:composer--running={isRunning}
@@ -500,7 +557,7 @@
               <button
                 type="button"
                 class="composer__upload-trigger"
-                on:click={importCsvFromUrl}
+                on:click={openUrlModal}
                 disabled={disableCeaInputs}
               >
                 Load from URL
@@ -678,6 +735,69 @@
     on:kgchange={onKgChange}
   />
 </form>
+
+{#if isUrlModalOpen}
+  <div
+    class="composer__modal-backdrop"
+    role="presentation"
+    on:pointerdown={handleUrlModalBackdropClick}
+  >
+    <div
+      class="composer__modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="composer-url-modal-title"
+      on:pointerdown|stopPropagation
+      tabindex="-1"
+    >
+      <form class="composer__modal-form" on:submit|preventDefault={submitUrlModal}>
+        <h2 class="composer__modal-title" id="composer-url-modal-title">
+          Load CSV from URL
+        </h2>
+        <p class="composer__modal-description">
+          Paste the direct URL to a CSV file. The file must be publicly accessible.
+        </p>
+        <label class="composer__modal-label" for="composer-url-modal-input">
+          CSV URL
+        </label>
+        <input
+          id="composer-url-modal-input"
+          class="composer__modal-input"
+          type="url"
+          name="csv-url"
+          placeholder="https://example.com/data.csv"
+          bind:value={urlModalInput}
+          bind:this={urlModalInputEl}
+          required
+        />
+        {#if urlModalError}
+          <p class="composer__modal-error" role="alert">{urlModalError}</p>
+        {/if}
+        <div class="composer__modal-actions">
+          <button
+            type="button"
+            class="composer__modal-button composer__modal-button--secondary"
+            on:click={closeUrlModal}
+            disabled={isUrlModalSubmitting || isParsingFile}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="composer__modal-button composer__modal-button--primary"
+            disabled={isUrlModalSubmitting || isParsingFile}
+          >
+            {#if isUrlModalSubmitting || isParsingFile}
+              Loading…
+            {:else}
+              Load CSV
+            {/if}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
 
 <style>
   .composer {
@@ -900,6 +1020,110 @@
     margin: 0;
     font-size: 0.85rem;
     color: var(--color-uni-red);
+  }
+
+  .composer__modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-lg);
+    background: rgba(5, 17, 51, 0.45);
+    z-index: 1000;
+  }
+
+  .composer__modal {
+    background: #fff;
+    border-radius: var(--radius-md);
+    box-shadow: 0 20px 40px rgba(5, 17, 51, 0.2);
+    max-width: 28rem;
+    width: 100%;
+    outline: none;
+  }
+
+  .composer__modal-form {
+    display: grid;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xl);
+  }
+
+  .composer__modal-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--color-uni-blue);
+  }
+
+  .composer__modal-description {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-subtle);
+  }
+
+  .composer__modal-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .composer__modal-input {
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius-sm);
+    padding: 0.55rem 0.75rem;
+    font: inherit;
+    color: var(--text-primary);
+  }
+
+  .composer__modal-input:focus {
+    outline: 2px solid rgba(52, 74, 154, 0.4);
+    outline-offset: 2px;
+  }
+
+  .composer__modal-error {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--color-uni-red);
+  }
+
+  .composer__modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-xs);
+  }
+
+  .composer__modal-button {
+    padding: 0.45rem 1rem;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font: inherit;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  }
+
+  .composer__modal-button--secondary {
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    background: #fff;
+    color: var(--text-primary);
+  }
+
+  .composer__modal-button--primary {
+    border: none;
+    background: var(--color-uni-blue);
+    color: #fff;
+  }
+
+  .composer__modal-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .composer__modal-button:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 16px rgba(52, 74, 154, 0.15);
   }
 
   .composer__preview {
