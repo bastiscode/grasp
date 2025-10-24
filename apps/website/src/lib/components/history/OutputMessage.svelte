@@ -63,12 +63,6 @@ function displayIndex(value) {
   return value;
 }
 
-function infoBadgeContent(annotation) {
-  if (!Array.isArray(annotation?.infos)) return null;
-  const count = annotation.infos.length;
-  return count > 0 ? `${count}` : null;
-}
-
 function deriveQleverLink() {
   if (!sparql || !endpoint) return null;
   try {
@@ -106,7 +100,6 @@ function deriveQleverLink() {
                 <th scope="col">Column</th>
                 <th scope="col">Label</th>
                 <th scope="col">Entity</th>
-                <th scope="col">Info</th>
               </tr>
             </thead>
             <tbody>
@@ -128,11 +121,6 @@ function deriveQleverLink() {
                       <code>{annotation.entity}</code>
                     {:else}
                       N/A
-                    {/if}
-                  </td>
-                  <td data-title="Info">
-                    {#if infoBadgeContent(annotation)}
-                      <span class="info-chip">{infoBadgeContent(annotation)}</span>
                     {/if}
                   </td>
                 </tr>
@@ -255,19 +243,6 @@ function deriveQleverLink() {
     padding: 0.1rem 0.25rem;
     background: rgba(52, 74, 154, 0.08);
     border-radius: var(--radius-xs);
-  }
-
-  .info-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.5rem;
-    padding: 0.15rem 0.45rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    background: rgba(0, 131, 117, 0.12);
-    color: #008375;
   }
 
   @media (max-width: 640px) {
