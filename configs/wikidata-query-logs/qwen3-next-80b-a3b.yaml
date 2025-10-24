@@ -7,7 +7,8 @@ model_kwargs:
     enable_thinking: false
 
 task_kwargs:
-  max_questions: env(MAX_QUESTIONS:3)
+  wikidata-query-logs:
+    max_questions: env(MAX_QUESTIONS:3)
 
 seed: env(SEED:22)
 
