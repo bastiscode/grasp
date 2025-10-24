@@ -137,7 +137,7 @@ def task_setup(
         )
         return input, None
     elif task == "cea":
-        return cea_input_and_state(input, **config.task_kwargs)
+        return cea_input_and_state(input, config)
     elif task == "wikidata-query-logs":
         assert isinstance(input, str), (
             "Input for wikidata-query-logs must be a string (SPARQL query)"
