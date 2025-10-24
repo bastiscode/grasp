@@ -153,6 +153,7 @@ def generate(
         task_handler = None
 
     input, task_state = task_setup(task, input, managers, config)
+    yield {"type": "input", "input": input}
 
     if notes is None:
         notes = []
