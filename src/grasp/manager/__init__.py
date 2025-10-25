@@ -456,7 +456,12 @@ class KgManager:
                 "SPARQL must contain {IDS} placeholder for identifiers"
             )
             info_sparql = info_sparql.replace("{IDS}", " ".join(identifiers))
-            result = self.execute_sparql(info_sparql)
+            result = self.execute_sparql(
+                info_sparql,
+                # set info timeouts to something shorter than usual
+                request_timeout=(4.0, 6.0),
+                read_timeout=6.0,
+            )
             assert isinstance(result, SelectResult) and result.num_columns == 2, (
                 "Expected a SELECT query with a two columns for info SPARQL"
             )
