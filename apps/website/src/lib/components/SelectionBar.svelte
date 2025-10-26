@@ -12,11 +12,11 @@
 
   $: activeTask = tasks.find((t) => t.id === task);
 
-  function rotateTask() {
-    if (!tasks.length || disabled) return;
-    const currentIndex = tasks.findIndex((t) => t.id === task);
-    const nextTask = tasks[(currentIndex + 1) % tasks.length];
-    dispatch('taskchange', nextTask.id);
+  function handleTaskChange(event) {
+    if (disabled) return;
+    const nextId = event.target?.value;
+    if (!nextId || nextId === task) return;
+    dispatch('taskchange', nextId);
   }
 
   function toggleKg(id) {
@@ -31,16 +31,21 @@
   aria-label="Knowledge graph selection"
 >
   <div class="chip-row" class:chip-row--compact={compact}>
-    <button
-      type="button"
-      class="chip chip--task"
-      title={activeTask?.tooltip}
-      on:click={rotateTask}
-      {disabled}
-      aria-pressed="true"
-    >
-      <span class="chip__label">{activeTask?.name ?? 'Choose task'}</span>
-    </button>
+    <div class="task-select-container">
+      <label class="visually-hidden" for="task-select">Task</label>
+      <select
+        id="task-select"
+        on:change={handleTaskChange}
+        disabled={disabled}
+        title={activeTask?.tooltip}
+        value={task}
+      >
+        {#each tasks as item (item.id)}
+          <option value={item.id}>{item.name}</option>
+        {/each}
+      </select>
+    </div>
+
     {#each knowledgeGraphs as kg (kg.id)}
       <button
         type="button"
@@ -75,6 +80,7 @@
     gap: var(--spacing-xs);
     width: 100%;
     justify-content: flex-start;
+    align-items: center;
   }
 
   .chip-row--compact {
@@ -113,6 +119,47 @@
     border-radius: 999px;
   }
 
+  .task-select-container {
+    margin-right: var(--spacing-xs);
+  }
+
+  select {
+    appearance: none;
+    border: 1px solid rgba(52, 74, 154, 0.28);
+    border-radius: var(--radius-sm);
+    background: rgba(52, 74, 154, 0.08);
+    padding: 0.5rem 2rem 0.5rem 0.95rem;
+    font-size: 0.85rem;
+    line-height: 1.2;
+    color: var(--color-uni-blue);
+    cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    box-shadow: 0 4px 8px rgba(52, 74, 154, 0.12);
+    font-family: inherit;
+    font-weight: 600;
+    min-width: 120px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--color-uni-blue) 50%),
+      linear-gradient(135deg, var(--color-uni-blue) 50%, transparent 50%);
+    background-position: calc(100% - 0.75rem) center, calc(100% - 0.5rem) center;
+    background-size: 0.35rem 0.35rem, 0.35rem 0.35rem;
+    background-repeat: no-repeat;
+  }
+
+  select:not(:disabled):hover {
+    box-shadow: 0 6px 12px rgba(52, 74, 154, 0.16);
+  }
+
+  select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  select:focus {
+    outline: none;
+  }
+
   .chip {
     appearance: none;
     border: 1px solid var(--border-default);
@@ -132,13 +179,6 @@
     box-shadow: 0 6px 14px rgba(15, 15, 47, 0.08);
   }
 
-  .chip--task {
-    border-color: rgba(52, 74, 154, 0.28);
-    background: rgba(52, 74, 154, 0.12);
-    color: var(--color-uni-blue);
-    box-shadow: 0 6px 14px rgba(52, 74, 154, 0.12);
-  }
-
   .chip--selected {
     background: var(--color-uni-blue);
     color: #fff;
@@ -154,5 +194,17 @@
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

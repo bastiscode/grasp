@@ -13,7 +13,6 @@
   export let knowledgeGraphs = [];
   export let hasHistory = false;
   export let errorMessage = '';
-  export let ceaLocked = false;
   export let onReload = null;
 
   const dispatch = createEventDispatcher();
@@ -41,11 +40,15 @@
   let urlModalInput = '';
   let urlModalError = '';
   let isUrlModalSubmitting = false;
+  let ceaPreviousPayload = null;
+  let ceaPreviousSummary = null;
+  let ceaPreviousFileName = '';
+  let ceaPreviousSelectedRows = [];
 
   $: isCeaTask = task === 'cea';
   $: trimmed = value.trim();
   $: disableCeaInputs =
-    disabled || isRunning || isCancelling || isParsingFile || ceaLocked;
+    disabled || isRunning || isCancelling || isParsingFile;
   $: disableFileInput = disableCeaInputs;
   $: disableRowSelection = disableCeaInputs;
   $: totalRowCount = ceaSummary?.rows ?? 0;
@@ -64,7 +67,6 @@
   $: canSubmit = isCeaTask
     ? Boolean(ceaPayload) &&
       selectedRowCount > 0 &&
-      !ceaLocked &&
       !disabled &&
       connected &&
       !isRunning &&
@@ -87,10 +89,11 @@
   $: summaryColumnsLabel = ceaSummary
     ? `${ceaSummary.columns} ${ceaSummary.columns === 1 ? 'column' : 'columns'}`
     : '';
+  $: hasPreviousCea = Boolean(ceaPreviousPayload) && Boolean(ceaPreviousSummary);
 
   $: if (lastTask !== task) {
     if (lastTask === 'cea') {
-      clearCeaSelection();
+      clearCeaSelection({ preservePrevious: true });
     }
     lastTask = task;
   }
@@ -115,6 +118,7 @@
     if (isCeaTask) {
       const payload = buildCeaPayload();
       if (!payload) return;
+      savePreviousCeaState();
       dispatch('submit', {
         kind: 'cea',
         payload,
@@ -130,6 +134,7 @@
               : 'partial'
         }
       });
+      clearCeaSelection({ preservePrevious: true });
       return;
     }
     dispatch('submit', trimmed);
@@ -297,7 +302,25 @@
     ceaError = '';
   }
 
-  function clearCeaSelection() {
+  function cloneCeaTable(table) {
+    if (!table || typeof table !== 'object') return null;
+    const header = Array.isArray(table.header) ? [...table.header] : [];
+    const data = Array.isArray(table.data)
+      ? table.data.map((row) => (Array.isArray(row) ? [...row] : []))
+      : [];
+    return { header, data };
+  }
+
+  function savePreviousCeaState() {
+    if (!ceaPayload || !ceaSummary) return;
+    ceaPreviousPayload = cloneCeaTable(ceaPayload);
+    ceaPreviousSummary = { ...ceaSummary };
+    ceaPreviousFileName = ceaFileName;
+    ceaPreviousSelectedRows = [...ceaSelectedRows];
+  }
+
+  function clearCeaSelection(options = {}) {
+    const { preservePrevious = false } = options;
     ceaPayload = null;
     ceaError = '';
     ceaFileName = '';
@@ -306,6 +329,25 @@
     if (fileInputEl) {
       fileInputEl.value = '';
     }
+    if (!preservePrevious) {
+      ceaPreviousPayload = null;
+      ceaPreviousSummary = null;
+      ceaPreviousFileName = '';
+      ceaPreviousSelectedRows = [];
+    }
+  }
+
+  function restorePreviousCea() {
+    if (!hasPreviousCea || disableCeaInputs) return;
+    const table = cloneCeaTable(ceaPreviousPayload);
+    if (!table) return;
+    ceaPayload = table;
+    ceaSummary = ceaPreviousSummary ? { ...ceaPreviousSummary } : null;
+    ceaFileName = ceaPreviousFileName;
+    ceaSelectedRows = Array.isArray(ceaPreviousSelectedRows)
+      ? [...ceaPreviousSelectedRows]
+      : [];
+    ceaError = '';
   }
 
   async function handleFileChange(event) {
@@ -522,11 +564,6 @@
       </button>
     </div>
   {/if}
-  {#if ceaLocked && !hasError}
-    <div class="composer__notice" role="status">
-      <span>Clear the conversation to annotate another table.</span>
-    </div>
-  {/if}
   <div class="composer__input-wrapper">
     <div class="composer__input-row">
       {#if isCeaTask}
@@ -590,7 +627,7 @@
           {#if ceaError}
             <p class="composer__error" role="alert">{ceaError}</p>
           {/if}
-          {#if ceaPayload && ceaSummary && !ceaLocked}
+          {#if ceaPayload && ceaSummary}
             <div class="composer__preview" aria-live="polite">
               <div class="composer__preview-header">
                 <div class="composer__preview-text">
@@ -663,6 +700,29 @@
                   </tbody>
                 </table>
               </div>
+            </div>
+          {:else if hasPreviousCea && !isRunning && !isCancelling}
+            <div class="composer__reuse">
+              <button
+                type="button"
+                class="composer__reuse-button"
+                on:click={restorePreviousCea}
+                disabled={disableCeaInputs}
+              >
+                Use previous table
+              </button>
+              {#if ceaPreviousFileName || (ceaPreviousSummary?.rows ?? 0)}
+                <span class="composer__reuse-meta">
+                  {#if ceaPreviousFileName}
+                    {ceaPreviousFileName}
+                  {/if}
+                  {#if ceaPreviousSummary?.rows}
+                    {' · '}
+                    {ceaPreviousSummary.rows}
+                    {ceaPreviousSummary.rows === 1 ? ' row' : ' rows'}
+                  {/if}
+                </span>
+              {/if}
             </div>
           {/if}
         </div>
@@ -894,20 +954,6 @@
   .composer__alert-button:focus-visible {
     outline: 2px solid rgba(52, 74, 154, 0.4);
     outline-offset: 2px;
-  }
-
-  .composer__notice {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: rgba(52, 74, 154, 0.08);
-    color: var(--color-uni-blue);
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(52, 74, 154, 0.2);
-    padding: var(--spacing-sm) var(--spacing-md);
-    margin-bottom: var(--spacing-sm);
-    font-size: 0.85rem;
-    font-weight: 600;
   }
 
   .composer__input-wrapper {
@@ -1345,6 +1391,51 @@
   .paperplane-icon {
     font-size: 0.95rem;
     transform: translateY(-1px);
+  }
+
+  .composer__reuse {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-xs);
+    background: rgba(52, 74, 154, 0.08);
+    border: 1px solid rgba(52, 74, 154, 0.2);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
+  }
+
+  .composer__reuse-button {
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--color-uni-blue);
+    color: #fff;
+    font-weight: 600;
+    padding: 0.35rem 0.85rem;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .composer__reuse-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .composer__reuse-button:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 12px rgba(52, 74, 154, 0.16);
+  }
+
+  .composer__reuse-button:focus-visible {
+    outline: 2px solid rgba(52, 74, 154, 0.4);
+    outline-offset: 2px;
+  }
+
+  .composer__reuse-meta {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    font-weight: 500;
   }
 
   .composer__selection {

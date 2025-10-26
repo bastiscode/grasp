@@ -26,6 +26,10 @@ const selections = output?.selections ?? null;
 const result = output?.result ?? null;
 const endpoint = output?.endpoint ?? null;
 const ceaFormatted = task === 'cea' ? output?.formatted ?? '' : '';
+const ceaInputTable =
+  task === 'cea' && isValidCeaTable(message?.ceaInputTable)
+    ? message.ceaInputTable
+    : null;
 const ceaAnnotations =
   task === 'cea' && Array.isArray(output?.annotations)
     ? output.annotations.filter(
@@ -46,6 +50,12 @@ function cleanIdentifier(identifier) {
   return identifier.replace(/^<|>$/g, '').trim() || null;
 }
 
+function isValidCeaTable(table) {
+  if (!table || typeof table !== 'object') return false;
+  if (!Array.isArray(table.header) || !Array.isArray(table.data)) return false;
+  return true;
+}
+
 function annotationHref(annotation) {
   const cleaned = cleanIdentifier(annotation?.identifier);
   if (cleaned) return cleaned;
@@ -61,6 +71,34 @@ function displayIndex(value) {
   }
   if (value === null || value === undefined || value === '') return 'N/A';
   return value;
+}
+
+function displayCellValue(value) {
+  if (value === null || value === undefined) return 'N/A';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function getAnnotationValue(annotation) {
+  if (!ceaInputTable) return null;
+  const rowIndex = annotation?.row;
+  const columnIndex = annotation?.column;
+  if (!Number.isInteger(rowIndex) || rowIndex < 0) return null;
+  if (!Number.isInteger(columnIndex) || columnIndex < 0) return null;
+
+  const rows = Array.isArray(ceaInputTable.data) ? ceaInputTable.data : [];
+  if (rowIndex >= rows.length) return null;
+
+  const row = rows[rowIndex];
+  if (!Array.isArray(row) || columnIndex >= row.length) return null;
+
+  return row[columnIndex];
 }
 
 function deriveQleverLink() {
@@ -98,8 +136,8 @@ function deriveQleverLink() {
               <tr>
                 <th scope="col">Row</th>
                 <th scope="col">Column</th>
-                <th scope="col">Label</th>
-                <th scope="col">Entity</th>
+                <th scope="col">Value</th>
+                <th scope="col">Annotation</th>
               </tr>
             </thead>
             <tbody>
@@ -107,20 +145,23 @@ function deriveQleverLink() {
                 <tr>
                   <td data-title="Row">{displayIndex(annotation?.row)}</td>
                   <td data-title="Column">{displayIndex(annotation?.column)}</td>
-                  <td data-title="Label">
-                    {#if annotationHref(annotation)}
-                      <a href={annotationHref(annotation)} target="_blank" rel="noopener noreferrer">
-                        {annotation?.label ?? annotation?.entity ?? 'Unknown'}
-                      </a>
-                    {:else}
+                  <td data-title="Value">{displayCellValue(getAnnotationValue(annotation))}</td>
+                  <td data-title="Annotation">
+                    {#if annotation?.label || annotation?.entity}
                       {annotation?.label ?? annotation?.entity ?? 'Unknown'}
-                    {/if}
-                  </td>
-                  <td data-title="Entity">
-                    {#if annotation?.entity}
-                      <code>{annotation.entity}</code>
+                      {#if annotation?.entity}
+                        {' ('}
+                        {#if annotationHref(annotation)}
+                          <a href={annotationHref(annotation)} target="_blank" rel="noopener noreferrer">
+                            {annotation.entity}
+                          </a>
+                        {:else}
+                          {annotation.entity}
+                        {/if}
+                        {')'}
+                      {/if}
                     {:else}
-                      N/A
+                      Unknown
                     {/if}
                   </td>
                 </tr>

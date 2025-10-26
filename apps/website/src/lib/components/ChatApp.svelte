@@ -33,7 +33,7 @@
   let composerOffset = 0;
   const COMPOSER_OFFSET_BUFFER = 0;
   let pendingCancelSignal = false;
-  let ceaSubmitted = false;
+  let pendingCeaTable = null;
 
   $: hasHistory = histories.length > 0;
   $: knowledgeGraphList = Array.from(knowledgeGraphs.entries()).map(
@@ -60,7 +60,6 @@
 
   async function initialize() {
     restorePersistence();
-    ceaSubmitted = hasCeaHistory(histories);
     try {
       await Promise.all([loadConfig(), loadKnowledgeGraphs()]);
       await openConnection();
@@ -100,6 +99,24 @@
       }
     } catch (error) {
       console.warn('Failed to restore persisted data', error);
+    }
+  }
+
+  function cloneCeaTable(table) {
+    if (!table || typeof table !== 'object') return null;
+    try {
+      if (typeof structuredClone === 'function') {
+        return structuredClone(table);
+      }
+    } catch (error) {
+      console.warn('Failed to clone CEA table with structuredClone', error);
+    }
+
+    try {
+      return JSON.parse(JSON.stringify(table));
+    } catch (error) {
+      console.warn('Failed to clone CEA table', error);
+      return null;
     }
   }
 
@@ -201,6 +218,7 @@
     running = false;
     cancelling = false;
     pendingCancelSignal = false;
+    pendingCeaTable = null;
     const reason =
       event?.reason ||
       'Connection to server lost. Please reload to reconnect.';
@@ -220,10 +238,12 @@
         );
         running = false;
         cancelling = false;
+        pendingCeaTable = null;
         return;
       }
 
       if (!hasType && payload.cancelled) {
+        pendingCeaTable = null;
         clearHistory('last');
         return;
       }
@@ -237,18 +257,23 @@
       }
 
       sendReceived();
-      appendToCurrentHistory(payload);
+      let enrichedPayload = payload;
+      if (payload.type === 'output' && payload.task === 'cea' && pendingCeaTable) {
+        enrichedPayload = { ...payload, ceaInputTable: pendingCeaTable };
+        pendingCeaTable = null;
+      }
+      appendToCurrentHistory(enrichedPayload);
 
-      if (payload.type === 'output') {
+      if (enrichedPayload.type === 'output') {
         composerValue = '';
         cancelling = false;
         running = false;
         pendingCancelSignal = false;
         past = {
-          messages: payload.messages ?? [],
-          known: payload.known ?? []
+          messages: enrichedPayload.messages ?? [],
+          known: enrichedPayload.known ?? []
         };
-        persistLastOutput(payload);
+        persistLastOutput(enrichedPayload);
       }
     } catch (error) {
       console.error('Failed to handle message', error);
@@ -303,26 +328,24 @@
   function handleSubmit(event) {
     if (running || !connected) return;
     if (!selectedKgs.length) return;
-    if (task === 'cea' && ceaSubmitted) return;
 
     let payloadInput = null;
     if (task === 'cea') {
       const detail = event.detail;
       if (!detail || detail.kind !== 'cea' || !detail.payload) return;
       payloadInput = detail.payload;
+      pendingCeaTable = cloneCeaTable(payloadInput) ?? payloadInput;
     } else {
       const question = typeof event.detail === 'string' ? event.detail : '';
       const trimmedQuestion = question.trim();
       if (!trimmedQuestion) return;
       payloadInput = trimmedQuestion;
+      pendingCeaTable = null;
     }
 
     statusMessage = '';
     startNewHistory();
     running = true;
-    if (task === 'cea') {
-      ceaSubmitted = true;
-    }
     const payload = {
       task,
       input: payloadInput,
@@ -340,7 +363,6 @@
         'Failed to send request.'
       );
       running = false;
-      ceaSubmitted = hasCeaHistory(histories);
     }
   }
 
@@ -348,6 +370,7 @@
     composerValue = '';
     statusMessage = '';
     clearHistory('full');
+    pendingCeaTable = null;
   }
 
   function handleCancel() {
@@ -361,9 +384,6 @@
     if (!nextTask || task === nextTask) return;
     task = nextTask;
     persistTask(task);
-    if (task === 'cea') {
-      ceaSubmitted = hasCeaHistory(histories);
-    }
   }
 
   function handleKnowledgeGraphChange(event) {
@@ -391,14 +411,13 @@
     cancelling = false;
     running = false;
     pendingCancelSignal = false;
+    pendingCeaTable = null;
     if (mode === 'full') {
       histories = [];
       past = null;
       clearLastOutput();
-      ceaSubmitted = false;
     } else if (mode === 'last' && histories.length > 0) {
       histories = histories.slice(0, -1);
-      ceaSubmitted = hasCeaHistory(histories);
     }
   }
 
@@ -500,13 +519,6 @@
     return Number.isNaN(code) ? undefined : code;
   }
 
-  function hasCeaHistory(historyList) {
-    if (!Array.isArray(historyList)) return false;
-    return historyList.some((history) =>
-      Array.isArray(history) &&
-      history.some((entry) => entry?.task === 'cea')
-    );
-  }
 </script>
 
 <section class="app-shell">
@@ -541,7 +553,6 @@
           knowledgeGraphs={knowledgeGraphList}
           hasHistory={hasHistory}
           errorMessage={statusMessage}
-          ceaLocked={task === 'cea' && ceaSubmitted}
           onReload={reloadPage}
           on:taskchange={handleTaskChange}
           on:kgchange={handleKnowledgeGraphChange}
