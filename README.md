@@ -2,6 +2,12 @@
 
 ## News
 
+- October 20th 2025:
+  - GRASP can now be used for entity linking, in particular for
+cell entity annotation
+  - Workshop paper published for [SemTab 2025 challenge](https://sem-tab-challenge.github.io/2025/)
+  - Preview of camera-ready version available [here](https://ad-publications.cs.uni-freiburg.de/SEMTAB_entity_linking_grasp_WB_2025.pdf)
+
 - August 28th 2025:
   - Demo paper of GRASP has also been accepted to [ISWC 2025](https://iswc2025.semanticweb.org/)
   - Preview of camera-ready version available [here](https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_demo_WB_2025.pdf)
