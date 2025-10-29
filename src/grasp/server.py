@@ -3,15 +3,19 @@ import json
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from logging import INFO, FileHandler, Logger
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import WebSocketDisconnect
 from pydantic import BaseModel, conlist
+from universal_ml_utils.io import dump_json, load_json
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import partition_by
 
-from grasp.configs import GraspConfig
+from grasp.configs import ServerConfig
 from grasp.core import generate, load_notes, setup
 from grasp.manager import find_embedding_model
 from grasp.model import Message
@@ -34,25 +38,26 @@ class Request(BaseModel):
     past: Past | None = None
 
 
-def serve(
-    config: GraspConfig,
-    port: int = 6789,
-    log_level: int | str | None = None,
-    log_outputs: str | None = None,
-    max_connections: int = 10,
-    max_generation_time: int = 300,
-    max_idle_time: int = 300,
-) -> None:
+class State(BaseModel):
+    task: Task
+    selected_kgs: conlist(str, min_length=1)  # type: ignore
+    last_input: Any
+    last_output: dict[str, Any]
+
+
+def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
     # create a fast api websocket server to serve the generate_sparql function
     import uvicorn
-    from fastapi import FastAPI, HTTPException, WebSocket
+    from fastapi import FastAPI, Header, HTTPException, WebSocket
 
     app = FastAPI()
     logger = get_logger("GRASP SERVER", log_level)
-    if log_outputs is not None:
-        os.makedirs(os.path.dirname(log_outputs), exist_ok=True)
+    if config.log_outputs is not None:
+        os.makedirs(os.path.dirname(config.log_outputs), exist_ok=True)
         output_logger = Logger("GRASP JSONL OUTPUTS")
-        output_logger.addHandler(FileHandler(log_outputs, mode="a", encoding="utf-8"))
+        output_logger.addHandler(
+            FileHandler(config.log_outputs, mode="a", encoding="utf-8")
+        )
         output_logger.setLevel(INFO)
     else:
         output_logger = None
@@ -84,6 +89,58 @@ def serve(
         task_indices = load_example_indices(task.value, config, model=model)
         example_indices[task.value] = task_indices
 
+    if config.share is not None:
+        share_token = config.share.token
+        share_dir = config.share.dir
+
+        def _normalize_authorization(header: str | None) -> str | None:
+            if header is None:
+                return None
+            header = header.strip()
+            if not header:
+                return None
+            if header.lower().startswith("bearer "):
+                return header[7:].strip()
+            return header
+
+        @app.post("/save")
+        async def _save(
+            request: State,
+            authorization: str | None = Header(default=None),
+        ):
+            token = _normalize_authorization(authorization)
+            if token is None or token != share_token:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or missing authorization token",
+                )
+
+            share_id = uuid4().hex
+            try:
+                data = request.model_dump()
+                data["created_at"] = datetime.now(timezone.utc).isoformat()
+                dump_json(data, os.path.join(share_dir, f"{share_id}.json"))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Failed to persist state: {exc}")
+                raise HTTPException(
+                    status_code=500, detail="Failed to save state"
+                ) from exc
+
+            logger.info(f"Saved state {share_id}")
+            return {"id": share_id, "url": f"/load/{share_id}"}
+
+        @app.get("/load/{share_id}")
+        async def _load(share_id: str):
+            try:
+                path = os.path.join(share_dir, f"{share_id}.json")
+                data = load_json(path)
+                return State(**data)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="State not found")
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Unexpected error loading state {share_id}: {exc}")
+                raise HTTPException(status_code=500, detail="Failed to load state")
+
     @app.get("/knowledge_graphs")
     async def _knowledge_graphs():
         return kgs
@@ -96,10 +153,10 @@ def serve(
     async def _run(request: Request):
         global active_connections
 
-        if active_connections >= max_connections:
+        if active_connections >= config.max_connections:
             logger.warning(
                 "HTTP run request refused: "
-                f"maximum of {max_connections:,} active connections reached"
+                f"maximum of {config.max_connections:,} active connections reached"
             )
             raise HTTPException(
                 status_code=503,
@@ -148,16 +205,16 @@ def serve(
             try:
                 output = await asyncio.wait_for(
                     asyncio.to_thread(run_generate),
-                    timeout=max_generation_time,
+                    timeout=config.max_generation_time,
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"Generation hit time limit of {max_generation_time:,} seconds"
+                    f"Generation hit time limit of {config.max_generation_time:,} seconds"
                 )
                 raise HTTPException(
                     status_code=504,
                     detail=(
-                        f"Generation hit time limit of {max_generation_time:,} seconds"
+                        f"Generation hit time limit of {config.max_generation_time:,} seconds"
                     ),
                 )
             except HTTPException as e:
@@ -186,10 +243,10 @@ def serve(
         await websocket.accept()
 
         # Check if we've reached the maximum number of connections
-        if active_connections >= max_connections:
+        if active_connections >= config.max_connections:
             logger.warning(
                 f"Connection from {client} immediately closed: "
-                f"maximum of {max_connections:,} active connections reached"
+                f"maximum of {config.max_connections:,} active connections reached"
             )
             await websocket.close(code=1013, reason="Server too busy, try again later")
             return
@@ -201,12 +258,12 @@ def serve(
         async def idle_checker():
             nonlocal last_active
             while True:
-                await asyncio.sleep(min(5, max_idle_time))
+                await asyncio.sleep(min(5, config.max_idle_time))
 
-                if time.perf_counter() - last_active <= max_idle_time:
+                if time.perf_counter() - last_active <= config.max_idle_time:
                     continue
 
-                msg = f"Connection closed due to inactivity after {max_idle_time:,} seconds"
+                msg = f"Connection closed due to inactivity after {config.max_idle_time:,} seconds"
                 logger.info(f"{client}: {msg}")
                 await websocket.close(code=1013, reason=msg)  # Try Again Later
                 break
@@ -301,8 +358,8 @@ def serve(
                         if kind == "data":
                             # Check if we've exceeded the time limit
                             current_time = time.perf_counter()
-                            if current_time - start_time > max_generation_time:
-                                msg = f"Generation hit time limit of {max_generation_time:,} seconds"
+                            if current_time - start_time > config.max_generation_time:
+                                msg = f"Generation hit time limit of {config.max_generation_time:,} seconds"
                                 logger.warning(msg)
                                 stop_event.set()
                                 await websocket.send_json({"error": msg})
@@ -355,4 +412,4 @@ def serve(
             active_connections -= 1
             logger.info(f"{client} disconnected ({active_connections=:,})")
 
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=config.port)

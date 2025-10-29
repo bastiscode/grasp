@@ -44,3 +44,13 @@ knowledge_graphs:
   - kg: orkg
   - kg: osm-planet
   - kg: uniprot
+
+# server config
+port: env(PORT:6789)
+max_connections: env(MAX_CONNECTIONS:10)
+max_idle_time: env(MAX_IDLE_TIME:300)
+max_generation_time: env(MAX_GENERATION_TIME:300)
+log_outputs: env(LOG_OUTPUTS:null)
+share:
+  token: env(SHARE_TOKEN:null)
+  dir: env(SHARE_DIR:null)

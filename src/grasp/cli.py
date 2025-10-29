@@ -23,6 +23,7 @@ from grasp.configs import (
     NotesFromExplorationConfig,
     NotesFromOutputsConfig,
     NotesFromSamplesConfig,
+    ServerConfig,
 )
 from grasp.core import generate, load_notes, setup
 from grasp.evaluate import evaluate_f1, evaluate_with_judge
@@ -85,40 +86,8 @@ def parse_args() -> argparse.Namespace:
     )
 
     # run GRASP server
-    server_parser = subparsers.add_parser(
-        "serve",
-        help="Start a WebSocket server to serve GRASP",
-    )
+    server_parser = subparsers.add_parser("serve", help="Start a GRASP server")
     add_config_arg(server_parser)
-    server_parser.add_argument(
-        "--port",
-        type=int,
-        default=6789,
-        help="Port to run the GRASP server on",
-    )
-    server_parser.add_argument(
-        "--max-connections",
-        type=int,
-        default=10,
-        help="Maximum number of concurrent connections",
-    )
-    server_parser.add_argument(
-        "--max-idle-time",
-        type=int,
-        default=300,
-        help="Maximum idle time for a connection in seconds (after which the connection is closed)",
-    )
-    server_parser.add_argument(
-        "--max-generation-time",
-        type=int,
-        default=300,
-        help="Maximum time for a single generation in seconds (after which the generation is cancelled)",
-    )
-    server_parser.add_argument(
-        "--log-outputs",
-        type=str,
-        help="File to log all inputs and outputs to (in JSONL format)",
-    )
 
     # run GRASP on a single input
     run_parser = subparsers.add_parser(
@@ -613,16 +582,9 @@ def run_grasp(args: argparse.Namespace) -> None:
 
 
 def serve_grasp(args: argparse.Namespace) -> None:
-    config = GraspConfig(**load_config(args.config))
-    serve(
-        config,
-        args.port,
-        args.log_level,
-        args.log_outputs,
-        args.max_connections,
-        args.max_generation_time,
-        args.max_idle_time,
-    )
+    config = ServerConfig(**load_config(args.config))
+
+    serve(config, args.log_level)
 
 
 def get_grasp_data(args: argparse.Namespace) -> None:

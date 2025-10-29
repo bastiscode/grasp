@@ -45,6 +45,8 @@
   let ceaPreviousFileName = '';
   let ceaPreviousSelectedRows = [];
 
+  const INACTIVITY_MESSAGE_PREFIX = 'connection closed due to inactivity';
+
   $: isCeaTask = task === 'cea';
   $: trimmed = value.trim();
   $: disableCeaInputs =
@@ -80,9 +82,16 @@
   $: canCancel = connected && isRunning && !isCancelling && !disabled;
   $: showCancel = isRunning || isCancelling;
   $: showClear = hasHistory && !isRunning && !isCancelling;
-  $: showActions = true;
+  $: normalizedErrorMessage =
+    typeof errorMessage === 'string' ? errorMessage.trim() : '';
+  $: inactivityDisconnect =
+    normalizedErrorMessage.toLowerCase().startsWith(
+      INACTIVITY_MESSAGE_PREFIX
+    );
+  $: hasError = Boolean(normalizedErrorMessage) && !inactivityDisconnect;
+  $: showActions = !inactivityDisconnect;
+  $: showReloadAction = inactivityDisconnect;
   $: cancelLabel = isCancelling ? 'Cancellation in progress' : 'Cancel';
-  $: hasError = Boolean(errorMessage);
   $: summaryRowsLabel = ceaSummary
     ? `${ceaSummary.rows} ${ceaSummary.rows === 1 ? 'row' : 'rows'}`
     : '';
@@ -738,7 +747,19 @@
           on:input={autoResize}
         ></textarea>
       {/if}
-      {#if showActions}
+      {#if showReloadAction}
+        <div class="composer__input-actions">
+          <button
+            type="button"
+            class="icon-button icon-button--danger icon-button--reload"
+            on:click={handleReload}
+            aria-label="Reconnect (connection closed due to inactivity)"
+            title="Reconnect (connection closed due to inactivity)"
+          >
+            <span class="reload-icon" aria-hidden="true">↺</span>
+          </button>
+        </div>
+      {:else if showActions}
         <div class="composer__input-actions">
           <button
             type="button"
@@ -1332,6 +1353,11 @@
     box-shadow: 0 4px 8px rgba(193, 0, 42, 0.18);
   }
 
+  .icon-button--reload {
+    width: 2.4rem;
+    height: 2.4rem;
+  }
+
   .icon-button--danger.icon-button--cancelling {
     background: rgba(193, 0, 42, 0.15);
     color: var(--color-uni-red);
@@ -1368,6 +1394,12 @@
 
   .icon-button:not(:disabled):hover {
     transform: translateY(-1px);
+  }
+
+  .reload-icon {
+    font-size: 1.1rem;
+    line-height: 1;
+    color: #fff;
   }
 
   .cancel-spinner {

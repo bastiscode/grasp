@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy, tick } from 'svelte';
+  import { goto } from '$app/navigation';
   import AppHeader from './AppHeader.svelte';
   import ConversationPane from './ConversationPane.svelte';
   import Composer from './Composer.svelte';
@@ -8,8 +9,13 @@
     TASKS,
     configEndpoint,
     kgEndpoint,
-    wsEndpoint
+    wsEndpoint,
+    saveSharedStateEndpoint,
+    loadSharedStateEndpoint
   } from '../constants.js';
+
+  export let shareMode = false;
+  export let loadId = null;
 
   const STORAGE_KEYS = {
     task: 'grasp:task',
@@ -34,6 +40,17 @@
   const COMPOSER_OFFSET_BUFFER = 0;
   let pendingCancelSignal = false;
   let pendingCeaTable = null;
+  const SHARE_TOKEN_STORAGE_KEY = 'grasp:shareToken';
+  let shareModalOpen = false;
+  let shareToken = '';
+  let shareTokenError = '';
+  let shareSubmitting = false;
+  let shareSubmissionError = '';
+  let shareResult = null;
+  let shareCopied = false;
+  let shareModalPrimed = false;
+  let pendingLoadId = loadId;
+  let shareTokenInputEl;
 
   $: hasHistory = histories.length > 0;
   $: knowledgeGraphList = Array.from(knowledgeGraphs.entries()).map(
@@ -48,10 +65,21 @@
     connectionStatus === 'connecting' ||
     connectionStatus === 'error' ||
     connectionStatus === 'disconnected';
+  $: if (shareModalOpen && !shareResult) {
+    tick().then(() => {
+      shareTokenInputEl?.focus();
+      shareTokenInputEl?.select?.();
+    });
+  }
 
-  onMount(() => {
-    initialize();
-    measureComposerOnce();
+  onMount(async () => {
+    restoreShareToken();
+    if (shareMode && !shareModalPrimed) {
+      shareModalPrimed = true;
+      openShareModal();
+    }
+    await initialize();
+    await measureComposerOnce();
   });
 
   onDestroy(() => {
@@ -59,6 +87,10 @@
   });
 
   async function initialize() {
+    if (pendingLoadId) {
+      await applySharedStateFromServer(pendingLoadId);
+      pendingLoadId = null;
+    }
     restorePersistence();
     try {
       await Promise.all([loadConfig(), loadKnowledgeGraphs()]);
@@ -458,6 +490,207 @@
     }
   }
 
+  function restoreShareToken() {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = window.localStorage.getItem(SHARE_TOKEN_STORAGE_KEY);
+      shareToken = stored ?? '';
+    } catch (error) {
+      console.warn('Failed to restore share access token', error);
+      shareToken = '';
+    }
+  }
+
+  function persistShareToken(token) {
+    if (typeof window === 'undefined') return;
+    if (token) {
+      window.localStorage.setItem(SHARE_TOKEN_STORAGE_KEY, token);
+    } else {
+      window.localStorage.removeItem(SHARE_TOKEN_STORAGE_KEY);
+    }
+  }
+
+  function openShareModal() {
+    shareModalOpen = true;
+    shareTokenError = '';
+    shareSubmissionError = '';
+    shareResult = null;
+    shareCopied = false;
+  }
+
+  function closeShareModal() {
+    shareModalOpen = false;
+    shareSubmitting = false;
+    shareTokenError = '';
+    shareSubmissionError = '';
+    shareResult = null;
+    shareCopied = false;
+  }
+
+  function exitShareFlow() {
+    closeShareModal();
+    if (shareMode) {
+      goto('/');
+    }
+  }
+
+  function buildSharePayload() {
+    const selected = Array.isArray(selectedKgs)
+      ? [...selectedKgs]
+      : [];
+    const snapshot = Array.isArray(histories)
+      ? histories.map((items) =>
+          items.map((entry) => ({ ...entry }))
+        )
+      : [];
+    return {
+      task,
+      selectedKgs: selected,
+      lastOutput: {
+        pastMessages: past?.messages ?? [],
+        pastKnown: past?.known ?? [],
+        histories: snapshot
+      }
+    };
+  }
+
+  async function submitShare(event) {
+    event?.preventDefault?.();
+    if (shareSubmitting) return;
+    const trimmedToken = shareToken.trim();
+    if (!trimmedToken) {
+      shareTokenError = 'Please provide an access token.';
+      return;
+    }
+    shareTokenError = '';
+    shareSubmissionError = '';
+    shareResult = null;
+    shareCopied = false;
+    const payload = buildSharePayload();
+    shareSubmitting = true;
+    try {
+      const response = await fetch(saveSharedStateEndpoint(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${trimmedToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        throw createHttpError(
+          response.status,
+          'Failed to save shared conversation.'
+        );
+      }
+      const result = await response.json();
+      shareResult = {
+        id: result?.id ?? '',
+        url: result?.url ?? ''
+      };
+      persistShareToken(trimmedToken);
+    } catch (error) {
+      const decorated = decorateError(
+        error,
+        'Failed to save shared conversation.'
+      );
+      shareSubmissionError = formatStatusMessage(
+        decorated,
+        decorated.status,
+        'Failed to save shared conversation.'
+      );
+    } finally {
+      shareSubmitting = false;
+    }
+  }
+
+  async function copyShareUrl(url) {
+    const value = (url ?? '').toString();
+    if (!value) return;
+    const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+    try {
+      if (nav?.clipboard?.writeText) {
+        await nav.clipboard.writeText(value);
+      } else if (typeof window !== 'undefined') {
+        const doc = window.document;
+        if (!doc) throw new Error('Clipboard fallback unavailable.');
+        const textarea = doc.createElement('textarea');
+        textarea.value = value;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        doc.body.appendChild(textarea);
+        textarea.select();
+        doc.execCommand?.('copy');
+        doc.body.removeChild(textarea);
+      }
+      shareCopied = true;
+      setTimeout(() => {
+        shareCopied = false;
+      }, 2000);
+    } catch (error) {
+      console.warn('Failed to copy share URL', error);
+    }
+  }
+
+  async function applySharedStateFromServer(id) {
+    if (!id) return false;
+    try {
+      const response = await fetch(loadSharedStateEndpoint(id), {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      if (!response.ok) {
+        throw createHttpError(
+          response.status,
+          'Failed to load shared conversation.'
+        );
+      }
+      const payload = await response.json();
+      persistSharedSnapshot(payload);
+      return true;
+    } catch (error) {
+      const decorated = decorateError(
+        error,
+        'Failed to load shared conversation.'
+      );
+      statusMessage = formatStatusMessage(
+        decorated,
+        decorated.status,
+        'Failed to load shared conversation.'
+      );
+      return false;
+    }
+  }
+
+  function persistSharedSnapshot(payload) {
+    if (typeof window === 'undefined' || !payload) return;
+    try {
+      if (typeof payload.task === 'string') {
+        window.localStorage.setItem(STORAGE_KEYS.task, payload.task);
+      }
+      if (Array.isArray(payload.selectedKgs)) {
+        window.localStorage.setItem(
+          STORAGE_KEYS.selectedKgs,
+          JSON.stringify(payload.selectedKgs)
+        );
+        persistedSelectedKgs = payload.selectedKgs;
+      }
+      if (payload.lastOutput && typeof payload.lastOutput === 'object') {
+        window.localStorage.setItem(
+          STORAGE_KEYS.lastOutput,
+          JSON.stringify(payload.lastOutput)
+        );
+      } else {
+        window.localStorage.removeItem(STORAGE_KEYS.lastOutput);
+      }
+    } catch (error) {
+      console.warn('Failed to persist shared snapshot', error);
+    }
+  }
+
   async function measureComposerOnce() {
     if (typeof window === 'undefined') return;
     await tick();
@@ -562,6 +795,124 @@
   </div>
 </section>
 
+{#if shareModalOpen}
+  <div
+    class="share-modal__backdrop"
+    role="presentation"
+  >
+    <div
+      class="share-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="share-modal-title"
+    >
+      {#if shareResult}
+        <div class="share-modal__content">
+          <h2 class="share-modal__title" id="share-modal-title">
+            Share link ready
+          </h2>
+          <p class="share-modal__description">
+            We saved your conversation snapshot. Use the link below to reopen it later.
+          </p>
+          {#if shareResult.id}
+            <div class="share-modal__summary">
+              <span class="share-modal__summary-label">Share ID</span>
+              <span class="share-modal__summary-value">{shareResult.id}</span>
+            </div>
+          {/if}
+          {#if shareResult.url}
+            <label class="share-modal__link-label" for="share-modal-url">
+              Share URL
+            </label>
+            <div class="share-modal__link-row">
+              <input
+                id="share-modal-url"
+                class="share-modal__link-input"
+                type="text"
+                value={shareResult.url}
+                readonly
+              />
+              <button
+                type="button"
+                class="share-modal__button share-modal__button--primary"
+                on:click={() => copyShareUrl(shareResult.url)}
+              >
+                {shareCopied ? 'Copied!' : 'Copy link'}
+              </button>
+            </div>
+          {/if}
+          <div class="share-modal__actions">
+            {#if shareResult.url}
+              <a
+                class="share-modal__button share-modal__button--secondary"
+                href={shareResult.url}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                Open in new tab
+              </a>
+            {/if}
+            <button
+              type="button"
+              class="share-modal__button share-modal__button--outline"
+              on:click={exitShareFlow}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      {:else}
+        <form
+          class="share-modal__content"
+          on:submit|preventDefault={submitShare}
+        >
+          <h2 class="share-modal__title" id="share-modal-title">
+            Share conversation
+          </h2>
+          <p class="share-modal__description">
+            Provide your access token to save the current task, knowledge graphs, and last conversation on the server.
+          </p>
+          <label class="share-modal__label" for="share-modal-token">
+            Access token
+          </label>
+          <input
+            id="share-modal-token"
+            class="share-modal__input"
+            type="password"
+            bind:value={shareToken}
+            bind:this={shareTokenInputEl}
+            placeholder="Enter access token"
+            autocomplete="off"
+          />
+          {#if shareTokenError}
+            <p class="share-modal__error" role="alert">{shareTokenError}</p>
+          {/if}
+          {#if shareSubmissionError}
+            <p class="share-modal__error" role="alert">{shareSubmissionError}</p>
+          {/if}
+          <div class="share-modal__actions">
+            <button
+              type="button"
+              class="share-modal__button share-modal__button--outline"
+              on:click={exitShareFlow}
+              disabled={shareSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="share-modal__button share-modal__button--primary"
+              disabled={shareSubmitting}
+            >
+              {shareSubmitting ? 'Saving…' : 'Save & generate link'}
+            </button>
+          </div>
+        </form>
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <style>
   .app-shell {
     display: flex;
@@ -621,6 +972,156 @@
       rgba(255, 255, 255, 0.92) 55%,
       rgba(255, 255, 255, 1) 100%
     );
+  }
+
+  .share-modal__backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(7, 16, 45, 0.4);
+    backdrop-filter: blur(2px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: var(--spacing-lg);
+    z-index: 1000;
+  }
+
+  .share-modal {
+    background: var(--surface-base);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    width: min(520px, 100%);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  .share-modal__content {
+    display: grid;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xl);
+  }
+
+  .share-modal__title {
+    font-size: 1.35rem;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .share-modal__description {
+    margin: 0;
+    color: var(--text-subtle);
+    line-height: 1.45;
+  }
+
+  .share-modal__label,
+  .share-modal__link-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+
+  .share-modal__input,
+  .share-modal__link-input {
+    width: 100%;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    padding: 0.55rem 0.75rem;
+    font: inherit;
+    color: var(--text-primary);
+    background: #fff;
+  }
+
+  .share-modal__input:focus,
+  .share-modal__link-input:focus {
+    outline: 2px solid rgba(52, 74, 154, 0.25);
+    outline-offset: 2px;
+  }
+
+  .share-modal__error {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--color-uni-red);
+  }
+
+  .share-modal__actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .share-modal__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer;
+    background: rgba(52, 74, 154, 0.08);
+    color: var(--color-uni-blue);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    text-decoration: none;
+  }
+
+  .share-modal__button:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .share-modal__button:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 16px rgba(52, 74, 154, 0.18);
+  }
+
+  .share-modal__button--primary {
+    background: var(--color-uni-blue);
+    color: #fff;
+    border-color: var(--color-uni-blue);
+  }
+
+  .share-modal__button--secondary {
+    background: rgba(52, 74, 154, 0.12);
+    color: var(--color-uni-blue);
+    border-color: rgba(52, 74, 154, 0.25);
+  }
+
+  .share-modal__button--outline {
+    background: transparent;
+    color: var(--text-primary);
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+
+  .share-modal__summary {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: 0.95rem;
+    background: rgba(52, 74, 154, 0.08);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.75rem;
+  }
+
+  .share-modal__summary-label {
+    font-weight: 600;
+    color: var(--color-uni-blue);
+  }
+
+  .share-modal__summary-value {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  .share-modal__link-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+  }
+
+  .share-modal__link-input {
+    flex: 1;
+    font-family: 'Inter', system-ui, sans-serif;
   }
 
 </style>
