@@ -132,15 +132,30 @@ function deriveQleverLink() {
 
   function resolveShareUrl(url) {
     if (!url || typeof url !== 'string') return '';
-    if (/^https?:\/\//i.test(url)) return url;
+    let normalized = url;
+    if (typeof normalized === 'string' && normalized.startsWith('/load/')) {
+      normalized = `/${normalized.slice('/load/'.length)}`;
+    }
+    if (/^https?:\/\//i.test(normalized)) {
+      try {
+        const parsed = new URL(normalized);
+        if (parsed.pathname.startsWith('/load/')) {
+          parsed.pathname = `/${parsed.pathname.slice('/load/'.length)}`;
+        }
+        return parsed.toString();
+      } catch (error) {
+        console.warn('Failed to normalize share URL', error);
+        return normalized;
+      }
+    }
     if (typeof window !== 'undefined' && window?.location) {
       try {
-        return new URL(url, window.location.origin).toString();
+        return new URL(normalized, window.location.origin).toString();
       } catch (error) {
         console.warn('Failed to resolve share URL', error);
       }
     }
-    return url;
+    return normalized;
   }
 
   async function handleShareClick() {

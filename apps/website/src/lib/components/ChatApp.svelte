@@ -631,14 +631,17 @@ let running = false;
         throw createHttpError(response.status, 'Failed to create share link.');
       }
       const result = await response.json();
+      const id =
+        typeof result?.id === 'string' && result.id.trim()
+          ? result.id.trim()
+          : '';
+      const rawUrl =
+        typeof result?.url === 'string' && result.url.trim()
+          ? result.url.trim()
+          : '';
       return {
-        id: result?.id ?? '',
-        url:
-          typeof result?.url === 'string' && result.url
-            ? result.url
-            : result?.id
-              ? `/${result.id}`
-              : ''
+        id,
+        url: id ? `/${id}` : rawUrl
       };
     } catch (error) {
       const decorated = decorateError(error, 'Failed to create share link.');
