@@ -136,21 +136,16 @@ let running = false;
       }
       const storedInput =
         sessionStore?.getItem(SESSION_STORAGE_KEYS.lastInput) ?? null;
-      if (storedInput) {
+      if (storedInput && sessionStore) {
         const parsedInput = JSON.parse(storedInput);
-        if (
+        const isValidRecord =
           parsedInput &&
           typeof parsedInput === 'object' &&
-          typeof parsedInput.task === 'string'
-        ) {
+          typeof parsedInput.task === 'string';
+        if (isValidRecord && parsedInput.task === 'cea') {
           lastInputRecord = parsedInput;
-          if (
-            parsedInput.task === task &&
-            typeof parsedInput.value === 'string' &&
-            task !== 'cea'
-          ) {
-            composerValue = parsedInput.value;
-          }
+        } else {
+          sessionStore.removeItem(SESSION_STORAGE_KEYS.lastInput);
         }
       }
     } catch (error) {
@@ -557,14 +552,14 @@ let running = false;
   function persistLastInput(record) {
     const sessionStore = getSessionStorage();
     if (!sessionStore) return;
-    if (record) {
-      sessionStore.setItem(
-        SESSION_STORAGE_KEYS.lastInput,
-        JSON.stringify(record)
-      );
-    } else {
+    if (!record || record.task !== 'cea') {
       sessionStore.removeItem(SESSION_STORAGE_KEYS.lastInput);
+      return;
     }
+    sessionStore.setItem(
+      SESSION_STORAGE_KEYS.lastInput,
+      JSON.stringify(record)
+    );
   }
 
   function clearLastOutput() {
@@ -602,7 +597,9 @@ let running = false;
         )
       : [];
     const shareInput =
-      lastInputRecord && lastInputRecord.task === task
+      lastInputRecord &&
+      lastInputRecord.task === 'cea' &&
+      task === 'cea'
         ? cloneLastInputValue(lastInputRecord.value)
         : null;
     return {
@@ -724,12 +721,14 @@ let running = false;
           ? payload.last_input
           : undefined;
       if (sharedLastInput !== undefined) {
-        if (sharedLastInput == null) {
+        const targetTask =
+          typeof payload.task === 'string' ? payload.task : task;
+        if (sharedLastInput == null || targetTask !== 'cea') {
           sessionStore?.removeItem(SESSION_STORAGE_KEYS.lastInput);
           lastInputRecord = null;
-        } else {
+        } else if (targetTask === 'cea') {
           const record = {
-            task: typeof payload.task === 'string' ? payload.task : task,
+            task: targetTask,
             value: sharedLastInput
           };
           sessionStore?.setItem(
