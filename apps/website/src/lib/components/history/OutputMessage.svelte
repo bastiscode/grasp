@@ -1,4 +1,5 @@
 <script>
+  import { tick } from 'svelte';
   import MessageCard from './MessageCard.svelte';
   import MarkdownContent from '../common/MarkdownContent.svelte';
   import SparqlBlock from '../common/SparqlBlock.svelte';
@@ -6,10 +7,22 @@
   import { QLEVER_HOSTS } from '../../constants.js';
 
   export let message;
+  export let shareConversation = null;
+  export let shareDisabled = false;
 
 const output = message?.output ?? {};
 const task = message?.task;
 const elapsed = typeof message?.elapsed === 'number' ? message.elapsed : null;
+
+let shareStatus = 'idle';
+let shareLink = '';
+let shareError = '';
+let shareModalOpen = false;
+let shareCopyError = '';
+let shareLinkInputEl;
+
+const shareModalTitleId = `share-modal-title-${Math.random().toString(36).slice(2, 8)}`;
+const shareModalDescriptionId = `share-modal-description-${Math.random().toString(36).slice(2, 8)}`;
 
 let primaryText = '';
 if (task === 'sparql-qa') {
@@ -116,7 +129,126 @@ function deriveQleverLink() {
   }
 
   const qleverLink = deriveQleverLink();
+
+  function resolveShareUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    if (/^https?:\/\//i.test(url)) return url;
+    if (typeof window !== 'undefined' && window?.location) {
+      try {
+        return new URL(url, window.location.origin).toString();
+      } catch (error) {
+        console.warn('Failed to resolve share URL', error);
+      }
+    }
+    return url;
+  }
+
+  async function handleShareClick() {
+    if (shareDisabled || shareStatus === 'pending') return;
+    if (typeof shareConversation !== 'function') return;
+    shareError = '';
+
+    if (shareLink) {
+      await openShareModal();
+      return;
+    }
+
+    shareStatus = 'pending';
+    shareLink = '';
+    try {
+      const result = await shareConversation({ message });
+      const resolved = resolveShareUrl(result?.url ?? '');
+      if (!resolved) {
+        shareStatus = 'error';
+        shareError = 'Share link unavailable.';
+        return;
+      }
+      shareLink = resolved;
+      shareStatus = 'success';
+      await openShareModal();
+    } catch (error) {
+      shareStatus = 'error';
+      shareLink = '';
+      shareError =
+        error?.message && typeof error.message === 'string'
+          ? error.message
+          : 'Failed to create share link.';
+    }
+  }
+
+  async function openShareModal() {
+    if (!shareLink) return;
+    shareModalOpen = true;
+    resetShareCopyState();
+    await tick();
+    if (shareLinkInputEl && typeof shareLinkInputEl.select === 'function') {
+      shareLinkInputEl.focus();
+      shareLinkInputEl.select();
+    }
+  }
+
+  function closeShareModal() {
+    shareModalOpen = false;
+    resetShareCopyState();
+  }
+
+  function resetShareCopyState() {
+    shareCopyError = '';
+  }
+
+  function handleModalBackdropClick(event) {
+    if (event.target !== event.currentTarget) return;
+    closeShareModal();
+  }
+
+  function handleModalKeydown(event) {
+    if (!shareModalOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeShareModal();
+    }
+  }
+
+  async function handleShareCopy() {
+    if (!shareLink) return;
+    resetShareCopyState();
+
+    try {
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator?.clipboard &&
+        typeof navigator.clipboard.writeText === 'function'
+      ) {
+        await navigator.clipboard.writeText(shareLink);
+      } else if (
+        shareLinkInputEl &&
+        typeof shareLinkInputEl.select === 'function'
+      ) {
+        shareLinkInputEl.focus();
+        shareLinkInputEl.select();
+        const successful =
+          typeof document !== 'undefined' &&
+          typeof document.execCommand === 'function' &&
+          document.execCommand('copy');
+        if (!successful) {
+          throw new Error('execCommand failed');
+        }
+      } else {
+        throw new Error('Clipboard unavailable');
+      }
+    } catch (error) {
+      console.warn('Failed to copy share link', error);
+      shareCopyError = 'Copy failed. Please copy the link manually.';
+      if (shareLinkInputEl && typeof shareLinkInputEl.select === 'function') {
+        shareLinkInputEl.focus();
+        shareLinkInputEl.select();
+      }
+      return;
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleModalKeydown} />
 
 <MessageCard title="Output" accent="var(--color-uni-dark-blue)">
   {#if task === 'cea'}
@@ -197,12 +329,93 @@ function deriveQleverLink() {
     {/if}
   {/if}
 
-  {#if elapsed !== null}
-    <div class="footer-meta">
-      <span class="chip">Took {elapsed.toFixed(2)} s</span>
+  <div class="footer">
+    <div class="footer__left">
+      <button
+        type="button"
+        class="share-button"
+        class:share-button--pending={shareStatus === 'pending'}
+        on:click={handleShareClick}
+        disabled={shareStatus === 'pending' || shareDisabled}
+        aria-disabled={shareDisabled}
+        title={shareDisabled
+          ? 'Sharing disabled for imported conversations'
+          : 'Share conversation'}
+      >
+        {#if shareStatus === 'pending'}
+          <span class="share-spinner" aria-hidden="true"></span>
+          Generating link…
+        {:else}
+          <span class="share-icon" aria-hidden="true">⥂</span>
+          {#if shareStatus === 'success'}
+            Share link ready
+          {:else}
+            Share
+          {/if}
+        {/if}
+      </button>
+      {#if shareStatus === 'error'}
+        <span class="share-error" role="alert">{shareError}</span>
+      {/if}
     </div>
-  {/if}
+    {#if elapsed !== null}
+      <div class="footer__right">
+        <span class="chip">Took {elapsed.toFixed(2)} s</span>
+      </div>
+    {/if}
+  </div>
 </MessageCard>
+
+{#if shareModalOpen}
+  <div
+    class="share-modal-backdrop"
+    role="presentation"
+    on:click={handleModalBackdropClick}
+  >
+    <div
+      class="share-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={shareModalTitleId}
+      aria-describedby={shareModalDescriptionId}
+      on:click|stopPropagation
+    >
+      <header class="share-modal__header">
+        <h3 class="share-modal__title" id={shareModalTitleId}>
+          Share Conversation
+        </h3>
+      </header>
+      <div class="share-modal__body">
+        <p class="share-modal__description" id={shareModalDescriptionId}>
+          Share this link to reopen the conversation later.
+        </p>
+        <div class="share-modal__link">
+          <input
+            class="share-modal__input"
+            type="text"
+            value={shareLink}
+            readonly
+            spellcheck="false"
+            aria-label="Share link"
+            bind:this={shareLinkInputEl}
+          />
+          <button
+            type="button"
+            class="share-modal__copy-button"
+            on:click={handleShareCopy}
+            aria-label="Copy share link"
+            title="Copy share link"
+          >
+            <span class="copy-icon" aria-hidden="true">⧉</span>
+          </button>
+        </div>
+        {#if shareCopyError}
+          <p class="share-modal__error" role="alert">{shareCopyError}</p>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .chip {
@@ -223,10 +436,180 @@ function deriveQleverLink() {
     font-size: 0.9rem;
   }
 
-  .footer-meta {
+  .footer {
     display: flex;
-    justify-content: flex-start;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
     margin-top: var(--spacing-sm);
+  }
+
+  .footer__left {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex: 1 1 auto;
+    min-width: 240px;
+  }
+
+  .footer__right {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+  }
+
+  .share-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: 0.35rem 0.85rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(52, 74, 154, 0.28);
+    background: rgba(52, 74, 154, 0.12);
+    color: var(--color-uni-blue);
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .share-button:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 12px rgba(52, 74, 154, 0.16);
+  }
+
+  .share-button:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .share-button--pending {
+    background: rgba(52, 74, 154, 0.18);
+    color: var(--color-uni-blue);
+  }
+
+  .share-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+
+  .share-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 1000;
+  }
+
+  .share-modal {
+    width: min(100%, 420px);
+    background: var(--surface, #fff);
+    border-radius: var(--radius-md, 12px);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+  }
+
+  .share-modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--spacing-sm);
+  }
+
+  .share-modal__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--color-uni-dark-blue);
+  }
+
+  .share-modal__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+
+  .share-modal__description {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: 0.9rem;
+  }
+
+  .share-modal__link {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+
+  .share-modal__input {
+    flex: 1;
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(52, 74, 154, 0.35);
+    font-family: var(--font-mono, 'Courier New', monospace);
+    font-size: 0.9rem;
+    color: var(--color-uni-dark-blue);
+    background: rgba(52, 74, 154, 0.08);
+  }
+
+  .share-modal__copy-button {
+    border: 1px solid rgba(52, 74, 154, 0.3);
+    background: rgba(52, 74, 154, 0.12);
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.55rem;
+    cursor: pointer;
+    color: var(--color-uni-blue);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+  }
+
+  .copy-icon {
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .share-modal__error {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--color-uni-red);
+  }
+
+
+  .share-spinner {
+    width: 0.9rem;
+    height: 0.9rem;
+    border-radius: 999px;
+    border: 2px solid rgba(52, 74, 154, 0.25);
+    border-top-color: var(--color-uni-blue);
+    animation: spin 0.8s linear infinite;
+  }
+
+  .share-error {
+    font-size: 0.85rem;
+    color: var(--color-uni-red);
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .cea-section + .cea-section {

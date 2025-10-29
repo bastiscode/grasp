@@ -1,6 +1,5 @@
 <script>
   import { onMount, onDestroy, tick } from 'svelte';
-  import { goto } from '$app/navigation';
   import AppHeader from './AppHeader.svelte';
   import ConversationPane from './ConversationPane.svelte';
   import Composer from './Composer.svelte';
@@ -14,24 +13,39 @@
     loadSharedStateEndpoint
   } from '../constants.js';
 
-  export let shareMode = false;
   export let loadId = null;
 
-  const STORAGE_KEYS = {
-    task: 'grasp:task',
-    selectedKgs: 'grasp:selectedKgs',
-    lastOutput: 'grasp:lastOutput'
-  };
+const STORAGE_KEYS = {
+  task: 'grasp:task',
+  selectedKgs: 'grasp:selectedKgs',
+  lastOutput: 'grasp:lastOutput',
+  lastInput: 'grasp:lastInput'
+};
+const SESSION_STORAGE_KEYS = {
+  lastOutput: STORAGE_KEYS.lastOutput,
+  lastInput: STORAGE_KEYS.lastInput
+};
+
+function getSessionStorage() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage;
+  } catch (error) {
+    console.warn('Session storage unavailable', error);
+    return null;
+  }
+}
 
   let composerValue = '';
   let histories = [];
   let task = TASKS[0].id;
   let knowledgeGraphs = new Map();
-  let past = null;
-  let config = null;
-  let connectionStatus = 'initial';
-  let statusMessage = '';
-  let running = false;
+let past = null;
+let config = null;
+let connectionStatus = 'initial';
+let statusMessage = '';
+let statusPinned = false;
+let running = false;
   let cancelling = false;
   let socket;
   let persistedSelectedKgs = [];
@@ -39,18 +53,8 @@
   let composerOffset = 0;
   const COMPOSER_OFFSET_BUFFER = 0;
   let pendingCancelSignal = false;
-  let pendingCeaTable = null;
-  const SHARE_TOKEN_STORAGE_KEY = 'grasp:shareToken';
-  let shareModalOpen = false;
-  let shareToken = '';
-  let shareTokenError = '';
-  let shareSubmitting = false;
-  let shareSubmissionError = '';
-  let shareResult = null;
-  let shareCopied = false;
-  let shareModalPrimed = false;
   let pendingLoadId = loadId;
-  let shareTokenInputEl;
+  let lastInputRecord = null;
 
   $: hasHistory = histories.length > 0;
   $: knowledgeGraphList = Array.from(knowledgeGraphs.entries()).map(
@@ -65,19 +69,8 @@
     connectionStatus === 'connecting' ||
     connectionStatus === 'error' ||
     connectionStatus === 'disconnected';
-  $: if (shareModalOpen && !shareResult) {
-    tick().then(() => {
-      shareTokenInputEl?.focus();
-      shareTokenInputEl?.select?.();
-    });
-  }
-
+  $: ceaInitialPayload = task === 'cea' ? getLastCeaInput() : null;
   onMount(async () => {
-    restoreShareToken();
-    if (shareMode && !shareModalPrimed) {
-      shareModalPrimed = true;
-      openShareModal();
-    }
     await initialize();
     await measureComposerOnce();
   });
@@ -87,20 +80,30 @@
   });
 
   async function initialize() {
+    let sharedLoadAttempted = false;
+    let sharedLoadSucceeded = false;
     if (pendingLoadId) {
-      await applySharedStateFromServer(pendingLoadId);
+      sharedLoadAttempted = true;
+      sharedLoadSucceeded = await applySharedStateFromServer(pendingLoadId);
       pendingLoadId = null;
     }
-    restorePersistence();
+
+    if (!sharedLoadAttempted || sharedLoadSucceeded) {
+      restorePersistence();
+    } else {
+      resetStateForFailedShareLoad();
+    }
     try {
       await Promise.all([loadConfig(), loadKnowledgeGraphs()]);
       await openConnection();
     } catch (error) {
       console.error('Failed to initialize', error);
-      statusMessage = formatStatusMessage(
-        error,
-        error?.status,
-        'Failed to initialize. Please check your connection and reload.'
+      updateStatusMessage(
+        formatStatusMessage(
+          error,
+          error?.status,
+          'Failed to initialize. Please check your connection and reload.'
+        )
       );
     }
   }
@@ -116,7 +119,9 @@
       if (storedKgs) {
         persistedSelectedKgs = JSON.parse(storedKgs);
       }
-      const storedOutput = window.localStorage.getItem(STORAGE_KEYS.lastOutput);
+      const sessionStore = getSessionStorage();
+      const storedOutput =
+        sessionStore?.getItem(SESSION_STORAGE_KEYS.lastOutput) ?? null;
       if (storedOutput) {
         const parsed = JSON.parse(storedOutput);
         if (parsed) {
@@ -126,6 +131,25 @@
           };
           if (Array.isArray(parsed.histories)) {
             histories = parsed.histories;
+          }
+        }
+      }
+      const storedInput =
+        sessionStore?.getItem(SESSION_STORAGE_KEYS.lastInput) ?? null;
+      if (storedInput) {
+        const parsedInput = JSON.parse(storedInput);
+        if (
+          parsedInput &&
+          typeof parsedInput === 'object' &&
+          typeof parsedInput.task === 'string'
+        ) {
+          lastInputRecord = parsedInput;
+          if (
+            parsedInput.task === task &&
+            typeof parsedInput.value === 'string' &&
+            task !== 'cea'
+          ) {
+            composerValue = parsedInput.value;
           }
         }
       }
@@ -150,6 +174,35 @@
       console.warn('Failed to clone CEA table', error);
       return null;
     }
+  }
+
+  function cloneLastInputValue(value) {
+    if (value == null) return null;
+    if (typeof value !== 'object') return value;
+    try {
+      if (typeof structuredClone === 'function') {
+        return structuredClone(value);
+      }
+    } catch {
+      // fallthrough to JSON clone
+    }
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (error) {
+      console.warn('Failed to clone last input value', error);
+      return null;
+    }
+  }
+
+  function getLastCeaInput() {
+    if (!lastInputRecord || lastInputRecord.task !== 'cea') return null;
+    if (
+      lastInputRecord.value &&
+      typeof lastInputRecord.value === 'object'
+    ) {
+      return cloneCeaTable(lastInputRecord.value) ?? lastInputRecord.value;
+    }
+    return null;
   }
 
   async function loadConfig() {
@@ -214,7 +267,9 @@
 
       socket.addEventListener('open', () => {
         connectionStatus = 'connected';
-        statusMessage = '';
+        if (!statusPinned) {
+          updateStatusMessage('');
+        }
         resolve();
       });
 
@@ -226,10 +281,12 @@
           event?.error ?? new Error('WebSocket error occurred.'),
           'WebSocket error occurred.'
         );
-        statusMessage = formatStatusMessage(
-          decorated,
-          decorated.status,
-          'WebSocket error occurred.'
+        updateStatusMessage(
+          formatStatusMessage(
+            decorated,
+            decorated.status,
+            'WebSocket error occurred.'
+          )
         );
         reject(decorated);
       });
@@ -250,11 +307,10 @@
     running = false;
     cancelling = false;
     pendingCancelSignal = false;
-    pendingCeaTable = null;
     const reason =
       event?.reason ||
       'Connection to server lost. Please reload to reconnect.';
-    statusMessage = reason;
+    updateStatusMessage(reason);
   }
 
   function handleSocketMessage(event) {
@@ -263,19 +319,19 @@
       const hasType = Object.prototype.hasOwnProperty.call(payload, 'type');
 
       if (!hasType && payload.error) {
-        statusMessage = formatStatusMessage(
-          payload.error,
-          typeof payload.status === 'number' ? payload.status : undefined,
-          'Request failed.'
+        updateStatusMessage(
+          formatStatusMessage(
+            payload.error,
+            typeof payload.status === 'number' ? payload.status : undefined,
+            'Request failed.'
+          )
         );
         running = false;
         cancelling = false;
-        pendingCeaTable = null;
         return;
       }
 
       if (!hasType && payload.cancelled) {
-        pendingCeaTable = null;
         clearHistory('last');
         return;
       }
@@ -290,9 +346,17 @@
 
       sendReceived();
       let enrichedPayload = payload;
-      if (payload.type === 'output' && payload.task === 'cea' && pendingCeaTable) {
-        enrichedPayload = { ...payload, ceaInputTable: pendingCeaTable };
-        pendingCeaTable = null;
+      if (payload.type === 'output' && payload.task === 'cea') {
+        const ceaInput = getLastCeaInput();
+        if (ceaInput) {
+          enrichedPayload = { ...payload, ceaInputTable: ceaInput };
+        }
+      }
+      if (payload.type === 'output') {
+        enrichedPayload =
+          enrichedPayload === payload
+            ? { ...payload, shareLocked: false }
+            : { ...enrichedPayload, shareLocked: false };
       }
       appendToCurrentHistory(enrichedPayload);
 
@@ -366,16 +430,21 @@
       const detail = event.detail;
       if (!detail || detail.kind !== 'cea' || !detail.payload) return;
       payloadInput = detail.payload;
-      pendingCeaTable = cloneCeaTable(payloadInput) ?? payloadInput;
     } else {
       const question = typeof event.detail === 'string' ? event.detail : '';
       const trimmedQuestion = question.trim();
       if (!trimmedQuestion) return;
       payloadInput = trimmedQuestion;
-      pendingCeaTable = null;
     }
 
-    statusMessage = '';
+    const clonedInput =
+      task === 'cea'
+        ? cloneCeaTable(payloadInput) ?? payloadInput
+        : cloneLastInputValue(payloadInput);
+    lastInputRecord = { task, value: clonedInput };
+    persistLastInput(lastInputRecord);
+
+    updateStatusMessage('');
     startNewHistory();
     running = true;
     const payload = {
@@ -389,10 +458,12 @@
       socket?.send(JSON.stringify(payload));
     } catch (error) {
       const decorated = decorateError(error, 'Failed to send request.');
-      statusMessage = formatStatusMessage(
-        decorated,
-        decorated.status,
-        'Failed to send request.'
+      updateStatusMessage(
+        formatStatusMessage(
+          decorated,
+          decorated.status,
+          'Failed to send request.'
+        )
       );
       running = false;
     }
@@ -400,9 +471,13 @@
 
   function handleReset() {
     composerValue = '';
-    statusMessage = '';
+    updateStatusMessage('');
     clearHistory('full');
-    pendingCeaTable = null;
+    if (typeof window !== 'undefined' && window?.history?.replaceState) {
+      const { protocol, host } = window.location;
+      const base = `${protocol}//${host}`;
+      window.history.replaceState(null, '', `${base}/`);
+    }
   }
 
   function handleCancel() {
@@ -443,7 +518,6 @@
     cancelling = false;
     running = false;
     pendingCancelSignal = false;
-    pendingCeaTable = null;
     if (mode === 'full') {
       histories = [];
       past = null;
@@ -467,70 +541,54 @@
   }
 
   function persistLastOutput(outputMessage) {
-    if (typeof window === 'undefined') return;
+    const sessionStore = getSessionStorage();
+    if (!sessionStore) return;
     const payload = {
       pastMessages: outputMessage.messages ?? [],
       pastKnown: outputMessage.known ?? [],
       histories
     };
-    window.localStorage.setItem(
-      STORAGE_KEYS.lastOutput,
+    sessionStore.setItem(
+      SESSION_STORAGE_KEYS.lastOutput,
       JSON.stringify(payload)
     );
   }
 
+  function persistLastInput(record) {
+    const sessionStore = getSessionStorage();
+    if (!sessionStore) return;
+    if (record) {
+      sessionStore.setItem(
+        SESSION_STORAGE_KEYS.lastInput,
+        JSON.stringify(record)
+      );
+    } else {
+      sessionStore.removeItem(SESSION_STORAGE_KEYS.lastInput);
+    }
+  }
+
   function clearLastOutput() {
-    if (typeof window === 'undefined') return;
-    window.localStorage.removeItem(STORAGE_KEYS.lastOutput);
+    const sessionStore = getSessionStorage();
+    sessionStore?.removeItem(SESSION_STORAGE_KEYS.lastOutput);
+  }
+
+  function resetStateForFailedShareLoad() {
+    histories = [];
+    past = null;
+    composerValue = '';
+    lastInputRecord = null;
+    persistedSelectedKgs = [];
+  }
+
+  function updateStatusMessage(message, options = {}) {
+    const { pinned = false } = options;
+    statusMessage = message;
+    statusPinned = pinned;
   }
 
   function reloadPage() {
     if (typeof window !== 'undefined') {
       window.location.reload();
-    }
-  }
-
-  function restoreShareToken() {
-    if (typeof window === 'undefined') return;
-    try {
-      const stored = window.localStorage.getItem(SHARE_TOKEN_STORAGE_KEY);
-      shareToken = stored ?? '';
-    } catch (error) {
-      console.warn('Failed to restore share access token', error);
-      shareToken = '';
-    }
-  }
-
-  function persistShareToken(token) {
-    if (typeof window === 'undefined') return;
-    if (token) {
-      window.localStorage.setItem(SHARE_TOKEN_STORAGE_KEY, token);
-    } else {
-      window.localStorage.removeItem(SHARE_TOKEN_STORAGE_KEY);
-    }
-  }
-
-  function openShareModal() {
-    shareModalOpen = true;
-    shareTokenError = '';
-    shareSubmissionError = '';
-    shareResult = null;
-    shareCopied = false;
-  }
-
-  function closeShareModal() {
-    shareModalOpen = false;
-    shareSubmitting = false;
-    shareTokenError = '';
-    shareSubmissionError = '';
-    shareResult = null;
-    shareCopied = false;
-  }
-
-  function exitShareFlow() {
-    closeShareModal();
-    if (shareMode) {
-      goto('/');
     }
   }
 
@@ -543,9 +601,14 @@
           items.map((entry) => ({ ...entry }))
         )
       : [];
+    const shareInput =
+      lastInputRecord && lastInputRecord.task === task
+        ? cloneLastInputValue(lastInputRecord.value)
+        : null;
     return {
       task,
       selectedKgs: selected,
+      lastInput: shareInput,
       lastOutput: {
         pastMessages: past?.messages ?? [],
         pastKnown: past?.known ?? [],
@@ -554,82 +617,32 @@
     };
   }
 
-  async function submitShare(event) {
-    event?.preventDefault?.();
-    if (shareSubmitting) return;
-    const trimmedToken = shareToken.trim();
-    if (!trimmedToken) {
-      shareTokenError = 'Please provide an access token.';
-      return;
-    }
-    shareTokenError = '';
-    shareSubmissionError = '';
-    shareResult = null;
-    shareCopied = false;
+  async function createShareLink() {
     const payload = buildSharePayload();
-    shareSubmitting = true;
     try {
       const response = await fetch(saveSharedStateEndpoint(), {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${trimmedToken}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
       });
       if (!response.ok) {
-        throw createHttpError(
-          response.status,
-          'Failed to save shared conversation.'
-        );
+        throw createHttpError(response.status, 'Failed to create share link.');
       }
       const result = await response.json();
-      shareResult = {
+      return {
         id: result?.id ?? '',
-        url: result?.url ?? ''
+        url:
+          typeof result?.url === 'string' && result.url
+            ? result.url
+            : result?.id
+              ? `/${result.id}`
+              : ''
       };
-      persistShareToken(trimmedToken);
     } catch (error) {
-      const decorated = decorateError(
-        error,
-        'Failed to save shared conversation.'
-      );
-      shareSubmissionError = formatStatusMessage(
-        decorated,
-        decorated.status,
-        'Failed to save shared conversation.'
-      );
-    } finally {
-      shareSubmitting = false;
-    }
-  }
-
-  async function copyShareUrl(url) {
-    const value = (url ?? '').toString();
-    if (!value) return;
-    const nav = typeof navigator !== 'undefined' ? navigator : undefined;
-    try {
-      if (nav?.clipboard?.writeText) {
-        await nav.clipboard.writeText(value);
-      } else if (typeof window !== 'undefined') {
-        const doc = window.document;
-        if (!doc) throw new Error('Clipboard fallback unavailable.');
-        const textarea = doc.createElement('textarea');
-        textarea.value = value;
-        textarea.setAttribute('readonly', '');
-        textarea.style.position = 'absolute';
-        textarea.style.left = '-9999px';
-        doc.body.appendChild(textarea);
-        textarea.select();
-        doc.execCommand?.('copy');
-        doc.body.removeChild(textarea);
-      }
-      shareCopied = true;
-      setTimeout(() => {
-        shareCopied = false;
-      }, 2000);
-    } catch (error) {
-      console.warn('Failed to copy share URL', error);
+      const decorated = decorateError(error, 'Failed to create share link.');
+      throw decorated;
     }
   }
 
@@ -656,39 +669,89 @@
         error,
         'Failed to load shared conversation.'
       );
-      statusMessage = formatStatusMessage(
-        decorated,
-        decorated.status,
-        'Failed to load shared conversation.'
-      );
+      const status = typeof decorated.status === 'number' ? decorated.status : undefined;
+      const message =
+        status === 404
+          ? 'Shared conversation not found. The link might be invalid or the conversation has expired.'
+          : formatStatusMessage(
+              decorated,
+              status,
+              'Failed to load shared conversation.'
+            );
+      updateStatusMessage(message, { pinned: true });
       return false;
     }
   }
 
   function persistSharedSnapshot(payload) {
     if (typeof window === 'undefined' || !payload) return;
+    const sessionStore = getSessionStorage();
     try {
       if (typeof payload.task === 'string') {
         window.localStorage.setItem(STORAGE_KEYS.task, payload.task);
       }
-      if (Array.isArray(payload.selectedKgs)) {
+      const sharedSelectedKgs = Array.isArray(payload.selectedKgs)
+        ? payload.selectedKgs
+        : Array.isArray(payload.selected_kgs)
+          ? payload.selected_kgs
+          : undefined;
+      if (Array.isArray(sharedSelectedKgs)) {
         window.localStorage.setItem(
           STORAGE_KEYS.selectedKgs,
-          JSON.stringify(payload.selectedKgs)
+          JSON.stringify(sharedSelectedKgs)
         );
-        persistedSelectedKgs = payload.selectedKgs;
+        persistedSelectedKgs = sharedSelectedKgs;
       }
       if (payload.lastOutput && typeof payload.lastOutput === 'object') {
-        window.localStorage.setItem(
-          STORAGE_KEYS.lastOutput,
+        if (Array.isArray(payload.lastOutput.histories)) {
+          payload.lastOutput.histories = markHistoriesAsShared(
+            payload.lastOutput.histories
+          );
+        }
+        sessionStore?.setItem(
+          SESSION_STORAGE_KEYS.lastOutput,
           JSON.stringify(payload.lastOutput)
         );
-      } else {
-        window.localStorage.removeItem(STORAGE_KEYS.lastOutput);
+      } else if (sessionStore) {
+        sessionStore.removeItem(SESSION_STORAGE_KEYS.lastOutput);
+      }
+      const sharedLastInput = Object.prototype.hasOwnProperty.call(payload, 'lastInput')
+        ? payload.lastInput
+        : Object.prototype.hasOwnProperty.call(payload, 'last_input')
+          ? payload.last_input
+          : undefined;
+      if (sharedLastInput !== undefined) {
+        if (sharedLastInput == null) {
+          sessionStore?.removeItem(SESSION_STORAGE_KEYS.lastInput);
+          lastInputRecord = null;
+        } else {
+          const record = {
+            task: typeof payload.task === 'string' ? payload.task : task,
+            value: sharedLastInput
+          };
+          sessionStore?.setItem(
+            SESSION_STORAGE_KEYS.lastInput,
+            JSON.stringify(record)
+          );
+          lastInputRecord = record;
+        }
       }
     } catch (error) {
       console.warn('Failed to persist shared snapshot', error);
     }
+  }
+
+  function markHistoriesAsShared(histories) {
+    if (!Array.isArray(histories)) return [];
+    return histories.map((history) => {
+      if (!Array.isArray(history)) return history;
+      return history.map((entry) => {
+        if (entry && typeof entry === 'object' && entry.type === 'output') {
+          return { ...entry, shareLocked: true };
+        }
+        return entry;
+      });
+    });
   }
 
   async function measureComposerOnce() {
@@ -768,6 +831,7 @@
           {cancelling}
           {config}
           composerOffset={composerOffset}
+          shareConversation={createShareLink}
         />
       {/if}
 
@@ -786,132 +850,15 @@
           knowledgeGraphs={knowledgeGraphList}
           hasHistory={hasHistory}
           errorMessage={statusMessage}
-          onReload={reloadPage}
+          onReload={statusPinned ? null : reloadPage}
           on:taskchange={handleTaskChange}
           on:kgchange={handleKnowledgeGraphChange}
+          initialCeaPayload={ceaInitialPayload}
         />
       </div>
     </main>
   </div>
 </section>
-
-{#if shareModalOpen}
-  <div
-    class="share-modal__backdrop"
-    role="presentation"
-  >
-    <div
-      class="share-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="share-modal-title"
-    >
-      {#if shareResult}
-        <div class="share-modal__content">
-          <h2 class="share-modal__title" id="share-modal-title">
-            Share link ready
-          </h2>
-          <p class="share-modal__description">
-            We saved your conversation snapshot. Use the link below to reopen it later.
-          </p>
-          {#if shareResult.id}
-            <div class="share-modal__summary">
-              <span class="share-modal__summary-label">Share ID</span>
-              <span class="share-modal__summary-value">{shareResult.id}</span>
-            </div>
-          {/if}
-          {#if shareResult.url}
-            <label class="share-modal__link-label" for="share-modal-url">
-              Share URL
-            </label>
-            <div class="share-modal__link-row">
-              <input
-                id="share-modal-url"
-                class="share-modal__link-input"
-                type="text"
-                value={shareResult.url}
-                readonly
-              />
-              <button
-                type="button"
-                class="share-modal__button share-modal__button--primary"
-                on:click={() => copyShareUrl(shareResult.url)}
-              >
-                {shareCopied ? 'Copied!' : 'Copy link'}
-              </button>
-            </div>
-          {/if}
-          <div class="share-modal__actions">
-            {#if shareResult.url}
-              <a
-                class="share-modal__button share-modal__button--secondary"
-                href={shareResult.url}
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                Open in new tab
-              </a>
-            {/if}
-            <button
-              type="button"
-              class="share-modal__button share-modal__button--outline"
-              on:click={exitShareFlow}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      {:else}
-        <form
-          class="share-modal__content"
-          on:submit|preventDefault={submitShare}
-        >
-          <h2 class="share-modal__title" id="share-modal-title">
-            Share conversation
-          </h2>
-          <p class="share-modal__description">
-            Provide your access token to save the current task, knowledge graphs, and last conversation on the server.
-          </p>
-          <label class="share-modal__label" for="share-modal-token">
-            Access token
-          </label>
-          <input
-            id="share-modal-token"
-            class="share-modal__input"
-            type="password"
-            bind:value={shareToken}
-            bind:this={shareTokenInputEl}
-            placeholder="Enter access token"
-            autocomplete="off"
-          />
-          {#if shareTokenError}
-            <p class="share-modal__error" role="alert">{shareTokenError}</p>
-          {/if}
-          {#if shareSubmissionError}
-            <p class="share-modal__error" role="alert">{shareSubmissionError}</p>
-          {/if}
-          <div class="share-modal__actions">
-            <button
-              type="button"
-              class="share-modal__button share-modal__button--outline"
-              on:click={exitShareFlow}
-              disabled={shareSubmitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="share-modal__button share-modal__button--primary"
-              disabled={shareSubmitting}
-            >
-              {shareSubmitting ? 'Saving…' : 'Save & generate link'}
-            </button>
-          </div>
-        </form>
-      {/if}
-    </div>
-  </div>
-{/if}
 
 <style>
   .app-shell {
@@ -972,156 +919,6 @@
       rgba(255, 255, 255, 0.92) 55%,
       rgba(255, 255, 255, 1) 100%
     );
-  }
-
-  .share-modal__backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(7, 16, 45, 0.4);
-    backdrop-filter: blur(2px);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: var(--spacing-lg);
-    z-index: 1000;
-  }
-
-  .share-modal {
-    background: var(--surface-base);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
-    width: min(520px, 100%);
-    border: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  .share-modal__content {
-    display: grid;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-xl);
-  }
-
-  .share-modal__title {
-    font-size: 1.35rem;
-    font-weight: 600;
-    margin: 0;
-  }
-
-  .share-modal__description {
-    margin: 0;
-    color: var(--text-subtle);
-    line-height: 1.45;
-  }
-
-  .share-modal__label,
-  .share-modal__link-label {
-    font-weight: 600;
-    font-size: 0.95rem;
-  }
-
-  .share-modal__input,
-  .share-modal__link-input {
-    width: 100%;
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(0, 0, 0, 0.18);
-    padding: 0.55rem 0.75rem;
-    font: inherit;
-    color: var(--text-primary);
-    background: #fff;
-  }
-
-  .share-modal__input:focus,
-  .share-modal__link-input:focus {
-    outline: 2px solid rgba(52, 74, 154, 0.25);
-    outline-offset: 2px;
-  }
-
-  .share-modal__error {
-    margin: 0;
-    font-size: 0.9rem;
-    color: var(--color-uni-red);
-  }
-
-  .share-modal__actions {
-    display: flex;
-    gap: var(--spacing-sm);
-    justify-content: flex-end;
-    flex-wrap: wrap;
-  }
-
-  .share-modal__button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.35rem;
-    padding: 0.55rem 1.1rem;
-    border-radius: var(--radius-sm);
-    font-weight: 600;
-    border: 1px solid transparent;
-    cursor: pointer;
-    background: rgba(52, 74, 154, 0.08);
-    color: var(--color-uni-blue);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    text-decoration: none;
-  }
-
-  .share-modal__button:disabled {
-    opacity: 0.65;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-  }
-
-  .share-modal__button:not(:disabled):hover {
-    transform: translateY(-1px);
-    box-shadow: 0 8px 16px rgba(52, 74, 154, 0.18);
-  }
-
-  .share-modal__button--primary {
-    background: var(--color-uni-blue);
-    color: #fff;
-    border-color: var(--color-uni-blue);
-  }
-
-  .share-modal__button--secondary {
-    background: rgba(52, 74, 154, 0.12);
-    color: var(--color-uni-blue);
-    border-color: rgba(52, 74, 154, 0.25);
-  }
-
-  .share-modal__button--outline {
-    background: transparent;
-    color: var(--text-primary);
-    border-color: rgba(0, 0, 0, 0.2);
-  }
-
-  .share-modal__summary {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    font-size: 0.95rem;
-    background: rgba(52, 74, 154, 0.08);
-    border-radius: var(--radius-sm);
-    padding: 0.5rem 0.75rem;
-  }
-
-  .share-modal__summary-label {
-    font-weight: 600;
-    color: var(--color-uni-blue);
-  }
-
-  .share-modal__summary-value {
-    font-family: 'Inter', system-ui, sans-serif;
-  }
-
-  .share-modal__link-row {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-  }
-
-  .share-modal__link-input {
-    flex: 1;
-    font-family: 'Inter', system-ui, sans-serif;
   }
 
 </style>

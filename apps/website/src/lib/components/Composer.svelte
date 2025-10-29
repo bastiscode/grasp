@@ -14,6 +14,7 @@
   export let hasHistory = false;
   export let errorMessage = '';
   export let onReload = null;
+  export let initialCeaPayload = null;
 
   const dispatch = createEventDispatcher();
 
@@ -44,11 +45,13 @@
   let ceaPreviousSummary = null;
   let ceaPreviousFileName = '';
   let ceaPreviousSelectedRows = [];
+  let appliedInitialCeaRef = null;
 
   const INACTIVITY_MESSAGE_PREFIX = 'connection closed due to inactivity';
 
   $: isCeaTask = task === 'cea';
   $: trimmed = value.trim();
+  $: canReload = typeof onReload === 'function';
   $: disableCeaInputs =
     disabled || isRunning || isCancelling || isParsingFile;
   $: disableFileInput = disableCeaInputs;
@@ -90,7 +93,7 @@
     );
   $: hasError = Boolean(normalizedErrorMessage) && !inactivityDisconnect;
   $: showActions = !inactivityDisconnect;
-  $: showReloadAction = inactivityDisconnect;
+  $: showReloadAction = inactivityDisconnect && canReload;
   $: cancelLabel = isCancelling ? 'Cancellation in progress' : 'Cancel';
   $: summaryRowsLabel = ceaSummary
     ? `${ceaSummary.rows} ${ceaSummary.rows === 1 ? 'row' : 'rows'}`
@@ -99,6 +102,15 @@
     ? `${ceaSummary.columns} ${ceaSummary.columns === 1 ? 'column' : 'columns'}`
     : '';
   $: hasPreviousCea = Boolean(ceaPreviousPayload) && Boolean(ceaPreviousSummary);
+
+  $: if (isCeaTask) {
+    if (initialCeaPayload && initialCeaPayload !== appliedInitialCeaRef) {
+      applyInitialCea(initialCeaPayload);
+      appliedInitialCeaRef = initialCeaPayload;
+    }
+  } else if (appliedInitialCeaRef) {
+    appliedInitialCeaRef = null;
+  }
 
   $: if (lastTask !== task) {
     if (lastTask === 'cea') {
@@ -318,6 +330,39 @@
       ? table.data.map((row) => (Array.isArray(row) ? [...row] : []))
       : [];
     return { header, data };
+  }
+
+  function applyInitialCea(table) {
+    const cloned = cloneCeaTable(table);
+    if (!cloned) return;
+    const rows = Array.isArray(cloned.data) ? cloned.data : [];
+    const header = Array.isArray(cloned.header) ? cloned.header : [];
+    ceaPayload = { header, data: rows };
+    ceaSummary = { rows: rows.length, columns: header.length };
+    const rawAnnotate = Array.isArray(table?.annotate_rows)
+      ? table.annotate_rows
+      : Array.isArray(table?.annotateRows)
+        ? table.annotateRows
+        : null;
+    const annotateRows = Array.isArray(rawAnnotate)
+      ? rawAnnotate.filter((index) => Number.isInteger(index))
+      : null;
+    if (annotateRows === null) {
+      ceaSelectedRows = rows.map((_, index) => index);
+    } else {
+      const maxIndex = rows.length - 1;
+      ceaSelectedRows = annotateRows
+        .filter((index) => index >= 0 && index <= maxIndex)
+        .sort((a, b) => a - b);
+    }
+    ceaError = '';
+    const fileName =
+      typeof table?.file_name === 'string'
+        ? table.file_name
+        : typeof table?.fileName === 'string'
+          ? table.fileName
+          : null;
+    ceaFileName = fileName ?? 'Restored table';
   }
 
   function savePreviousCeaState() {
@@ -564,13 +609,15 @@
         <strong>Connection issue</strong>
         <span>{errorMessage}</span>
       </div>
-      <button
-        type="button"
-        class="composer__alert-button"
-        on:click={handleReload}
-      >
-        Reload page
-      </button>
+      {#if canReload}
+        <button
+          type="button"
+          class="composer__alert-button"
+          on:click={handleReload}
+        >
+          Reload page
+        </button>
+      {/if}
     </div>
   {/if}
   <div class="composer__input-wrapper">

@@ -13,6 +13,7 @@
   export let cancelling = false;
   export let config = null;
   export let composerOffset = 0;
+  export let shareConversation = null;
 
   let listEl;
   let stickToBottom = true;
@@ -97,7 +98,11 @@
           {:else if item.message?.type === 'tool'}
             <ToolMessage message={item.message} />
           {:else if item.message?.type === 'output'}
-            <OutputMessage message={item.message} />
+            <OutputMessage
+              message={item.message}
+              shareConversation={shareConversation}
+              shareDisabled={Boolean(item.message?.shareLocked)}
+            />
           {:else}
             <UnknownMessage message={item.message} />
           {/if}
