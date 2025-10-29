@@ -332,13 +332,7 @@
     return { header, data };
   }
 
-  function applyInitialCea(table) {
-    const cloned = cloneCeaTable(table);
-    if (!cloned) return;
-    const rows = Array.isArray(cloned.data) ? cloned.data : [];
-    const header = Array.isArray(cloned.header) ? cloned.header : [];
-    ceaPayload = { header, data: rows };
-    ceaSummary = { rows: rows.length, columns: header.length };
+  function deriveCeaSelection(table, rowCount) {
     const rawAnnotate = Array.isArray(table?.annotate_rows)
       ? table.annotate_rows
       : Array.isArray(table?.annotateRows)
@@ -347,22 +341,39 @@
     const annotateRows = Array.isArray(rawAnnotate)
       ? rawAnnotate.filter((index) => Number.isInteger(index))
       : null;
+    if (!rowCount) return [];
     if (annotateRows === null) {
-      ceaSelectedRows = rows.map((_, index) => index);
-    } else {
-      const maxIndex = rows.length - 1;
-      ceaSelectedRows = annotateRows
-        .filter((index) => index >= 0 && index <= maxIndex)
-        .sort((a, b) => a - b);
+      return Array.from({ length: rowCount }, (_, index) => index);
     }
-    ceaError = '';
+    const maxIndex = rowCount - 1;
+    return annotateRows
+      .filter((index) => index >= 0 && index <= maxIndex)
+      .sort((a, b) => a - b);
+  }
+
+  function applyInitialCea(table) {
+    const cloned = cloneCeaTable(table);
+    if (!cloned) return;
+    const rows = Array.isArray(cloned.data) ? cloned.data : [];
+    const header = Array.isArray(cloned.header) ? cloned.header : [];
+    ceaPreviousPayload = cloned;
+    ceaPreviousSummary = {
+      rows: rows.length,
+      columns: header.length
+    };
+    ceaPreviousSelectedRows = deriveCeaSelection(table, rows.length);
     const fileName =
       typeof table?.file_name === 'string'
         ? table.file_name
         : typeof table?.fileName === 'string'
           ? table.fileName
           : null;
-    ceaFileName = fileName ?? 'Restored table';
+    ceaPreviousFileName = fileName ?? 'Restored table';
+    ceaPayload = null;
+    ceaSummary = null;
+    ceaSelectedRows = [];
+    ceaFileName = '';
+    ceaError = '';
   }
 
   function savePreviousCeaState() {
