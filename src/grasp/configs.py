@@ -70,18 +70,13 @@ class GraspConfig(ModelConfig):
     max_feedbacks: int = 2
 
 
-class ShareConfig(BaseModel):
-    token: str
-    dir: str
-
-
 class ServerConfig(GraspConfig):
     port: int = 6789
     max_connections: int = 10
     max_generation_time: int = 300
     max_idle_time: int = 300
     log_outputs: str | None = None
-    share: ShareConfig | None = None
+    share: str | None = None
 
 
 class NotesConfig(GraspConfig):

@@ -1,16 +1,16 @@
 import asyncio
 import json
 import os
+import random
+import string
 import threading
 import time
 from datetime import datetime, timezone
 from logging import INFO, FileHandler, Logger
-from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from fastapi import WebSocketDisconnect
-from pydantic import BaseModel, conlist
+from pydantic import BaseModel, Field, conlist
 from universal_ml_utils.io import dump_json, load_json
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import partition_by
@@ -40,15 +40,23 @@ class Request(BaseModel):
 
 class State(BaseModel):
     task: Task
-    selected_kgs: conlist(str, min_length=1)  # type: ignore
-    last_input: Any
-    last_output: dict[str, Any]
+    selected_kgs: conlist(str, min_length=1) = Field(alias="selectedKgs")  # type: ignore
+    last_input: Any | None = Field(default=None, alias="lastInput")
+    last_output: dict[str, Any] | None = Field(default=None, alias="lastOutput")
+
+
+ALPHABET = string.ascii_letters + string.digits
+
+
+def generate_id(length: int = 6) -> str:
+    chars = random.sample(ALPHABET, length)
+    return f"grasp-{''.join(chars)}"
 
 
 def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
     # create a fast api websocket server to serve the generate_sparql function
     import uvicorn
-    from fastapi import FastAPI, Header, HTTPException, WebSocket
+    from fastapi import FastAPI, HTTPException, WebSocket
 
     app = FastAPI()
     logger = get_logger("GRASP SERVER", log_level)
@@ -90,36 +98,35 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
         example_indices[task.value] = task_indices
 
     if config.share is not None:
-        share_token = config.share.token
-        share_dir = config.share.dir
+        share_dir = config.share
 
-        def _normalize_authorization(header: str | None) -> str | None:
-            if header is None:
+        def generate_and_check_share_id(max_retries: int = 3) -> str | None:
+            share_id = generate_id()
+            if not os.path.exists(os.path.join(share_dir, f"{share_id}.json")):
+                return share_id
+            if max_retries <= 0:
                 return None
-            header = header.strip()
-            if not header:
-                return None
-            if header.lower().startswith("bearer "):
-                return header[7:].strip()
-            return header
+            return generate_and_check_share_id(max_retries - 1)
 
         @app.post("/save")
-        async def _save(
-            request: State,
-            authorization: str | None = Header(default=None),
-        ):
-            token = _normalize_authorization(authorization)
-            if token is None or token != share_token:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid or missing authorization token",
+        async def _save(request: State):
+            share_id = generate_and_check_share_id()
+            if share_id is None:
+                logger.error(
+                    "Failed to generate unique share ID after multiple attempts"
                 )
+                raise HTTPException(status_code=500, detail="Failed to share state")
 
-            share_id = uuid4().hex
             try:
-                data = request.model_dump()
-                data["created_at"] = datetime.now(timezone.utc).isoformat()
-                dump_json(data, os.path.join(share_dir, f"{share_id}.json"))
+                data = request.model_dump(by_alias=True)
+                timestamp = datetime.now(timezone.utc).isoformat()
+                dump_json(
+                    {
+                        "timestamp": timestamp,
+                        "state": data,
+                    },
+                    os.path.join(share_dir, f"{share_id}.json"),
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"Failed to persist state: {exc}")
                 raise HTTPException(
@@ -134,7 +141,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
             try:
                 path = os.path.join(share_dir, f"{share_id}.json")
                 data = load_json(path)
-                return State(**data)
+                return State(**data["state"])
             except FileNotFoundError:
                 raise HTTPException(status_code=404, detail="State not found")
             except Exception as exc:  # noqa: BLE001

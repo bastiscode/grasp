@@ -51,6 +51,4 @@ max_connections: env(MAX_CONNECTIONS:10)
 max_idle_time: env(MAX_IDLE_TIME:300)
 max_generation_time: env(MAX_GENERATION_TIME:300)
 log_outputs: env(LOG_OUTPUTS:null)
-share:
-  token: env(SHARE_TOKEN:null)
-  dir: env(SHARE_DIR:null)
+share: env(SHARE:null)
