@@ -67,3 +67,7 @@ export const configEndpoint = () => endpointFor('/config');
 export const kgEndpoint = () => endpointFor('/knowledge_graphs');
 export const saveSharedStateEndpoint = () => endpointFor('/save');
 export const loadSharedStateEndpoint = (id) => endpointFor(`/load/${encodeURIComponent(id)}`);
+export const sharePathForId = (id) => {
+  const trimmed = typeof id === 'string' ? id.trim() : '';
+  return trimmed ? `/share/${trimmed}` : '';
+};

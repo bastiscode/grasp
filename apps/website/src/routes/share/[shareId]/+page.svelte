@@ -5,4 +5,3 @@
 </script>
 
 <ChatApp loadId={data?.loadId ?? null} />
-

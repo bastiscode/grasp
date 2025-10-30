@@ -10,7 +10,8 @@
     kgEndpoint,
     wsEndpoint,
     saveSharedStateEndpoint,
-    loadSharedStateEndpoint
+    loadSharedStateEndpoint,
+    sharePathForId
   } from '../constants.js';
 
   export let loadId = null;
@@ -431,6 +432,7 @@ let running = false;
       if (!trimmedQuestion) return;
       payloadInput = trimmedQuestion;
     }
+    replaceUrlWithRoot();
 
     const clonedInput =
       task === 'cea'
@@ -468,11 +470,7 @@ let running = false;
     composerValue = '';
     updateStatusMessage('');
     clearHistory('full');
-    if (typeof window !== 'undefined' && window?.history?.replaceState) {
-      const { protocol, host } = window.location;
-      const base = `${protocol}//${host}`;
-      window.history.replaceState(null, '', `${base}/`);
-    }
+    replaceUrlWithRoot();
   }
 
   function handleCancel() {
@@ -581,6 +579,21 @@ let running = false;
     statusPinned = pinned;
   }
 
+  function replaceUrlWithRoot() {
+    if (typeof window === 'undefined') return;
+    const { history, location } = window;
+    if (!history?.replaceState || !location) return;
+    try {
+      const origin =
+        typeof location.origin === 'string' && location.origin
+          ? location.origin
+          : `${location.protocol}//${location.host}`;
+      history.replaceState(null, '', `${origin}/`);
+    } catch (error) {
+      console.warn('Failed to reset URL to root', error);
+    }
+  }
+
   function reloadPage() {
     if (typeof window !== 'undefined') {
       window.location.reload();
@@ -632,13 +645,13 @@ let running = false;
         typeof result?.id === 'string' && result.id.trim()
           ? result.id.trim()
           : '';
-      const rawUrl =
+      const fallbackUrl =
         typeof result?.url === 'string' && result.url.trim()
           ? result.url.trim()
           : '';
       return {
         id,
-        url: id ? `/${id}` : rawUrl
+        url: sharePathForId(id) || fallbackUrl
       };
     } catch (error) {
       const decorated = decorateError(error, 'Failed to create share link.');

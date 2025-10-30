@@ -4,7 +4,7 @@
   import MarkdownContent from '../common/MarkdownContent.svelte';
   import SparqlBlock from '../common/SparqlBlock.svelte';
   import { prettyJson } from '../../utils/formatters.js';
-  import { QLEVER_HOSTS } from '../../constants.js';
+  import { QLEVER_HOSTS, sharePathForId } from '../../constants.js';
 
   export let message;
   export let shareConversation = null;
@@ -131,16 +131,37 @@ function deriveQleverLink() {
   const qleverLink = deriveQleverLink();
 
   function resolveShareUrl(url) {
-    if (!url || typeof url !== 'string') return '';
-    let normalized = url;
-    if (typeof normalized === 'string' && normalized.startsWith('/load/')) {
-      normalized = `/${normalized.slice('/load/'.length)}`;
+    const trimmed = typeof url === 'string' ? url.trim() : '';
+    if (!trimmed) return '';
+
+    let normalized = trimmed;
+    if (normalized.startsWith('/load/')) {
+      normalized = sharePathForId(normalized.slice('/load/'.length)) || normalized;
+    } else if (normalized.startsWith('/share/')) {
+      // already in the expected format
+    } else if (normalized.startsWith('/')) {
+      normalized = sharePathForId(normalized.slice(1)) || normalized;
+    } else if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+      normalized = sharePathForId(normalized) || normalized;
     }
+
     if (/^https?:\/\//i.test(normalized)) {
       try {
         const parsed = new URL(normalized);
         if (parsed.pathname.startsWith('/load/')) {
-          parsed.pathname = `/${parsed.pathname.slice('/load/'.length)}`;
+          const candidate = parsed.pathname.slice('/load/'.length);
+          const nextPath = sharePathForId(candidate);
+          if (nextPath) {
+            parsed.pathname = nextPath;
+          }
+        } else if (!parsed.pathname.startsWith('/share/')) {
+          const candidate = parsed.pathname.startsWith('/')
+            ? parsed.pathname.slice(1)
+            : parsed.pathname;
+          const nextPath = sharePathForId(candidate);
+          if (nextPath) {
+            parsed.pathname = nextPath;
+          }
         }
         return parsed.toString();
       } catch (error) {
@@ -148,6 +169,7 @@ function deriveQleverLink() {
         return normalized;
       }
     }
+
     if (typeof window !== 'undefined' && window?.location) {
       try {
         return new URL(normalized, window.location.origin).toString();
@@ -172,7 +194,12 @@ function deriveQleverLink() {
     shareLink = '';
     try {
       const result = await shareConversation({ message });
-      const resolved = resolveShareUrl(result?.url ?? '');
+      const rawUrl =
+        typeof result?.url === 'string' && result.url.trim()
+          ? result.url.trim()
+          : '';
+      const fallbackShareUrl = sharePathForId(result?.id);
+      const resolved = resolveShareUrl(rawUrl || fallbackShareUrl);
       if (!resolved) {
         shareStatus = 'error';
         shareError = 'Share link unavailable.';
