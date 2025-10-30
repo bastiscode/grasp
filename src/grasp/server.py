@@ -49,8 +49,7 @@ ALPHABET = string.ascii_letters + string.digits
 
 
 def generate_id(length: int = 6) -> str:
-    chars = random.sample(ALPHABET, length)
-    return f"grasp-{''.join(chars)}"
+    return "".join(random.sample(ALPHABET, length))
 
 
 def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
@@ -134,7 +133,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                 ) from exc
 
             logger.info(f"Saved state {share_id}")
-            return {"id": share_id, "url": f"/{share_id}"}
+            return {"id": share_id}
 
         @app.get("/load/{share_id}")
         async def _load(share_id: str):
