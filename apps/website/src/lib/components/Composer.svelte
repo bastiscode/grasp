@@ -217,11 +217,23 @@
     }
     const padding =
       parseFloat(style.paddingTop || '0') + parseFloat(style.paddingBottom || '0');
+    const minHeightFromStyle = parseFloat(style.minHeight || '0') || 0;
+    const singleLineHeight = cachedLineHeight + padding;
+    const minHeight = Math.max(singleLineHeight, minHeightFromStyle);
     const maxHeight = cachedLineHeight * 5 + padding;
+    const trimmedValue = typeof value === 'string' ? value.trim() : '';
     textareaEl.style.height = 'auto';
-    const target = Math.min(textareaEl.scrollHeight, maxHeight);
+    const contentHeight = textareaEl.scrollHeight;
+
+    if (!trimmedValue) {
+      textareaEl.style.height = `${minHeight}px`;
+      textareaEl.style.overflowY = 'hidden';
+      return;
+    }
+
+    const target = Math.min(Math.max(contentHeight, minHeight), maxHeight);
     textareaEl.style.height = `${target}px`;
-    textareaEl.style.overflowY = textareaEl.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    textareaEl.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden';
   }
 
   function detectDevice() {

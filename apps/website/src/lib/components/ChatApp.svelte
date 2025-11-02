@@ -444,15 +444,15 @@ let running = false;
     updateStatusMessage('');
     startNewHistory();
     running = true;
-    const payload = {
+  const payload = {
       task,
       input: payloadInput,
       knowledge_graphs: selectedKgs,
       past: past ? { messages: past.messages, known: past.known } : null
     };
-    try {
-      composerValue = '';
+  try {
       socket?.send(JSON.stringify(payload));
+      composerValue = '';
     } catch (error) {
       const decorated = decorateError(error, 'Failed to send request.');
       updateStatusMessage(
