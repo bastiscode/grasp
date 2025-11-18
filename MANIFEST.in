@@ -1,0 +1,2 @@
+include src/grasp/sparql/grammar/*
+include src/grasp/sparql/queries/*

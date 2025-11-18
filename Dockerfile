@@ -1,7 +1,9 @@
 FROM ubuntu:noble
 
-ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
 WORKDIR /grasp
+ENV DEBIAN_FRONTEND=noninteractive \
+  PYTHONUNBUFFERED=1 \
+  GRASP_INDEX_DIR=/opt/grasp
 
 RUN apt-get update && apt-get install -y \
   wget \
@@ -28,12 +30,6 @@ COPY . .
 
 # Install GRASP
 RUN pip install --no-cache-dir .
-
-# Default location for GRASP indices; mount or override at runtime if needed
-ENV GRASP_INDEX_DIR=/opt/grasp/index
-
-RUN mkdir -p ${GRASP_INDEX_DIR}
-VOLUME ["/opt/grasp/index"]
 
 # Run GRASP by default; override flags via `docker run grasp -- <args>`
 ENTRYPOINT ["grasp"]
