@@ -1,0 +1,25 @@
+PREFIX rdfs: <https://www.w3.org/2000/01/rdf-schema#>
+PREFIX gptkb: <https://gptkb.org/entity/>
+PREFIX gptkbp: <https://gptkb.org/prop/>
+
+SELECT
+  ?id
+  (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=";;;") AS ?infos)
+WHERE {
+  # Get additional information
+  {
+    VALUES ?id { {IDS} }
+    ?id gptkbp:instanceOf | (gptkbp:instanceOf/rdfs:label) ?inst
+    BIND(CONCAT("is instance of ", ?inst) AS ?info)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id gptkbp:knownFor | (gptkbp:knownFor/rdfs:label) ?known
+    BIND(CONCAT("is known for ", ?known) AS ?info)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id gptkbp:notableFor | (gptkbp:notableFor/rdfs:label) ?notable
+    BIND(CONCAT("is known for ", ?notable) AS ?info)
+  }
+  FILTER(ISLITERAL(?info))
+}
+GROUP BY ?id

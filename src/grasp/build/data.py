@@ -275,18 +275,22 @@ def prepare_csv(
         labels = []
         if label:
             labels.append(label)
+
+        elif not disable_id_fallback:
+            # main label is empty, set it from the object id
+            labels.append(get_label_from_id(id, prefixes))
+
         for syn in synonyms.split(";;;"):
             if syn:
                 labels.append(syn)
 
-        if not labels and not disable_id_fallback:
-            # label is empty, try to get it from the object id
+        if not disable_id_fallback:
+            # add label from id
             labels.append(get_label_from_id(id, prefixes))
 
-        if add_id_as_label and not disable_id_fallback:
-            # add id of item to labels
-            object_name = get_object_name_from_id(id, prefixes)
-            labels.append(object_name)
+            if add_id_as_label:
+                # also add object name from id as label
+                labels.append(get_object_name_from_id(id, prefixes))
 
         # make sure no duplicates are in the labels
         labels = ordered_unique(labels)

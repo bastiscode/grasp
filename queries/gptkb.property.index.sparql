@@ -1,0 +1,24 @@
+PREFIX rdfs: <https://www.w3.org/2000/01/rdf-schema#>
+PREFIX gptkb: <https://gptkb.org/entity/>
+PREFIX gptkbp: <https://gptkb.org/prop/>
+
+SELECT
+  ?id
+  (SAMPLE(?label) AS ?main_label)
+  (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=";;;") AS ?aliases)
+WHERE {
+  # Get props and their frequencies for score
+  { 
+    SELECT ?id (COUNT(?id) AS ?freq) WHERE { 
+      ?s ?id ?o 
+    } GROUP BY ?id
+  } 
+
+  # Get label
+  OPTIONAL { ?id rdfs:label ?label }
+
+  # Get aliases
+  OPTIONAL { ?id gptkbp:alternativeName ?alias }
+}
+GROUP BY ?id
+ORDER BY DESC(MAX(?freq))
