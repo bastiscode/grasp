@@ -62,7 +62,8 @@ Makefile                          # Makefile for building benchmarks
 
 ## Quickstart
 
-Follow these steps to run GRASP.
+Follow these steps to run GRASP. If you want to use Docker, see section
+[Run GRASP with Docker](#run-grasp-with-docker) below.
 
 ### Run GRASP
 
@@ -179,6 +180,38 @@ grasp serve configs/serve.yaml
 
 # Show all available options:
 grasp serve -h
+```
+
+### Run GRASP with Docker
+
+Build the Docker image:
+
+```bash
+docker build -t grasp .
+```
+
+The entrypoint for the Docker image is the `grasp` CLI. To run it with
+Docker, make sure that your `GRASP_INDEX_DIR` is mounted to `/opt/grasp`
+and your API keys (e.g. `OPENAI_API_KEY`) are set as env variables.
+If you have a GPU available to speed up similarity search indices,
+pass `--gpus all` to `docker run`.
+
+```bash
+# Answer a single question from stdin
+echo "Where was Angela Merkel born?" | \
+  docker run --rm \
+  -e OPENAI_API_KEY \
+  -v $GRASP_INDEX_DIR=/data/index \
+  --gpus all \
+  grasp run configs/run.yaml
+
+# If you want to run 
+echo "Where was Angela Merkel born?" | \
+  docker run --rm \
+  -e OPENAI_API_KEY \
+  -v $GRASP_INDEX_DIR=/data/index \
+  --gpus all \
+  grasp run configs/run.yaml
 ```
 
 ### Configure GRASP
@@ -443,4 +476,48 @@ e.g. using `make wikidata-benchmarks`, you first need to clone
 ```bash
 mkdir -p third_party
 git clone https://github.com/KGQA/KGQA-datasets.git third_party/KGQA-datasets
+```
+
+## Citation
+
+If you use this project, please consider citing the following works:
+
+```bibtex
+@inproceedings{DBLP:conf/semweb/WalterB25,
+  author       = {Sebastian Walter and
+                  Hannah Bast},
+  title        = {{GRASP:} Generic Reasoning And {SPARQL} Generation Across Knowledge
+                  Graphs},
+  booktitle    = {{ISWC} {(1)}},
+  series       = {Lecture Notes in Computer Science},
+  volume       = {16140},
+  pages        = {271--289},
+  publisher    = {Springer},
+  year         = {2025}
+}
+
+@inproceedings{DBLP:conf/semweb/WalterB25a,
+  author       = {Sebastian Walter and
+                  Hannah Bast},
+  title        = {{GRASP:} Generic Reasoning And {SPARQL} Generation across Knowledge
+                  Graphs - Demo System},
+  booktitle    = {{ISWC} (Industry/Doctoral Consortium/Posters/Demos)},
+  series       = {{CEUR} Workshop Proceedings},
+  volume       = {4085},
+  pages        = {475--482},
+  publisher    = {CEUR-WS.org},
+  year         = {2025}
+}
+
+@inproceedings{GRASP_EntityLinking_WalterB25,
+  author       = {Sebastian Walter and
+                  Hannah Bast},
+  title        = {Knowledge Graph Entity Linking via Interactive Reasoning and
+Exploration with {GRASP}},
+  booktitle    = {{OM} 2025 (Ontology Matching Workshop)},
+  note         = {To appear},
+  series       = {{CEUR} Workshop Proceedings},
+  publisher    = {CEUR-WS.org},
+  year         = {2025}
+}
 ```
