@@ -11,7 +11,6 @@
   export let histories = [];
   export let running = false;
   export let cancelling = false;
-  export let config = null;
   export let composerOffset = 0;
   export let shareConversation = null;
 
@@ -90,7 +89,7 @@
           {#if item.message?.type === 'input'}
             <InputMessage message={item.message} />
           {:else if item.message?.type === 'system'}
-            <SystemMessage config={config} message={item.message} />
+            <SystemMessage message={item.message} />
           {:else if item.message?.type === 'feedback'}
             <FeedbackMessage message={item.message} />
           {:else if item.message?.type === 'model'}

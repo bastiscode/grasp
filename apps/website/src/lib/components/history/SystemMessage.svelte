@@ -4,16 +4,12 @@
   import { prettyJson } from '../../utils/formatters.js';
 
   export let message;
-  export let config = null;
-
-  let configMarkdown =
-    'Configuration not available.';
 
   let functionsMarkdown = '';
-
-  $: configMarkdown = config
-    ? `\n\n\u0060\u0060\u0060json\n${prettyJson(config)}\n\u0060\u0060\u0060`
-    : 'Configuration not available.';
+  $: modelName =
+    typeof message?.config?.model === 'string'
+      ? message.config.model.trim()
+      : '';
 
   $: functionsMarkdown = Array.isArray(message?.functions)
     ? message.functions
@@ -28,10 +24,11 @@
 </script>
 
 <MessageCard title="System" accent="var(--color-uni-pink)">
-  <details>
-    <summary>Configuration</summary>
-    <MarkdownContent content={configMarkdown} />
-  </details>
+  <svelte:fragment slot="meta">
+    {#if modelName}
+      <span class="model-chip">Model · {modelName}</span>
+    {/if}
+  </svelte:fragment>
 
   {#if functionsMarkdown}
     <details>
@@ -84,5 +81,17 @@
 
   details + details {
     margin-top: var(--spacing-xs);
+  }
+
+  .model-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: 0.2rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(163, 83, 148, 0.12);
+    color: var(--color-uni-pink);
+    font-size: 0.75rem;
+    font-weight: 600;
   }
 </style>

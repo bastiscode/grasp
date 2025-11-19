@@ -6,13 +6,13 @@
   import AppFooter from './AppFooter.svelte';
   import {
     TASKS,
-    configEndpoint,
     kgEndpoint,
     wsEndpoint,
     saveSharedStateEndpoint,
     loadSharedStateEndpoint,
     sharePathForId
   } from '../constants.js';
+  import { replaceState } from '$app/navigation';
 
   export let loadId = null;
 
@@ -37,12 +37,11 @@ function getSessionStorage() {
   }
 }
 
-  let composerValue = '';
-  let histories = [];
-  let task = TASKS[0].id;
-  let knowledgeGraphs = new Map();
+let composerValue = '';
+let histories = [];
+let task = TASKS[0].id;
+let knowledgeGraphs = new Map();
 let past = null;
-let config = null;
 let connectionStatus = 'initial';
 let statusMessage = '';
 let statusPinned = false;
@@ -95,7 +94,7 @@ let running = false;
       resetStateForFailedShareLoad();
     }
     try {
-      await Promise.all([loadConfig(), loadKnowledgeGraphs()]);
+      await loadKnowledgeGraphs();
       await openConnection();
     } catch (error) {
       console.error('Failed to initialize', error);
@@ -199,19 +198,6 @@ let running = false;
       return cloneCeaTable(lastInputRecord.value) ?? lastInputRecord.value;
     }
     return null;
-  }
-
-  async function loadConfig() {
-    connectionStatus = 'initializing';
-    try {
-      const response = await fetch(configEndpoint());
-      if (!response.ok) {
-        throw createHttpError(response.status, 'Failed to load configuration.');
-      }
-      config = await response.json();
-    } catch (error) {
-      throw decorateError(error, 'Failed to load configuration.');
-    }
   }
 
   async function loadKnowledgeGraphs() {
@@ -581,14 +567,8 @@ let running = false;
 
   function replaceUrlWithRoot() {
     if (typeof window === 'undefined') return;
-    const { history, location } = window;
-    if (!history?.replaceState || !location) return;
     try {
-      const origin =
-        typeof location.origin === 'string' && location.origin
-          ? location.origin
-          : `${location.protocol}//${location.host}`;
-      history.replaceState(null, '', `${origin}/`);
+      replaceState('/', {});
     } catch (error) {
       console.warn('Failed to reset URL to root', error);
     }
@@ -844,7 +824,6 @@ let running = false;
           {histories}
           {running}
           {cancelling}
-          {config}
           composerOffset={composerOffset}
           shareConversation={createShareLink}
         />
