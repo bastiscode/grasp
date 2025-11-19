@@ -30,7 +30,6 @@
     box-shadow: 0 10px 18px rgba(15, 15, 47, 0.04);
     padding: var(--spacing-md);
     display: grid;
-    gap: var(--spacing-sm);
     width: 100%;
     max-width: 100%;
   }
@@ -41,6 +40,7 @@
     gap: var(--spacing-md);
     flex-wrap: wrap;
     align-items: center;
+    margin-bottom: var(--spacing-xs);
   }
 
   .message-card__title {
@@ -81,7 +81,7 @@
   }
 
   .message-card__subtitle {
-    margin: 0;
+    margin: 0 0 var(--spacing-xs);
     color: var(--text-subtle);
     font-size: 0.85rem;
   }
