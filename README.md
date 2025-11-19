@@ -1,4 +1,4 @@
-# GRASP - Generic Reasoning and SPARQL generation across Knowledge Graphs
+# GRASP - Generic Reasoning and SPARQL Generation across Knowledge Graphs
 
 ## News
 

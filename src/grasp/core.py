@@ -168,6 +168,7 @@ def generate(
     system_instruction = system_instructions(task, config, managers, kg_notes, notes)
     yield {
         "type": "system",
+        "config": config.model_dump(),
         "functions": fns,
         "system_message": system_instruction,
     }
