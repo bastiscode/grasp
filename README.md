@@ -74,7 +74,7 @@ Follow these steps to run GRASP. If you want to use Docker, see section
 `conda create -n grasp python=3.12 && conda activate grasp`
 
 2. Install Faiss (not supported to be installed with pip):
-`conda install -c pytorch -c nvidia faiss-gpu=1.11.0`
+`conda install -c pytorch -c nvidia -c conda-forge faiss-gpu=1.11.0`
 
 > You might have to install the CPU version of Faiss, since
 > the GPU version leads to issues on some systems.
