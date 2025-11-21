@@ -5,6 +5,9 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+from grasp.sparql.utils import load_sparql_parser, fix_prefixes
+from grasp.manager.utils import load_kg_prefixes
+
 DEFAULT_LANGUAGE = "en"
 
 
@@ -71,6 +74,9 @@ def convert(input_path: Path, output_path: Path, overwrite: bool) -> None:
             f"Output file already exists: {output_path}. Use --overwrite to replace it."
         )
 
+    parser = load_sparql_parser()
+    prefixes = load_kg_prefixes("wikidata")
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     converted = 0
@@ -98,6 +104,14 @@ def convert(input_path: Path, output_path: Path, overwrite: bool) -> None:
                 skipped_no_sparql += 1
                 print(f"Skipping {qid}: missing SPARQL query", file=sys.stderr)
                 continue
+
+            try:
+                sparql_query = fix_prefixes(sparql_query, parser, prefixes)
+            except Exception as e:
+                print(
+                    f"Warning: could not fix prefixes for {qid}: {e}",
+                    file=sys.stderr,
+                )
 
             paraphrases = unique_in_order(
                 extract_lang_strings(row.get("paraphrases"), DEFAULT_LANGUAGE)
