@@ -22,6 +22,9 @@
   const VALID_TASK_IDS = new Set(TASKS.map((task) => task.id));
   const initialKgSeed = sanitizeInitialKgs(initialSelectedKgs);
   const initialTaskSeed = isValidTaskId(initialTask) ? initialTask : null;
+  const hasRouteProvidedSelections =
+    initialKgSeed.length > 0 || Boolean(initialTaskSeed) || Boolean(loadId);
+  const shouldSkipStoredSelections = hasRouteProvidedSelections;
 
 const STORAGE_KEYS = {
   task: 'grasp:task',
@@ -121,13 +124,15 @@ let running = false;
   function restorePersistence() {
     if (typeof window === 'undefined') return;
     try {
-      const storedTask = window.localStorage.getItem(STORAGE_KEYS.task);
-      if (storedTask && TASKS.some((t) => t.id === storedTask)) {
-        task = storedTask;
-      }
-      const storedKgs = window.localStorage.getItem(STORAGE_KEYS.selectedKgs);
-      if (storedKgs) {
-        persistedSelectedKgs = JSON.parse(storedKgs);
+      if (!shouldSkipStoredSelections) {
+        const storedTask = window.localStorage.getItem(STORAGE_KEYS.task);
+        if (storedTask && TASKS.some((t) => t.id === storedTask)) {
+          task = storedTask;
+        }
+        const storedKgs = window.localStorage.getItem(STORAGE_KEYS.selectedKgs);
+        if (storedKgs) {
+          persistedSelectedKgs = JSON.parse(storedKgs);
+        }
       }
       const sessionStore = getSessionStorage();
       const storedOutput =
@@ -162,6 +167,7 @@ let running = false;
       console.warn('Failed to restore persisted data', error);
     } finally {
       applyUrlStateOverrides();
+      persistCurrentSelections();
     }
   }
 
@@ -542,6 +548,8 @@ let running = false;
       histories = [];
       past = null;
       clearLastOutput();
+      lastInputRecord = null;
+      clearLastInput();
     } else if (mode === 'last' && histories.length > 0) {
       histories = histories.slice(0, -1);
     }
@@ -590,6 +598,20 @@ let running = false;
   function clearLastOutput() {
     const sessionStore = getSessionStorage();
     sessionStore?.removeItem(SESSION_STORAGE_KEYS.lastOutput);
+  }
+
+  function clearLastInput() {
+    const sessionStore = getSessionStorage();
+    sessionStore?.removeItem(SESSION_STORAGE_KEYS.lastInput);
+  }
+
+  function persistCurrentSelections() {
+    if (typeof task === 'string' && task) {
+      persistTask(task);
+    }
+    if (Array.isArray(persistedSelectedKgs)) {
+      persistSelectedKgs(persistedSelectedKgs);
+    }
   }
 
   function resetStateForFailedShareLoad() {
@@ -751,8 +773,9 @@ let running = false;
     if (typeof window === 'undefined' || !payload) return;
     const sessionStore = getSessionStorage();
     try {
-      if (typeof payload.task === 'string') {
-        window.localStorage.setItem(STORAGE_KEYS.task, payload.task);
+      if (typeof payload.task === 'string' && isValidTaskId(payload.task)) {
+        task = payload.task;
+        persistTask(payload.task);
       }
       const sharedSelectedKgs = Array.isArray(payload.selectedKgs)
         ? payload.selectedKgs
@@ -760,11 +783,9 @@ let running = false;
           ? payload.selected_kgs
           : undefined;
       if (Array.isArray(sharedSelectedKgs)) {
-        window.localStorage.setItem(
-          STORAGE_KEYS.selectedKgs,
-          JSON.stringify(sharedSelectedKgs)
-        );
-        persistedSelectedKgs = sharedSelectedKgs;
+        const sanitizedSharedKgs = sanitizeInitialKgs(sharedSelectedKgs);
+        persistedSelectedKgs = sanitizedSharedKgs;
+        persistSelectedKgs(sanitizedSharedKgs);
       }
       if (payload.lastOutput && typeof payload.lastOutput === 'object') {
         if (Array.isArray(payload.lastOutput.histories)) {
