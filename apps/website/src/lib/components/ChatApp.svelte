@@ -12,9 +12,16 @@
     loadSharedStateEndpoint,
     sharePathForId
   } from '../constants.js';
+  import { base } from '$app/paths';
   import { replaceState } from '$app/navigation';
 
   export let loadId = null;
+  export let initialSelectedKgs = null;
+  export let initialTask = null;
+
+  const VALID_TASK_IDS = new Set(TASKS.map((task) => task.id));
+  const initialKgSeed = sanitizeInitialKgs(initialSelectedKgs);
+  const initialTaskSeed = isValidTaskId(initialTask) ? initialTask : null;
 
 const STORAGE_KEYS = {
   task: 'grasp:task',
@@ -39,7 +46,7 @@ function getSessionStorage() {
 
 let composerValue = '';
 let histories = [];
-let task = TASKS[0].id;
+let task = initialTaskSeed ?? TASKS[0].id;
 let knowledgeGraphs = new Map();
 let past = null;
 let connectionStatus = 'initial';
@@ -48,13 +55,16 @@ let statusPinned = false;
 let running = false;
   let cancelling = false;
   let socket;
-  let persistedSelectedKgs = [];
+  let persistedSelectedKgs = initialKgSeed;
   let composerWrapperEl;
   let composerOffset = 0;
   const COMPOSER_OFFSET_BUFFER = 0;
   let pendingCancelSignal = false;
   let pendingLoadId = loadId;
   let lastInputRecord = null;
+  let urlSelectedKgs = initialKgSeed.length ? [...initialKgSeed] : null;
+  let urlSelectedTask = initialTaskSeed;
+  let pendingUrlReset = false;
 
   $: hasHistory = histories.length > 0;
   $: knowledgeGraphList = Array.from(knowledgeGraphs.entries()).map(
@@ -150,6 +160,37 @@ let running = false;
       }
     } catch (error) {
       console.warn('Failed to restore persisted data', error);
+    } finally {
+      applyUrlStateOverrides();
+    }
+  }
+
+  function applyUrlStateOverrides() {
+    const hasTask = typeof urlSelectedTask === 'string' && urlSelectedTask;
+    const hasKgs =
+      Array.isArray(urlSelectedKgs) && urlSelectedKgs.length > 0;
+    if (!hasTask && !hasKgs) {
+      urlSelectedTask = null;
+      urlSelectedKgs = null;
+      return;
+    }
+
+    let shouldResetUrl = false;
+    if (hasTask) {
+      task = urlSelectedTask;
+      persistTask(task);
+      shouldResetUrl = true;
+    }
+    if (hasKgs) {
+      persistedSelectedKgs = [...urlSelectedKgs];
+      persistSelectedKgs(urlSelectedKgs);
+      shouldResetUrl = true;
+    }
+    urlSelectedTask = null;
+    urlSelectedKgs = null;
+    if (shouldResetUrl) {
+      scheduleUrlReset();
+      clearHistory('full');
     }
   }
 
@@ -566,12 +607,42 @@ let running = false;
   }
 
   function replaceUrlWithRoot() {
+    scheduleUrlReset();
+  }
+
+  function scheduleUrlReset() {
     if (typeof window === 'undefined') return;
-    try {
-      replaceState('/', {});
-    } catch (error) {
-      console.warn('Failed to reset URL to root', error);
+    if (pendingUrlReset) return;
+    pendingUrlReset = true;
+    setTimeout(async () => {
+      pendingUrlReset = false;
+      try {
+        const normalizedBase = normalizeBasePath(base);
+        const targetPath = normalizedBase || '/';
+        const currentPath = window.location.pathname;
+        const samePath =
+          currentPath === targetPath ||
+          (targetPath !== '/' && currentPath === `${targetPath}/`);
+        const hasExtras =
+          window.location.search !== '' || window.location.hash !== '';
+        if (samePath && !hasExtras) {
+          return;
+        }
+        await tick();
+        replaceState('/', {});
+      } catch (error) {
+        console.warn('Failed to reset URL to root', error);
+      }
+    }, 0);
+  }
+
+  function normalizeBasePath(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+      return '';
     }
+    const trimmed = value.trim().replace(/\/+$/, '');
+    if (!trimmed) return '';
+    return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
   }
 
   function reloadPage() {
@@ -808,6 +879,24 @@ let running = false;
     if (!match) return undefined;
     const code = Number.parseInt(match[1], 10);
     return Number.isNaN(code) ? undefined : code;
+  }
+
+  function sanitizeInitialKgs(input) {
+    if (!Array.isArray(input)) return [];
+    const seen = new Set();
+    const sanitized = [];
+    for (const candidate of input) {
+      if (typeof candidate !== 'string') continue;
+      const trimmed = candidate.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      sanitized.push(trimmed);
+    }
+    return sanitized;
+  }
+
+  function isValidTaskId(value) {
+    return typeof value === 'string' && VALID_TASK_IDS.has(value);
   }
 
 </script>

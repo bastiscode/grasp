@@ -38,7 +38,7 @@
     display: flex;
     justify-content: space-between;
     gap: var(--spacing-md);
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     margin-bottom: var(--spacing-xs);
   }
@@ -47,6 +47,8 @@
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-sm);
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .message-card__marker {
@@ -71,6 +73,8 @@
     gap: var(--spacing-sm);
     align-items: center;
     justify-content: flex-end;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .message-card__meta :global(.meta-group) {
@@ -97,17 +101,6 @@
   }
 
   @media (max-width: 720px) {
-    .message-card__header {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .message-card__meta {
-      width: 100%;
-      justify-content: flex-start;
-      gap: var(--spacing-xs);
-    }
-
     .message-card__meta :global(.meta-group) {
       flex-wrap: wrap;
       gap: var(--spacing-xs);
