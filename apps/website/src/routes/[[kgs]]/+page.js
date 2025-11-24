@@ -1,5 +1,7 @@
 import { TASKS } from '$lib/constants.js';
 
+export const prerender = false;
+
 const VALID_TASKS = new Set(TASKS.map((task) => task.id));
 
 export function load({ url, params }) {
