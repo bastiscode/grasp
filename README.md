@@ -205,6 +205,8 @@ echo "Where was Angela Merkel born?" | \
   --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
   -v $GRASP_INDEX_DIR=/data/index \
+  -e HF_HOME=/hf \
+  -v $HF_HOME:/hf \
   --gpus all \
   grasp run configs/run.yaml
 
@@ -214,6 +216,8 @@ docker run --rm \
   --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
   -v $GRASP_INDEX_DIR=/data/index \
+  -e HF_HOME=/hf \
+  -v $HF_HOME:/hf \
   -v $PWD/my_config.yaml:/grasp/server.yaml \
   --gpus all \
   grasp serve server.yaml
