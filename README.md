@@ -33,7 +33,9 @@ Links:
 ```
 apps/
   evaluation/                     # Streamlit app for evaluation
-  grasp/                          # Web app compatible with GRASP server
+  grasp/                          # (Deprecated) Flutter web app compatible
+                                    with GRASP server
+  website/                        # Svelte web app compatible with GRASP server
 bash/                             # Bash scripts to run and evaluate GRASP
 configs/
   run.yaml                        # Config to run GRASP with a single KG
