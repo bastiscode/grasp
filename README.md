@@ -202,6 +202,7 @@ Some example commands are shown below.
 # Answer a single question from stdin
 echo "Where was Angela Merkel born?" | \
   docker run -i --rm \
+  --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
   -v $GRASP_INDEX_DIR=/data/index \
   --gpus all \
@@ -210,6 +211,7 @@ echo "Where was Angela Merkel born?" | \
 # If you want to run a server with your own config,
 # just mount it into the container
 docker run --rm \
+  --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
   -v $GRASP_INDEX_DIR=/data/index \
   -v $PWD/my_config.yaml:/grasp/server.yaml \
