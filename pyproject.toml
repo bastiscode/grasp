@@ -19,6 +19,7 @@ dependencies = [
   # grasp core
   "pydantic>=2.9.0",
   "litellm>=1.65",
+  "tenacity>=9.0.0",
   # utils
   "requests>=2.32.0",
   "tqdm>=4.65.0",
