@@ -84,11 +84,12 @@ Follow these steps to run GRASP. If you want to use Docker, see section
 3. Install GRASP
 
 ```bash
-# From PyPI (recommended)
-pip install grasp-rdf
-
-# Or via git
+# Via git (recommended, up-to-date version)
 pip install git+https://github.com/ad-freiburg/grasp.git@main
+
+# From PyPI (not recommended as of now, at least as long
+# as GRASP is under heavy development)
+pip install grasp-rdf
 ```
 
 4. Set the `GRASP_INDEX_DIR` env variable. Defaults to `$HOME/.grasp/index` if not
