@@ -4,18 +4,19 @@ from search_index import Mapping as SearchIndexMapping
 from grasp.sparql.utils import find_longest_prefix
 
 WIKIDATA_PROPERTY_VARIANTS = {
+    # ordered by most frequently used, dict keeps insertion order
     "wdt": "<http://www.wikidata.org/prop/direct/",
-    "wdtn": "<http://www.wikidata.org/prop/direct-normalized/",
     "p": "<http://www.wikidata.org/prop/",
-    "pq": "<http://www.wikidata.org/prop/qualifier/",
-    "pqn": "<http://www.wikidata.org/prop/qualifier/value-normalized/",
-    "pqv": "<http://www.wikidata.org/prop/qualifier/value/",
-    "pr": "<http://www.wikidata.org/prop/reference/",
-    "prn": "<http://www.wikidata.org/prop/reference/value-normalized/",
-    "prv": "<http://www.wikidata.org/prop/reference/value/",
     "ps": "<http://www.wikidata.org/prop/statement/",
+    "pq": "<http://www.wikidata.org/prop/qualifier/",
+    "pr": "<http://www.wikidata.org/prop/reference/",
+    "wdtn": "<http://www.wikidata.org/prop/direct-normalized/",
     "psn": "<http://www.wikidata.org/prop/statement/value-normalized/",
+    "pqn": "<http://www.wikidata.org/prop/qualifier/value-normalized/",
+    "prn": "<http://www.wikidata.org/prop/reference/value-normalized/",
     "psv": "<http://www.wikidata.org/prop/statement/value/",
+    "pqv": "<http://www.wikidata.org/prop/qualifier/value/",
+    "prv": "<http://www.wikidata.org/prop/reference/value/",
 }
 
 
@@ -48,7 +49,7 @@ class Mapping:
     def denormalize(self, iri: str, variant: str | None) -> str | None:
         return iri
 
-    def default_variants(self) -> set[str] | None:
+    def default_variants(self) -> list[str] | None:
         return None
 
     def __contains__(self, iri: str) -> bool:
@@ -77,5 +78,5 @@ class WikidataPropertyMapping(Mapping):
         pfx = WIKIDATA_PROPERTY_VARIANTS[variant]
         return pfx + iri[len(self.NORM_PREFIX) :]
 
-    def default_variants(self) -> set[str] | None:
-        return set(WIKIDATA_PROPERTY_VARIANTS.keys())
+    def default_variants(self) -> list[str] | None:
+        return list(WIKIDATA_PROPERTY_VARIANTS.keys())

@@ -8,23 +8,29 @@ WHERE {
   # Get ids and their frequencies for score
   { 
     SELECT ?id (COUNT(?id) AS ?freq) WHERE { 
-      ?id fb:type.object.type fb:type.property .
+      # comment out, see reason below
+      # ?id fb:type.object.type fb:type.property .
       ?s ?id ?o 
     } GROUP BY ?id 
   } 
 
-  # Filter for properties
-  ?id fb:type.object.type fb:type.property .
+  # Filter for properties (maybe too restrictive, comment out)
+  # ?id fb:type.object.type fb:type.property .
 
-  # Get label
-  ?id fb:type.object.name ?label .
-  FILTER(LANG(?label) = "en") .
+  # Get label (also maybe too restrictive, comment out too)
+  # e.g. fb:time.event.next_in_series will be excluded if not optional
+  OPTIONAL {
+    ?id fb:type.object.name ?label .
+    FILTER(LANG(?label) = "en") .
+  }
 
   # Get aliases
   OPTIONAL {
     ?id fb:common.topic.alias ?alias
     FILTER(LANG(?alias) = "en")
   }
+
+  FILTER(STRSTARTS(STR(?id), "http://rdf.freebase.com/ns/"))
 }
 GROUP BY ?id
 ORDER BY DESC(MAX(?freq))

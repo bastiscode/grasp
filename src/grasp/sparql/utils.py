@@ -361,7 +361,7 @@ def autocomplete_sparql(
         prefix = parse_to_string(autocomp_parse)
 
         try:
-            _, position = autocomplete_prefix(prefix, parser)
+            *_, position = autocomplete_prefix(prefix, parser)
         except Exception:
             continue
 
@@ -388,7 +388,7 @@ def autocomplete_prefix(
     prefix: str,
     parser: LR1Parser,
     limit: int | None = None,
-) -> tuple[str, Position]:
+) -> tuple[str, str, Position]:
     """
     Autocomplete the SPARQL prefix by running
     it against the SPARQL grammar parser.
@@ -435,21 +435,15 @@ def autocomplete_prefix(
                 s += " )"
         return s
 
-    def fix_last_subselect(parse: dict, var: str):
-        subsel = find(parse, "SubSelect", last=True)
-        if not subsel:
-            return
-
-        selclause = find(subsel, "SelectClause")
-        if selclause is None or len(selclause["children"]) != 3:
-            return
-
-        selclause["children"][-1] = {"name": "Var", "value": f"?{var}"}
-        whereclause = find(subsel, "WhereClause")
-        if whereclause is None:
-            return
-
-        fix_last_subselect(whereclause, var)
+    def find_top_level_triples(parse: dict) -> list[str]:
+        blocks = []
+        for triples in find_all(
+            parse,
+            "TriplesSameSubjectPath",
+            skip={"GraphPatternNotTriples"},
+        ):
+            blocks.append(parse_to_string(triples))
+        return blocks
 
     for i, position in enumerate(Position):
         vars = [uuid.uuid4().hex for _ in range(3 - i)]
@@ -457,46 +451,36 @@ def autocomplete_prefix(
         full_query = prefix.strip() + " " + " ".join(f"?{v}" for v in vars)
         full_query = close_brackets(full_query)
 
+        # check if query is valid now
         try:
             parse, _ = parse_string(full_query, parser)
+            query_type = find(parse, "QueryType")
+            assert query_type is not None
+            query_type = query_type["children"][0]
+            # strip "Query" suffix
+            query_type = query_type["name"][:-5].lower()
         except Exception:
             continue
 
-        # replace all select vars with the last one
         select_var = vars[0]
 
-        # replace first select or ask with select var
-        query = find(parse, "QueryType")
-        assert query is not None
-        query = query["children"][0]
-        if query["name"] == "SelectQuery":
-            select_clause = query["children"][0]
-            select_clause["children"][1:] = [
-                {"name": "DISTINCT", "value": "DISTINCT"},
-                {"name": "VAR1", "value": f"?{select_var}"},
-            ]
-        elif query["name"] == "AskQuery":
-            # ask to select here
-            query["name"] = "SelectQuery"
-            query["children"][0] = {
-                "name": "SelectClause",
-                "children": [
-                    {"name": "SELECT", "value": "SELECT"},
-                    {"name": "DISTINCT", "value": "DISTINCT"},
-                    {"name": "VAR1", "value": f"?{select_var}"},
-                ],
-            }
-        else:
-            continue
+        triple_blocks = find_top_level_triples(parse)
+        if not any(select_var in block for block in triple_blocks):
+            # reset to empty query if selected var is not in triple blocks
+            # because then the result wouuld always be empty
+            triple_blocks = []
 
-        # fix subselects
-        fix_last_subselect(parse, select_var)
-
-        final_query = parse_to_string(parse)
+        final_query = (
+            "SELECT DISTINCT ?"
+            + select_var
+            + " WHERE { "
+            + " . ".join(triple_blocks)
+            + " }"
+        )
         if limit is not None:
             final_query += f" LIMIT {limit}"
 
-        return final_query, position
+        return final_query, query_type, position
 
     raise SPARQLException("Failed to autocomplete prefix")
 
@@ -513,17 +497,7 @@ def query_type(sparql: str, parser: LR1Parser, is_prefix: bool = False) -> str:
 
     query_type = query_type["children"][0]
     name = query_type["name"]
-    match name:
-        case "SelectQuery":
-            return "select"
-        case "ConstructQuery":
-            return "construct"
-        case "DescribeQuery":
-            return "describe"
-        case "AskQuery":
-            return "ask"
-        case _:
-            raise SPARQLException(f'Unknown SPARQL query type "{name}"')
+    return name[:-5].lower()  # remove "Query" suffix
 
 
 def ask_to_select(

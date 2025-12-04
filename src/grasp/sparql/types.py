@@ -185,7 +185,7 @@ class Alternative:
         identifier: str,
         short_identifier: str | None = None,
         label: str | None = None,
-        variants: set[str] | None = None,
+        variants: list[str] | None = None,
         aliases: list[str] | None = None,
         infos: list[str] | None = None,
         matched_alias: int | None = None,
@@ -226,8 +226,9 @@ class Alternative:
     def get_selection_string(
         self,
         max_aliases: int = 5,
+        show_matched_alias: bool = True,
         add_infos: bool = True,
-        include_variants: set[str] | None = None,
+        include_variants: list[str] | None = None,
     ) -> str:
         s = self.get_label() or self.get_identifier()
 
@@ -240,7 +241,7 @@ class Alternative:
         elif self.has_label() and variants:
             parts.append(f"{self.get_identifier()} as {'/'.join(variants)}")
 
-        if self.aliases and self.matched_alias is not None:
+        if show_matched_alias and self.aliases and self.matched_alias is not None:
             alias = clip(self.aliases[self.matched_alias])
             parts.append(f"matched via {alias}")
 
@@ -260,26 +261,6 @@ class Alternative:
 
         return s
 
-    def get_selection_target(self, variant: str | None = None) -> str:
-        s = self.get_label() or self.get_identifier()
-        if variant:
-            s += f" ({variant})"
-        return s
-
-    def get_selection_regex(self) -> str:
-        # matches format of selection label above
-        r = re.escape(self.get_label() or self.get_identifier())
-        if self.variants:
-            r += (
-                re.escape(" (")
-                + "(?:"
-                + "|".join(map(re.escape, self.variants))
-                + ")"
-                + re.escape(")")
-            )
-
-        return r
-
 
 class Selection:
     alternative: Alternative
@@ -294,10 +275,6 @@ class Selection:
     ) -> None:
         self.alternative = alternative
         self.obj_type = obj_type
-        if variant:
-            assert alternative.has_variants() and variant in alternative.variants, (  # type: ignore
-                f"Variant {variant} not in {alternative.variants}"
-            )
         self.variant = variant
 
     def __repr__(self) -> str:

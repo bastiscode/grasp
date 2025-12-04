@@ -1,2 +1,3 @@
 include src/grasp/sparql/grammar/*
 include src/grasp/sparql/queries/*
+include src/grasp/baselines/grisp/grammar/*

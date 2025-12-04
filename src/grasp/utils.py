@@ -165,21 +165,21 @@ def is_error(message: dict) -> bool:
     return message["role"] == "error"
 
 
-def is_invalid_model_output(
-    model_output: dict | None,
+def is_invalid_output(
+    output: dict | None,
     none_output_invalid: bool = False,
 ) -> bool:
-    if model_output is None:
+    if output is None:
         return True
 
-    has_error = model_output.get("error") is not None
+    has_error = output.get("error") is not None
     if has_error:
         return True
 
-    if none_output_invalid and model_output.get("output", None) is None:
+    if none_output_invalid and output.get("output", None) is None:
         return True
 
-    for message in model_output.get("messages", []):
+    for message in output.get("messages", []):
         try:
             # new format
             msg = Message(**message)
@@ -241,3 +241,14 @@ def clip(s: str, max_len: int = 128, respect_word_boundaries: bool = True) -> st
         return clip(s, max_len, respect_word_boundaries=False)
 
     return s[:first] + " ... " + s[last:]
+
+
+def ordered_unique(lst: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for item in lst:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    return unique

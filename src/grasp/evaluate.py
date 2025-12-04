@@ -14,7 +14,7 @@ from grasp.sparql.metrics import f1_score
 from grasp.sparql.types import AskResult, SelectResult
 from grasp.sparql.utils import execute, get_endpoint
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
-from grasp.utils import format_message, is_invalid_evaluation, is_invalid_model_output
+from grasp.utils import format_message, is_invalid_evaluation, is_invalid_output
 
 
 def get_evaluation_file(prediction_file: str) -> str:
@@ -111,7 +111,7 @@ def evaluate_f1(
         assert pred.get("task", "sparql-qa") == "sparql-qa", (
             "Only SPARQL QA task is supported for evaluation"
         )
-        if is_invalid_model_output(pred):
+        if is_invalid_output(pred):
             continue
 
         id = pred["id"]
@@ -271,7 +271,7 @@ def evaluate_with_judge(
                 "Only SPARQL QA task is supported for evaluation"
             )
 
-            if is_invalid_model_output(pred):
+            if is_invalid_output(pred):
                 continue
 
             id = pred["id"]
@@ -344,7 +344,7 @@ def evaluate_with_judge(
                 break
 
             pred = preds[id]
-            if is_invalid_model_output(pred):
+            if is_invalid_output(pred):
                 break
 
             output = pred["output"]

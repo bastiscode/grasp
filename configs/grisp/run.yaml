@@ -1,0 +1,16 @@
+temperature: env(TEMPERATURE:0.4)
+min_p: env(MIN_P:null)
+top_k: env(TOP_K:40)
+top_p: env(TOP_P:0.9)
+repeat_penalty: env(REPEAT_PENALTY:null)
+do_sample: env(DO_SAMPLE:true)
+
+batch_size: env(BATCH_SIZE:8)
+
+skeleton_n: env(SKELETON_N:8)
+skeleton_top_k: env(SKELETON_TOP_K:3)
+
+selection_top_k: env(SELECTION_TOP_K:10)
+autocomplete: env(AUTOCOMPLETE:true)
+backtrack: env(BACKTRACK:true)
+rerank: env(RERANK:true)

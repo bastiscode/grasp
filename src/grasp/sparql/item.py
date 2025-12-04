@@ -4,16 +4,13 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import Optional
 
-from search_index import SearchIndex
-
 from grasp.manager import KgManager
-from grasp.manager.mapping import Mapping
+from grasp.manager.utils import get_common_sparql_prefixes
 from grasp.sparql.types import Alternative, ObjType, Position, Selection
 from grasp.sparql.utils import (
     autocomplete_prefix,
     find_all,
     find_longest_prefix,
-    normalize,
     parse_into_binding,
     parse_string,
 )
@@ -79,29 +76,13 @@ def _byte_span(parse: dict, start: int = sys.maxsize, end: int = 0) -> tuple[int
     return min(start, f), max(end, t)
 
 
-def _mapping(manager: KgManager, obj_type: ObjType) -> Mapping:
-    if obj_type == ObjType.ENTITY:
-        return manager.entity_mapping
-    elif obj_type == ObjType.PROPERTY:
-        return manager.property_mapping
-    else:
-        raise ValueError(f"Invalid object type: {obj_type}")
-
-
-def _index(manager: KgManager, obj_type: ObjType) -> SearchIndex:
-    if obj_type == ObjType.ENTITY:
-        return manager.entity_index
-    elif obj_type == ObjType.PROPERTY:
-        return manager.property_index
-    else:
-        raise ValueError(f"Invalid object type: {obj_type}")
+COMMON_PREFIXES = get_common_sparql_prefixes()
 
 
 def _get_item(
     parse: dict,
     manager: KgManager,
     sparql_encoded: bytes,
-    indexed_prefixes: dict[str, str] | None = None,
 ) -> Item | None:
     # return tuple with identifier, variant, label, synonyms
     # and additional info
@@ -147,12 +128,8 @@ def _get_item(
     # we have an iri
     iri = binding.identifier()
 
-    # check that it is in known prefixes
-    if manager.find_longest_prefix(iri) is None:
-        return None
-
     try:
-        _, position = autocomplete_prefix(prefix, manager.sparql_parser)
+        *_, position = autocomplete_prefix(prefix, manager.sparql_parser)
         if position in [Position.SUBJECT, Position.OBJECT]:
             obj_types = [ObjType.ENTITY]
         else:
@@ -162,25 +139,22 @@ def _get_item(
 
     # check whether the iri is a valid entity or property
     for obj_type in obj_types:
-        map = _mapping(manager, obj_type)
-        norm = map.normalize(iri)
+        norm = manager.normalize(iri, obj_type)
         if norm is None:
             continue
 
         norm_iri, variant = norm
-        if norm_iri not in map:
+        row = manager.get_row(norm_iri, obj_type)
+        if row is None:
             continue
 
-        id = map[norm_iri]
-
-        identifier, *labels = _index(manager, obj_type).get_row(id)
-        label, *synonyms = labels
+        identifier, label, *synonyms = row
 
         alternative = manager.build_alternative(
             identifier,
             label,
             synonyms,
-            variants={variant} if variant else None,
+            variants=[variant] if variant else None,
         )
 
         return Item(
@@ -193,10 +167,8 @@ def _get_item(
     # we know that it is an IRI of another known prefix,
     # e.g. rdfs:label or schema:about, or a unknown entity or property
     # of a known prefix, e.g. wd:Q123456789
-    invalid = False
-    if indexed_prefixes is not None:
-        # check whether iri has an indexed prefix (was expected to be indexed)
-        invalid = find_longest_prefix(iri, indexed_prefixes) is None
+    # if iri has a common prefix, it is not expected to be indexed
+    invalid = find_longest_prefix(iri, COMMON_PREFIXES) is None
 
     return Item(
         alternative=Alternative(
@@ -232,19 +204,10 @@ def natural_sparql_from_items(
 def get_sparql_items(
     sparql: str,
     manager: KgManager,
-    normalized: bool = False,
     is_prefix: bool = False,
 ) -> tuple[str, list[Item]]:
-    sparql = manager.fix_prefixes(
-        sparql,
-        is_prefix=is_prefix,
-        remove_known=True,
-    )
-
-    if normalized:
-        sparql = normalize(sparql, manager.sparql_parser, is_prefix=is_prefix)
-
     sparql_encoded = sparql.encode()
+
     parse, _ = parse_string(
         sparql,
         manager.sparql_parser,

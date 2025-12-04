@@ -1,0 +1,37 @@
+type: env(TYPE:both)
+
+knowledge_graph:
+  kg: env(KG:wikidata)
+  endpoint: env(ENDPOINT:null)
+
+model: env(MODEL:Qwen/Qwen3-4B-Instruct-2507)
+
+train_files:
+  - env(TRAIN_FILE)
+
+val: env(VAL)
+
+num_workers: env(NUM_WORKERS:4)
+do_compile: env(DO_COMPILE:false)
+
+mask_inputs: env(MASK_INPUTS:true)
+batch_size: env(BATCH_SIZE:8)
+gradient_accumulation_steps: env(GRADIENT_ACCUMULATION_STEPS:1)
+num_epochs: env(NUM_EPOCHS:1)
+
+lr: env(LR:1e-4)
+
+lora:
+  r: env(LORA_R:64)
+  alpha: env(LORA_ALPHA:16)
+  target_modules:
+    [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "up_proj",
+      "gate_proj",
+      "down_proj",
+    ]
+  dropout: env(LORA_DROPOUT:0.05)

@@ -23,7 +23,7 @@ from grasp.sparql.utils import (
     load_entity_index_sparql,
     load_property_index_sparql,
 )
-from grasp.utils import get_index_dir
+from grasp.utils import get_index_dir, ordered_unique
 
 
 def download_data(
@@ -235,17 +235,6 @@ def split_at_punctuation(s: str) -> Iterator[str]:
 
     if start < len(s):
         yield s[start:]
-
-
-def ordered_unique(lst: list[str]) -> list[str]:
-    seen = set()
-    unique = []
-    for item in lst:
-        if item in seen:
-            continue
-        seen.add(item)
-        unique.append(item)
-    return unique
 
 
 def prepare_csv(

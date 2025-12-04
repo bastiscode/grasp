@@ -38,6 +38,7 @@ dependencies = [
 # if you want to rebuild the benchmark datasets, see scripts/prepare_benchmark.py,
 # scripts/extract_uniprot_examples.py, and scripts/fix_uniprot_examples.py
 data = ["datasets>=3.3.0", "beautifulsoup4>=4.12.0"]
+grisp = ["transformers>=4.50.0", "neptune>=1.10.0"]
 
 [project.scripts]
 "grasp" = "grasp.cli:main"

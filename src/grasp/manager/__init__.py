@@ -56,7 +56,7 @@ from grasp.sparql.utils import (
     prettify,
     query_type,
 )
-from grasp.utils import clip, format_list
+from grasp.utils import clip, format_list, ordered_unique
 
 
 class KgManager:
@@ -214,18 +214,22 @@ class KgManager:
                     formatted = self.format_iri(identifier)
 
                     # for uri check whether it is in one of the mappings
-                    norm = self.entity_mapping.normalize(identifier)
-                    map = self.entity_mapping
-                    index = self.entity_index
-                    if norm is None or norm[0] not in map:
-                        norm = self.property_mapping.normalize(identifier)
-                        map = self.property_mapping
-                        index = self.property_index
+                    obj_type = ObjType.ENTITY
+                    norm = self.normalize(identifier, obj_type)
 
-                    if norm is not None and norm[0] in map:
-                        name = clip(index.get_name(map[norm[0]]))
-                        formatted = f"{name} ({formatted})"
+                    if norm is None or self.get_id(norm[0], obj_type) is None:
+                        obj_type = ObjType.PROPERTY
+                        norm = self.normalize(identifier, obj_type)
 
+                    # still not found, just output the formatted iri
+                    if norm is None or self.get_id(norm[0], obj_type) is None:
+                        formatted_row.append(formatted)
+                        continue
+
+                    # fetch name
+                    name = self.get_name(norm[0], obj_type)  # prefetch name
+                    assert name is not None, "should not happen"
+                    formatted = f"{clip(name)} ({formatted})"
                     formatted_row.append(formatted)
 
             return formatted_row
@@ -330,20 +334,73 @@ class KgManager:
             sort,
         )
 
+    def normalize(
+        self,
+        identifier: str,
+        obj_type: ObjType,
+    ) -> tuple[str, str | None] | None:
+        if obj_type == ObjType.ENTITY:
+            return self.entity_mapping.normalize(identifier)
+        elif obj_type == ObjType.PROPERTY:
+            return self.property_mapping.normalize(identifier)
+        else:
+            return None
+
+    def denormalize(
+        self,
+        identifier: str,
+        obj_type: ObjType,
+        variant: str | None = None,
+    ) -> str | None:
+        if obj_type == ObjType.ENTITY:
+            return self.entity_mapping.denormalize(identifier, variant)
+        elif obj_type == ObjType.PROPERTY:
+            return self.property_mapping.denormalize(identifier, variant)
+        else:
+            return None
+
+    def get_id(self, identifier: str, obj_type: ObjType) -> int | None:
+        if obj_type == ObjType.ENTITY:
+            return self.entity_mapping.get(identifier)
+        elif obj_type == ObjType.PROPERTY:
+            return self.property_mapping.get(identifier)
+        else:
+            return None
+
+    def get_name(self, identifier: str, obj_type: ObjType) -> str | None:
+        id = self.get_id(identifier, obj_type)
+        if id is None:
+            return None
+
+        if obj_type == ObjType.ENTITY:
+            return self.entity_index.get_name(id)
+        else:
+            return self.property_index.get_name(id)
+
+    def get_row(self, identifier: str, obj_type: ObjType) -> list[str] | None:
+        id = self.get_id(identifier, obj_type)
+        if id is None:
+            return None
+
+        if obj_type == ObjType.ENTITY:
+            return self.entity_index.get_row(id)
+        else:
+            return self.property_index.get_row(id)
+
     def build_alternative(
         self,
         identifier: str,
         label: str | None = None,
         synonyms: list[str] | None = None,
         infos: list[str] | None = None,
-        variants: set[str] | None = None,
+        variants: list[str] | None = None,
         matched_synonym: int | None = None,
     ) -> Alternative:
         return Alternative(
             identifier=identifier,
             short_identifier=self.format_iri(identifier),
             label=label,
-            variants=variants,
+            variants=ordered_unique(variants) if variants is not None else None,
             aliases=synonyms,
             infos=sorted(infos, key=len, reverse=True) if infos is not None else None,
             matched_alias=matched_synonym,
@@ -376,24 +433,24 @@ class KgManager:
 
             # typ is uri
             unmatched = True
-            for id_map, map in [
-                (entities, self.entity_mapping),
-                (properties, self.property_mapping),
+            for id_map, obj_type in [
+                (entities, ObjType.ENTITY),
+                (properties, ObjType.PROPERTY),
             ]:
-                norm = map.normalize(identifier)
+                norm = self.normalize(identifier, obj_type)
                 if norm is None:
                     continue
 
                 iri, variant = norm
-                if iri not in map:
+                id = self.get_id(iri, obj_type)
+                if id is None:
                     continue
 
-                id = map[iri]
                 if id not in id_map:
-                    id_map[id] = set()
+                    id_map[id] = []
 
                 if variant is not None:
-                    id_map[id].add(variant)
+                    id_map[id].append(variant)
 
                 unmatched = False
 
@@ -486,8 +543,8 @@ class KgManager:
         index: SearchIndex,
         query: str | None = None,
         k: int = 10,
-        id_map: dict[int, set[str]] | None = None,
-        default_variants: set[str] | None = None,
+        id_map: dict[int, list[str]] | None = None,
+        default_variants: list[str] | None = None,
         info_sparql: str | None = None,
         **search_kwargs: Any,
     ) -> list[Alternative]:
@@ -612,7 +669,7 @@ class KgManager:
         self,
         prefix: str,
         limit: int | None = None,
-    ) -> tuple[str, Position]:
+    ) -> tuple[str, str, Position]:
         return autocomplete_prefix(prefix, self.sparql_parser, limit)
 
     def autocomplete_sparql(

@@ -14,7 +14,7 @@ from universal_ml_utils.io import load_json, load_jsonl
 
 from grasp.model import Message
 from grasp.sparql.utils import load_sparql_parser, prettify
-from grasp.utils import is_invalid_evaluation, is_invalid_model_output
+from grasp.utils import is_invalid_evaluation, is_invalid_output
 
 # Set page configuration
 st.set_page_config(
@@ -149,11 +149,9 @@ def load_ranking_data():
                     if filename not in rankings:
                         rankings[filename] = []
 
-                    rankings[filename].append({
-                        "kg": kg,
-                        "benchmark": benchmark,
-                        "filepath": str(rank_file)
-                    })
+                    rankings[filename].append(
+                        {"kg": kg, "benchmark": benchmark, "filepath": str(rank_file)}
+                    )
 
     return rankings
 
@@ -195,8 +193,9 @@ def calculate_average_steps_and_time(outputs_dict):
             continue
 
         # Count steps (messages that are not user or system)
-        steps = sum(1 for msg in output["messages"]
-                  if msg.get("role") not in ["user", "system"])
+        steps = sum(
+            1 for msg in output["messages"] if msg.get("role") not in ["user", "system"]
+        )
         total_steps += steps
 
         # Get elapsed time
@@ -208,10 +207,7 @@ def calculate_average_steps_and_time(outputs_dict):
     if count == 0:
         return None, None
 
-    return (
-        total_steps / count,
-        total_time / count
-    )
+    return (total_steps / count, total_time / count)
 
 
 def calculate_metrics(
@@ -224,7 +220,7 @@ def calculate_metrics(
 
     num_outputs = len(model_outputs)
     num_invalid_outputs = sum(
-        is_invalid_model_output(output) for output in model_outputs.values()
+        is_invalid_output(output) for output in model_outputs.values()
     )
 
     num_evaluations = len(model_evaluations)
@@ -334,7 +330,7 @@ def load_and_process_data(
                 id
                 for id, evaluation in evaluations.items()
                 if not is_invalid_evaluation(evaluation, empty_target_valid)
-                and not is_invalid_model_output(outputs[id])
+                and not is_invalid_output(outputs[id])
             )
             all_ids.append(valid_ids)
 
@@ -754,9 +750,7 @@ def show_predictions_view(available_data):
     filtered_outputs = {}
     if prediction_type == "Invalid Outputs":
         filtered_outputs = {
-            id: output
-            for id, output in outputs.items()
-            if is_invalid_model_output(output)
+            id: output for id, output in outputs.items() if is_invalid_output(output)
         }
     elif prediction_type == "Invalid Evaluations":
         filtered_outputs = {
@@ -1056,7 +1050,9 @@ def validate_ranking_consistency(benchmark_entries):
                         # The key should be a relative path like "outputs/model.jsonl"
                         # We need to verify it's from the same kg/benchmark
                         if "../" in key or key.startswith("/"):
-                            path_issues.append(f"{kg}/{benchmark}: Prediction file '{key}' uses absolute or parent directory path")
+                            path_issues.append(
+                                f"{kg}/{benchmark}: Prediction file '{key}' uses absolute or parent directory path"
+                            )
 
                 benchmark_key = f"{kg}/{benchmark}"
                 prediction_file_sets[benchmark_key] = prediction_files
@@ -1101,7 +1097,9 @@ def validate_ranking_consistency(benchmark_entries):
         if len(unique_sets) > 1:
             warning_msg = "⚠️ **Inconsistent prediction files detected!** Different benchmarks are comparing different sets of models:\n"
             for i, (file_set, benchmarks) in enumerate(unique_sets.items(), 1):
-                warning_msg += f"\n  Set {i} (used by {', '.join(benchmarks)}): {sorted(file_set)}"
+                warning_msg += (
+                    f"\n  Set {i} (used by {', '.join(benchmarks)}): {sorted(file_set)}"
+                )
             st.warning(warning_msg)
 
 
@@ -1110,7 +1108,9 @@ def show_ranking_view(ranking_data):
     st.title("Ranking View - Cross-Benchmark Comparison")
 
     if not ranking_data:
-        st.warning("No ranking evaluation files found. Please make sure ranking files are in the 'rank' subdirectories.")
+        st.warning(
+            "No ranking evaluation files found. Please make sure ranking files are in the 'rank' subdirectories."
+        )
         return
 
     # Sidebar for ranking model selection
@@ -1125,17 +1125,13 @@ def show_ranking_view(ranking_data):
 
     # Select ranking comparison to view
     selected_ranking = st.sidebar.selectbox(
-        "Select Ranking Comparison",
-        ranking_options,
-        index=0
+        "Select Ranking Comparison", ranking_options, index=0
     )
 
     # Parse and display the ranking name nicely
     model_name, additional_info = parse_model_name(selected_ranking)
     display_name = (
-        f"{model_name} ({additional_info})"
-        if additional_info
-        else model_name
+        f"{model_name} ({additional_info})" if additional_info else model_name
     )
 
     st.subheader(f"Comparison: {display_name}")
@@ -1215,7 +1211,9 @@ def show_ranking_view(ranking_data):
                 for key in rank_data["summary"].keys():
                     if key != "tie":
                         file_path = Path(key)
-                        model_name_parsed, additional_info_parsed = parse_model_name(file_path.stem)
+                        model_name_parsed, additional_info_parsed = parse_model_name(
+                            file_path.stem
+                        )
                         model_display_name = (
                             f"{model_name_parsed} ({additional_info_parsed})"
                             if additional_info_parsed
@@ -1227,13 +1225,17 @@ def show_ranking_view(ranking_data):
 
     # Sort models and assign letters
     sorted_models = sorted(all_models)
-    model_to_letter = {model: chr(65 + i) for i, model in enumerate(sorted_models)}  # A=65 in ASCII
+    model_to_letter = {
+        model: chr(65 + i) for i, model in enumerate(sorted_models)
+    }  # A=65 in ASCII
     letter_to_model = {v: k for k, v in model_to_letter.items()}
 
     # Display model legend
     if sorted_models:
         st.markdown("**Model Legend:**")
-        legend_items = "\n".join([f"- **{model_to_letter[model]}**: {model}" for model in sorted_models])
+        legend_items = "\n".join(
+            [f"- **{model_to_letter[model]}**: {model}" for model in sorted_models]
+        )
         st.markdown(legend_items)
 
     # Process all benchmarks to build comprehensive table (one row per benchmark)
@@ -1268,14 +1270,17 @@ def show_ranking_view(ranking_data):
 
             # Get evaluation counts
             total_evals = len(rank_data.get("evaluations", {}))
-            valid_evals = sum(1 for eval_data in rank_data.get("evaluations", {}).values()
-                            if eval_data.get("err") is None)
+            valid_evals = sum(
+                1
+                for eval_data in rank_data.get("evaluations", {}).values()
+                if eval_data.get("err") is None
+            )
 
             # Build a single row for this benchmark
             row_data = {
                 "KG": kg,
                 "Benchmark": benchmark,
-                "Valid Evals": f"{valid_evals}/{total_evals}"
+                "Valid Evals": f"{valid_evals}/{total_evals}",
             }
 
             # Initialize wins, steps, and time for each model
@@ -1287,11 +1292,13 @@ def show_ranking_view(ranking_data):
             # Process each model in the summary
             for key, value in summary.items():
                 if key == "tie":
-                    tie_count = value['count']
+                    tie_count = value["count"]
                 else:
                     # Parse model name from the prediction file path
                     file_path = Path(key)
-                    model_name_parsed, additional_info_parsed = parse_model_name(file_path.stem)
+                    model_name_parsed, additional_info_parsed = parse_model_name(
+                        file_path.stem
+                    )
                     model_display_name = (
                         f"{model_name_parsed} ({additional_info_parsed})"
                         if additional_info_parsed
@@ -1303,7 +1310,7 @@ def show_ranking_view(ranking_data):
                         model_outputs_cache.get(key, {})
                     )
 
-                    model_wins[model_display_name] = value['count']
+                    model_wins[model_display_name] = value["count"]
                     model_steps[model_display_name] = avg_steps
                     model_time[model_display_name] = avg_time
 
@@ -1314,13 +1321,17 @@ def show_ranking_view(ranking_data):
             for model in sorted_models:
                 letter = model_to_letter[model]
                 wins = model_wins.get(model, 0)
-                percentage = (wins / total_comparisons * 100) if total_comparisons > 0 else 0
+                percentage = (
+                    (wins / total_comparisons * 100) if total_comparisons > 0 else 0
+                )
                 row_data[f"{letter} Wins"] = f"{percentage:.1f}% ({wins})"
                 # Store raw value for determining winner
                 row_data[f"_{letter}_wins_raw"] = wins
 
             # Add ties column
-            tie_percentage = (tie_count / total_comparisons * 100) if total_comparisons > 0 else 0
+            tie_percentage = (
+                (tie_count / total_comparisons * 100) if total_comparisons > 0 else 0
+            )
             row_data["Ties"] = f"{tie_percentage:.1f}% ({tie_count})"
             row_data["_ties_raw"] = tie_count
 
@@ -1337,7 +1348,13 @@ def show_ranking_view(ranking_data):
             row_data["Avg Time"] = " / ".join(time_parts)
 
             # Determine which letter or "Ties" has the max wins
-            max_wins = max([row_data.get(f"_{model_to_letter[model]}_wins_raw", 0) for model in sorted_models] + [row_data["_ties_raw"]])
+            max_wins = max(
+                [
+                    row_data.get(f"_{model_to_letter[model]}_wins_raw", 0)
+                    for model in sorted_models
+                ]
+                + [row_data["_ties_raw"]]
+            )
             row_data["_max_wins"] = max_wins
 
             winner = None
@@ -1374,7 +1391,7 @@ def show_ranking_view(ranking_data):
 
     # Create styling function to highlight winning column
     def highlight_winner(row):
-        styles = [''] * len(row)
+        styles = [""] * len(row)
         row_data = df.iloc[row.name]
         winner = row_data.get("_winner")
 
@@ -1383,7 +1400,9 @@ def show_ranking_view(ranking_data):
             winner_col = f"{winner} Wins" if winner != "Ties" else "Ties"
             if winner_col in display_columns:
                 col_idx = display_columns.index(winner_col)
-                styles[col_idx] = 'background-color: #005500; color: white; font-weight: bold'
+                styles[col_idx] = (
+                    "background-color: #005500; color: white; font-weight: bold"
+                )
 
         return styles
 
@@ -1439,9 +1458,7 @@ def show_ranking_view(ranking_data):
     ]
 
     st.markdown("---")
-    st.subheader(
-        f"Sample Explorer: {selected_kg} / {selected_benchmark}"
-    )
+    st.subheader(f"Sample Explorer: {selected_kg} / {selected_benchmark}")
 
     selected_option = st.selectbox(
         "Select an example:",
@@ -1516,7 +1533,9 @@ def show_ranking_view(ranking_data):
         verdict_value = evaluation_entry.get("verdict")
 
         winning_model_name = None
-        if isinstance(verdict_value, int) and 0 <= verdict_value < len(summary_model_entries):
+        if isinstance(verdict_value, int) and 0 <= verdict_value < len(
+            summary_model_entries
+        ):
             winning_model_name = summary_model_entries[verdict_value]["display_name"]
 
         verdict_display = (
@@ -1605,7 +1624,9 @@ def show_ranking_view(ranking_data):
                             if isinstance(output_entry, dict)
                             else output_entry
                         )
-                        st.info("No structured SPARQL/result/selections/answer available.")
+                        st.info(
+                            "No structured SPARQL/result/selections/answer available."
+                        )
                         st.write(fallback_data)
 
 
@@ -2166,7 +2187,12 @@ def main():
         st.session_state.stored_model_regex = ""
 
     # Create a view selector
-    view_options = ["Benchmark View", "Comprehensive View", "Outputs View", "Ranking View"]
+    view_options = [
+        "Benchmark View",
+        "Comprehensive View",
+        "Outputs View",
+        "Ranking View",
+    ]
     # Benchmark View is the default (index=0)
     selected_view = st.sidebar.radio("Select View", view_options, index=0)
 

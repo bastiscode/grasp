@@ -38,7 +38,7 @@ from grasp.tasks import Task, default_input_field
 from grasp.tasks.examples import ExampleIndex, load_example_indices
 from grasp.utils import (
     get_available_knowledge_graphs,
-    is_invalid_model_output,
+    is_invalid_output,
     parse_parameters,
 )
 
@@ -542,7 +542,7 @@ def run_grasp(args: argparse.Namespace) -> None:
             # overwrite id
             output = outputs[i]
             output["id"] = id
-            if not args.retry_failed or not is_invalid_model_output(
+            if not args.retry_failed or not is_invalid_output(
                 output,
                 args.none_output_invalid,
             ):
