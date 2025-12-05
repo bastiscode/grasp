@@ -3,7 +3,6 @@ import glob
 import json
 import os
 import random
-import re
 import sys
 import time
 from collections import deque
@@ -67,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         help="Knowledge graph to use",
     )
     parser.add_argument(
-        "run_directory",
+        "run",
         type=str,
         help="Path to the training run directory",
     )
@@ -81,6 +80,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="SPARQL endpoint to use for knowledge graph",
+    )
+    parser.add_argument(
+        "--selection-run",
+        type=str,
+        default=None,
+        help="Path to the training run directory for the selection model, "
+        "if different from the main model",
     )
     parser.add_argument(
         "-l",
@@ -216,26 +222,14 @@ def forward_pass(
     position_ids: torch.Tensor | None = None,
     pad_mask: torch.Tensor | None = None,
     cache: Cache | None = None,
-    disable_adapters: bool = False,
 ) -> tuple[torch.Tensor, Cache]:
-    if isinstance(model, PeftModel) and disable_adapters:
-        with model.disable_adapter():
-            output = model(
-                input_ids=token_ids,
-                attention_mask=pad_mask,
-                position_ids=position_ids,
-                past_key_values=cache,
-                use_cache=True,
-            )
-    else:
-        output = model(
-            input_ids=token_ids,
-            attention_mask=pad_mask,
-            position_ids=position_ids,
-            past_key_values=cache,
-            use_cache=True,
-        )
-
+    output = model(
+        input_ids=token_ids,
+        attention_mask=pad_mask,
+        position_ids=position_ids,
+        past_key_values=cache,
+        use_cache=True,
+    )
     return output.logits, output.past_key_values
 
 
@@ -245,7 +239,6 @@ def decode_fn(
     pad_mask: torch.Tensor,
     cache: Cache | None,
     model: PreTrainedModel | PeftModel,
-    disable_adapters: bool = False,
 ) -> tuple[torch.Tensor, Cache]:
     logits, cache = forward_pass(
         model,
@@ -253,7 +246,6 @@ def decode_fn(
         position_ids,
         pad_mask,
         cache,
-        disable_adapters,
     )
     return logits[:, -1], cache
 
@@ -675,6 +667,8 @@ def run(
     manager: KgManager,
     parser: LR1Parser,
     logger: Logger,
+    select_model: PreTrainedModel | PeftModel | None = None,
+    select_tokenizer: PreTrainedTokenizerBase | None = None,
 ) -> str | None:
     skeletons = generate_skeletons(
         model,
@@ -689,8 +683,8 @@ def run(
     for skeleton in skeletons:
         sparql = replace_iris_left_to_right(
             skeleton,
-            model,
-            tokenizer,
+            select_model or model,
+            select_tokenizer or tokenizer,
             cfg,
             question,
             manager,
@@ -712,46 +706,89 @@ def is_invalid_output(output: dict | None, none_output_invalid: bool = False) ->
     )
 
 
-def main(args: argparse.Namespace) -> None:
-    logger = get_logger("GRISP", args.log_level)
-
-    train_cfg_path = os.path.join(args.run_directory, "config.yaml")
-    train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
-
-    run_cfg = GRISPRunConfig(**load_config(args.config))
-    logger.debug(f"Using run configuration:\n{run_cfg.model_dump_json(indent=2)}")
-
-    manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
-    parser = load_sparql_parser()
-
+def find_best_checkpoint(run_directory: str) -> str:
     # all subdir starting with checkpoint-*
-    checkpoints = glob.glob(os.path.join(args.run_directory, "checkpoint-*"))
+    checkpoints = glob.glob(os.path.join(run_directory, "checkpoint-*"))
     assert len(checkpoints) > 0, "No checkpoints found"
 
-    def eval_loss_key(checkpoint_dir: str) -> int:
+    def best_ckpt_key(checkpoint_dir: str) -> int | float:
         path = os.path.join(checkpoint_dir, "trainer_state.json")
         state = load_json(path)
+        global_step = state["global_step"]
+
         log_entry = next(
             (
                 entry
                 for entry in state["log_history"]
-                if entry["step"] == state["global_step"]
-            )
+                if entry["step"] == global_step and entry.get("eval_loss") is not None
+            ),
         )
+        # sort by eval loss
         return log_entry["eval_loss"]
 
-    checkpoints.sort(key=eval_loss_key)
-    best_checkpoint = checkpoints[0]
+    checkpoints.sort(key=best_ckpt_key)
+    return checkpoints[0]
 
-    logger.info(f"Loading checkpoint for {train_cfg.model} from {best_checkpoint}")
+
+def load_model_and_tokenizer(
+    checkpoint: str,
+    device: str = "auto",
+) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
     model = AutoModelForCausalLM.from_pretrained(
-        best_checkpoint,
+        checkpoint,
         dtype="auto",
-        device_map=args.device,
+        device_map=device,
     )
     model.config.use_cache = True
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(train_cfg.model, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model.config.name_or_path,
+        use_fast=True,
+    )
+    return model, tokenizer
+
+
+def main(args: argparse.Namespace) -> None:
+    logger = get_logger("GRISP", args.log_level)
+
+    train_cfg_path = os.path.join(args.run, "config.yaml")
+    train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
+    assert train_cfg.type in ["skeleton", "both"], (
+        "Main run should either be of type 'skeleton' or 'both'"
+    )
+
+    run_cfg = GRISPRunConfig(**load_config(args.config))
+    logger.debug(f"Using run configuration:\n{run_cfg.model_dump_json(indent=2)}")
+
+    best_checkpoint = find_best_checkpoint(args.run)
+    logger.info(f"Loading main checkpoint from {best_checkpoint}")
+    model, tokenizer = load_model_and_tokenizer(best_checkpoint, args.device)
+
+    skeleton_model, skeleton_tokenizer = model, tokenizer
+    selection_model, selection_tokenizer = None, None
+
+    if train_cfg.type == "skeleton":
+        assert args.selection_run is not None, (
+            "Main model is skeleton only, specify selection model separately"
+        )
+        selection_checkpoint = find_best_checkpoint(args.selection_run)
+        logger.info(f"Loading selection checkpoint from {selection_checkpoint}")
+        selection_model, selection_tokenizer = load_model_and_tokenizer(
+            selection_checkpoint,
+            args.device,
+        )
+
+    logger.info(
+        f"Using model {skeleton_model.config.name_or_path} for skeleton generation"  # type: ignore
+        + (" and selection" if selection_model is None else "")
+    )
+    if selection_model is not None:
+        logger.info(
+            f"Using separate model {selection_model.config.name_or_path} for selection"  # type: ignore
+        )
+
+    manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
+    parser = load_sparql_parser()
 
     # adapted from GRASP cli
     run_on_file = args.command == "file"
@@ -832,9 +869,18 @@ def main(args: argparse.Namespace) -> None:
 
         start = time.perf_counter()
 
-        sparql = run(model, tokenizer, run_cfg, ipt, manager, parser, logger)
         try:
-            sparql = run(model, tokenizer, run_cfg, ipt, manager, parser, logger)
+            sparql = run(
+                skeleton_model,
+                skeleton_tokenizer,
+                run_cfg,
+                ipt,
+                manager,
+                parser,
+                logger,
+                selection_model,
+                selection_tokenizer,
+            )
 
             out = {
                 "sparql": None,
