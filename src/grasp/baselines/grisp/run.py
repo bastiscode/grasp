@@ -44,7 +44,7 @@ from grasp.baselines.grisp.data import (
     get_skeleton_prompt,
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
-from grasp.baselines.grisp.utils import load_sparql_parser
+from grasp.baselines.grisp.utils import load_sparql_parser, patch_tokenizer
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.types import (
@@ -54,32 +54,19 @@ from grasp.sparql.types import (
     Selection,
 )
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
-from grasp.utils import get_available_knowledge_graphs
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run GRISP model")
-    parser.add_argument(
-        "knowledge_graph",
-        type=str,
-        choices=get_available_knowledge_graphs(),
-        help="Knowledge graph to use",
-    )
-    parser.add_argument(
-        "run",
-        type=str,
-        help="Path to the training run directory",
-    )
     parser.add_argument(
         "config",
         type=str,
         help="Path to GRISP run configuration",
     )
     parser.add_argument(
-        "--endpoint",
+        "run_directory",
         type=str,
-        default=None,
-        help="SPARQL endpoint to use for knowledge graph",
+        help="Path to the training run directory",
     )
     parser.add_argument(
         "--selection-run",
@@ -198,6 +185,9 @@ MAX_IRIS = 131_072
 
 
 class GRISPRunConfig(BaseModel):
+    kg: str
+    endpoint: str | None = None
+
     temperature: float | None = 0.4
     min_p: float | None = None
     top_k: int | None = 40
@@ -282,7 +272,6 @@ def update_fn(beam: Beam, beam_width: int) -> Beam | None:
 
 
 def get_sample_and_logit_fns(
-    eos_token_id: int,
     temperature: float | None = None,
     top_k: int | None = None,
     top_p: float | None = None,
@@ -291,9 +280,7 @@ def get_sample_and_logit_fns(
     do_sample: bool = True,
     beam_width: int = 1,
 ) -> tuple[SampleFn, list[LogitFn]]:
-    logit_fns = [
-        utils.constrain(lambda beam: beam.info.get("const"), eos_token_id),
-    ]
+    logit_fns = []
     sample_fn = utils.sample() if do_sample else utils.greedy()
 
     keep_min = 2 if beam_width > 1 else 1
@@ -331,14 +318,21 @@ def generate_skeletons(
     token_ids: list[int] = tokenizer.apply_chat_template(
         input,
         add_generation_prompt=True,
-        enable_thinking=False,
     )  # type: ignore
 
-    fmt = tokenizer.decode(token_ids, skip_special_tokens=True)
+    bla = get_skeleton_prompt(
+        manager.kg, question, "SELECT * WHERE { ?s ?p ?o } LIMIT 10"
+    )
+    logger.debug(tokenizer.decode(tokenizer.apply_chat_template(bla)))
+
+    fmt = tokenizer.decode(token_ids)
     logger.debug(f"Generating skeletons:\n{fmt}")
 
+    eos_token_ids = model.generation_config.eos_token_id  # type: ignore
+    if not isinstance(eos_token_ids, list):
+        eos_token_ids = [eos_token_ids]  # type: ignore
+
     sample_fn, logit_fns = get_sample_and_logit_fns(
-        tokenizer.eos_token_id,  # type: ignore
         temperature=cfg.temperature,
         min_p=cfg.min_p,
         top_k=cfg.top_k,
@@ -358,7 +352,7 @@ def generate_skeletons(
                 initial=[Beam(token_ids.copy()) for _ in range(upper - lower)],
                 pad_token_id=tokenizer.pad_token_id,  # type: ignore
                 max_length=tokenizer.model_max_length,
-                stop_fn=lambda beam: beam.last_token_id == tokenizer.eos_token_id,
+                stop_fn=lambda beam: beam.last_token_id in eos_token_ids,  # type: ignore
                 device=next(model.parameters()).device,
                 beam_width=1,
                 score_fn=score_fn,
@@ -379,12 +373,14 @@ def generate_skeletons(
         assert len(beam) == 1
         beam = beam[0]
 
-        if beam.stop_reason != "done":
-            continue
-
         decoded = tokenizer.decode(beam.decoded_token_ids, skip_special_tokens=True)
         logger.debug(f"Generated skeleton with score={score_fn(beam):.5f}:\n{decoded}")
-        if decoded in seen:
+
+        if beam.stop_reason != "done":
+            logger.debug("Generation for skeleton did not finish, skipping")
+            continue
+
+        elif decoded in seen:
             logger.debug("Already seen skeleton, skipping")
             continue
 
@@ -426,10 +422,9 @@ def reorder_alternatives(
     input_ids = tokenizer.apply_chat_template(
         prompt,
         add_generation_prompt=True,
-        enable_thinking=False,
     )  # type: ignore
 
-    fmt = tokenizer.decode(input_ids, skip_special_tokens=True)
+    fmt = tokenizer.decode(input_ids)
     logger.debug(f"Reranking alternatives:\n{fmt}")
 
     device = next(model.parameters()).device
@@ -731,9 +726,13 @@ def find_best_checkpoint(run_directory: str) -> str:
 
 
 def load_model_and_tokenizer(
-    checkpoint: str,
-    device: str = "auto",
+    directory: str,
+    device: str,
+    logger: Logger,
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
+    checkpoint = find_best_checkpoint(directory)
+    logger.info(f"Best checkpoint found at {checkpoint}")
+
     model = AutoModelForCausalLM.from_pretrained(
         checkpoint,
         dtype="auto",
@@ -741,17 +740,18 @@ def load_model_and_tokenizer(
     )
     model.config.use_cache = True
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(
-        model.config.name_or_path,
-        use_fast=True,
-    )
+    logger.info(f"Loaded model {model.config.name_or_path}:\n{model}")
+
+    tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)
+    tokenizer = patch_tokenizer(tokenizer)
+
     return model, tokenizer
 
 
 def main(args: argparse.Namespace) -> None:
     logger = get_logger("GRISP", args.log_level)
 
-    train_cfg_path = os.path.join(args.run, "config.yaml")
+    train_cfg_path = os.path.join(args.run_directory, "config.yaml")
     train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
     assert train_cfg.type in ["skeleton", "both"], (
         "Main run should either be of type 'skeleton' or 'both'"
@@ -760,22 +760,21 @@ def main(args: argparse.Namespace) -> None:
     run_cfg = GRISPRunConfig(**load_config(args.config))
     logger.debug(f"Using run configuration:\n{run_cfg.model_dump_json(indent=2)}")
 
-    best_checkpoint = find_best_checkpoint(args.run)
-    logger.info(f"Loading main checkpoint from {best_checkpoint}")
-    model, tokenizer = load_model_and_tokenizer(best_checkpoint, args.device)
+    logger.info(f"Loading model from {args.run_directory}")
+    model, tokenizer = load_model_and_tokenizer(args.run_directory, args.device, logger)
 
     skeleton_model, skeleton_tokenizer = model, tokenizer
     selection_model, selection_tokenizer = None, None
 
-    if train_cfg.type == "skeleton":
+    if train_cfg.type == "skeleton" and False:
         assert args.selection_run is not None, (
             "Main model is skeleton only, specify selection model separately"
         )
-        selection_checkpoint = find_best_checkpoint(args.selection_run)
-        logger.info(f"Loading selection checkpoint from {selection_checkpoint}")
+        logger.info(f"Loading selection model from {args.selection_run}")
         selection_model, selection_tokenizer = load_model_and_tokenizer(
-            selection_checkpoint,
+            args.selection_run,
             args.device,
+            logger,
         )
 
     logger.info(
@@ -787,7 +786,7 @@ def main(args: argparse.Namespace) -> None:
             f"Using separate model {selection_model.config.name_or_path} for selection"  # type: ignore
         )
 
-    manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
+    manager = load_kg_manager(KgConfig(kg=run_cfg.kg, endpoint=run_cfg.endpoint))
     parser = load_sparql_parser()
 
     # adapted from GRASP cli

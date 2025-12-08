@@ -5,6 +5,7 @@ knowledge_graph:
   endpoint: env(ENDPOINT:null)
 
 model: env(MODEL:Qwen/Qwen3-4B-Instruct-2507)
+eos_token: env(EOS:null)
 
 train_files:
   - env(TRAIN_FILE)
@@ -19,19 +20,14 @@ batch_size: env(BATCH_SIZE:8)
 gradient_accumulation_steps: env(GRADIENT_ACCUMULATION_STEPS:1)
 num_epochs: env(NUM_EPOCHS:1)
 
+skeleton_p: env(SKELETON_P:0.2)
+selection_p: env(SELECTION_P:0.2)
+
 lr: env(LR:1e-4)
 
 lora:
-  r: env(LORA_R:64)
-  alpha: env(LORA_ALPHA:16)
-  target_modules:
-    [
-      "q_proj",
-      "k_proj",
-      "v_proj",
-      "o_proj",
-      "up_proj",
-      "gate_proj",
-      "down_proj",
-    ]
+  r: env(LORA_R:32)
+  alpha: env(LORA_ALPHA:32)
   dropout: env(LORA_DROPOUT:0.05)
+  target_modules: env(LORA_TARGET_MODULES:all-linear)
+  save_modules: env(LORA_SAVE_MODULES:null)

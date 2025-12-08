@@ -1,5 +1,4 @@
 import argparse
-import collections
 import os
 import random
 import re
@@ -266,7 +265,11 @@ fitting alternative."""
     return messages, list(options)
 
 
-def materialize_skeleton(parts: list[str | IRI], is_val: bool) -> str:
+def materialize_skeleton(
+    parts: list[str | IRI],
+    is_val: bool = False,
+    p: float = 0.2,
+) -> str:
     formatted_parts = []
     for part in parts:
         if isinstance(part, str):
@@ -275,7 +278,7 @@ def materialize_skeleton(parts: list[str | IRI], is_val: bool) -> str:
 
         # choose main label 80% of the time,
         # otherwise choose a random alias if available
-        if not is_val and part.aliases and random.random() < 0.2:
+        if not is_val and part.aliases and random.random() < p:
             iri = random.choice(part.aliases)
         else:
             iri = part.label
@@ -297,13 +300,17 @@ def materialize_sparql(parts: list[str | IRI]) -> str:
     return "".join(formatted_parts)
 
 
-def materialize_sample(sample: GRISPSample, is_val: bool = False) -> tuple[str, str]:
+def materialize_sample(
+    sample: GRISPSample,
+    is_val: bool = False,
+    p: float = 0.2,
+) -> tuple[str, str]:
     if is_val:
         question = sample.questions[0]
     else:
         question = random.choice(sample.questions)
 
-    return question, materialize_skeleton(sample.sparql, is_val)
+    return question, materialize_skeleton(sample.sparql, is_val, p)
 
 
 def get_ranges(
@@ -360,35 +367,25 @@ def tokenize_messages(
         enc: dict = tokenizer.apply_chat_template(
             messages,
             return_dict=True,
-            enable_thinking=False,
         )  # type: ignore
         enc["labels"] = enc["input_ids"]  # type: ignore
         return enc  # type: ignore
 
-    text = tokenizer.apply_chat_template(
+    enc = tokenizer.apply_chat_template(
         messages,
-        tokenize=False,
-        enable_thinking=False,
+        return_assistant_tokens_mask=True,
+        return_dict=True,
     )  # type: ignore
-    assert isinstance(text, str)
-    enc = tokenizer(text, return_offsets_mapping=True)  # type: ignore
-    ranges = get_ranges(messages, text, "assistant")
-    labels = get_masked_labels(
-        enc["input_ids"],  # type: ignore
-        enc["offset_mapping"],  # type: ignore
-        ranges,
-    )
+    mask = enc["assistant_masks"]
+    assert len(mask) == len(enc["input_ids"])
+    labels = [
+        id if mask == 1 else IGNORE_INDEX for id, mask in zip(enc["input_ids"], mask)
+    ]
     return {
         "input_ids": enc["input_ids"],
         "attention_mask": enc["attention_mask"],
         "labels": labels,
     }
-
-
-def format_messages(messages: list[dict[str, str]]) -> str:
-    return "\n\n".join(
-        f"{message['role'].upper()}:\n{message['content']}" for message in messages
-    )
 
 
 def load_samples(file_paths: list[str]) -> list[GRISPSample]:
@@ -406,12 +403,14 @@ class GRISPSkeletonDataset(Dataset):
         tokenizer: PreTrainedTokenizerBase,
         mask_inputs: bool = True,
         is_val: bool = False,
+        p: float = 0.2,
         log_level: str | None = None,
     ) -> None:
         self.samples = samples
         self.tokenizer = tokenizer
         self.mask_inputs = mask_inputs
         self.is_val = is_val
+        self.p = p
 
         self.logger = get_logger(f"GRISP SKELETON DATASET ({is_val=})", log_level)
 
@@ -420,10 +419,16 @@ class GRISPSkeletonDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         sample = self.samples[idx]
-        question, skeleton = materialize_sample(sample, self.is_val)
+        question, skeleton = materialize_sample(sample, self.is_val, self.p)
         prompt = get_skeleton_prompt(sample.kg, question, skeleton)
-        self.logger.debug(f"Sample {idx}:\n{format_messages(prompt)}")
-        return tokenize_messages(prompt, self.tokenizer, self.mask_inputs)
+        output = tokenize_messages(prompt, self.tokenizer, self.mask_inputs)
+
+        self.logger.debug(f"Input:\n{self.tokenizer.decode(output['input_ids'])}")
+        target = self.tokenizer.decode(
+            [label for label in output["labels"] if label != IGNORE_INDEX],
+        )
+        self.logger.debug(f"Target:\n{target}")
+        return output
 
 
 class GRISPSelectionDataset(Dataset):
@@ -434,6 +439,8 @@ class GRISPSelectionDataset(Dataset):
         tokenizer: PreTrainedTokenizerBase,
         mask_inputs: bool = True,
         is_val: bool = False,
+        skeleton_p: float = 0.2,
+        selection_p: float = 0.2,
         log_level: str | None = None,
     ) -> None:
         self.parser = load_sparql_parser()
@@ -441,6 +448,9 @@ class GRISPSelectionDataset(Dataset):
         self.tokenizer = tokenizer
         self.mask_inputs = mask_inputs
         self.is_val = is_val
+
+        self.skeleton_p = skeleton_p
+        self.selection_p = selection_p
 
         self.logger = get_logger(f"GRISP SELECTION DATASET ({is_val=})", log_level)
 
@@ -456,7 +466,7 @@ class GRISPSelectionDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         sample = self.samples[idx]
 
-        question, skeleton = materialize_sample(sample, self.is_val)
+        question, skeleton = materialize_sample(sample, self.is_val, self.skeleton_p)
         sparql = materialize_sparql(sample.sparql)
 
         _, items = get_sparql_items(sparql, self.manager)
@@ -478,7 +488,7 @@ class GRISPSelectionDataset(Dataset):
         # and only check for variant after selection
         _, sparql, query, _ = skeleton.prepare_for_selection()
 
-        k = 10 if self.is_val else random.randint(2, 15)
+        k = 10 if self.is_val else random.randint(2, 10)
 
         alternatives = self.manager.get_selection_alternatives(
             query,
@@ -488,9 +498,9 @@ class GRISPSelectionDataset(Dataset):
         )
         alternatives = alternatives.get(item.obj_type, [])
 
-        drop_infos = not self.is_val and random.random() < 0.2
-        drop_target = not self.is_val and random.random() < 0.2
-        shuffle_alts = not self.is_val and random.random() < 0.2
+        drop_infos = not self.is_val and random.random() < self.selection_p
+        drop_target = not self.is_val and random.random() < self.selection_p
+        shuffle_alts = not self.is_val and random.random() < self.selection_p
         self.logger.debug(
             f"Augmentations: {drop_infos=}, {drop_target=}, {shuffle_alts=}"
         )
@@ -531,8 +541,13 @@ class GRISPSelectionDataset(Dataset):
         option = options[-1] if target_option is None else options[target_option]
         prompt.append({"role": "assistant", "content": option})
 
-        self.logger.debug(f"Sample {idx}:\n{format_messages(prompt)}")
-        return tokenize_messages(prompt, self.tokenizer, self.mask_inputs)
+        output = tokenize_messages(prompt, self.tokenizer, self.mask_inputs)
+        self.logger.debug(f"Input:\n{self.tokenizer.decode(output['input_ids'])}")
+        target = self.tokenizer.decode(
+            [label for label in output["labels"] if label != IGNORE_INDEX],
+        )
+        self.logger.debug(f"Target:\n{target}")
+        return output
 
 
 def pad(values: list[list[int]], pad_value: int, max_length: int) -> torch.Tensor:
@@ -554,7 +569,12 @@ def pad(values: list[list[int]], pad_value: int, max_length: int) -> torch.Tenso
 
 
 class GRISPCollator:
-    def __init__(self, pad_token_id: int, max_length: int) -> None:
+    def __init__(
+        self,
+        pad_token_id: int,
+        max_length: int,
+        log_level: str | int | None = None,
+    ) -> None:
         self.max_length = max_length
         self.pad_values = {
             "input_ids": pad_token_id,
@@ -562,9 +582,15 @@ class GRISPCollator:
             "labels": IGNORE_INDEX,
         }
 
+        self.logger = get_logger("GRISP COLLATOR", log_level)
+        self.logger.info(
+            f"Collating batch items to max length {self.max_length} with the "
+            f"following pad values: {self.pad_values}"
+        )
+
     def __call__(self, batch: list[dict]) -> dict[str, torch.Tensor]:
         assert len(batch) > 0, "Batch must not be empty"
-        return {
+        output = {
             key: pad(
                 [sample[key] for sample in batch],
                 pad_value=self.pad_values[key],
@@ -572,6 +598,18 @@ class GRISPCollator:
             )
             for key in batch[0]
         }
+        # ensure at least one label is not IGNORE_INDEX
+        # to avoid nan issues during training
+        labels = output["labels"]
+        if torch.all(labels == IGNORE_INDEX):
+            self.logger.warning(
+                "No labels for this batch, setting one to"
+                "avoid nan issues during training"
+            )
+            last_dim = labels.shape[1] - 1
+            labels[0, last_dim] = output["input_ids"][0, last_dim]
+
+        return output
 
 
 def parse_args() -> argparse.Namespace:

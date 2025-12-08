@@ -1,3 +1,6 @@
+kg: env(KG)
+endpoint: env(ENDPOINT:null)
+
 temperature: env(TEMPERATURE:0.4)
 min_p: env(MIN_P:null)
 top_k: env(TOP_K:40)

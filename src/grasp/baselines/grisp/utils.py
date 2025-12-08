@@ -61,3 +61,25 @@ def get_continuations(
         continuations.append(cont)
 
     return continuations
+
+
+def patch_tokenizer(tokenizer: PreTrainedTokenizerBase) -> PreTrainedTokenizerBase:
+    # set custom chat template for single turn generation
+    chat_template = """\
+{{- bos_token }}
+{%- for message in messages %}
+    {%- if message['role'] != 'assistant' %}
+        {{- message['role'].capitalize() + ' input:\n' }}
+        {{- message['content'] + '\n\n' }}
+    {%- else %}
+        {{- 'Answer:\n' }}
+        {% generation %}
+        {{- message['content'] + eos_token }}
+        {% endgeneration %}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- 'Answer:\n' }}
+{%- endif %}"""
+    tokenizer.chat_template = chat_template  # type: ignore
+    return tokenizer

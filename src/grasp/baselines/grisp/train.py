@@ -26,14 +26,16 @@ from grasp.baselines.grisp.data import (
     GRISPSkeletonDataset,
     load_samples,
 )
+from grasp.baselines.grisp.utils import patch_tokenizer
 from grasp.configs import KgConfig
 from grasp.manager import load_kg_manager
 
 
 class Lora(BaseModel):
-    r: int = 8
-    lora_alpha: int = 8
-    target_modules: list[str]
+    r: int = 32
+    lora_alpha: int = 32
+    target_modules: list[str] | str = "all-linear"
+    save_modules: list[str] | None = None
     dropout: float = 0.1
 
 
@@ -51,6 +53,10 @@ class GRISPTrainConfig(BaseModel):
     mask_inputs: bool = True
     num_workers: int = 0
     knowledge_graph: KgConfig | None = None
+
+    # data augmentation
+    skeleton_p: float = 0.2
+    selection_p: float = 0.2
 
     # training hyperparameters
     lr: float = 1e-4
@@ -88,14 +94,17 @@ def load_model_and_tokenizer(
     config: GRISPTrainConfig,
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
     model = AutoModelForCausalLM.from_pretrained(config.model, dtype="auto")
-    tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(config.model)
+    tokenizer = patch_tokenizer(tokenizer)
 
     if config.lora is not None:
         peft_config = LoraConfig(
+            task_type="CAUSAL_LM",
             r=config.lora.r,
             lora_alpha=config.lora.lora_alpha,
             target_modules=config.lora.target_modules,
             lora_dropout=config.lora.dropout,
+            modules_to_save=config.lora.save_modules,
         )
         model = get_peft_model(model, peft_config)
         assert isinstance(model, PeftModel)
@@ -135,6 +144,7 @@ def get_datasets(
     }
     if cfg.type == "skeleton":
         dataset_cls = GRISPSkeletonDataset
+        dataset_kwargs["p"] = cfg.skeleton_p
 
     elif cfg.type == "selection":
         dataset_cls = GRISPSelectionDataset
@@ -143,6 +153,8 @@ def get_datasets(
         )
         manager = load_kg_manager(cfg.knowledge_graph)
         dataset_kwargs["manager"] = manager
+        dataset_kwargs["skeleton_p"] = cfg.skeleton_p
+        dataset_kwargs["selection_p"] = cfg.selection_p
         logger.warning("Setting num workers to 0 for selection type training")
         cfg.num_workers = 0
     else:
@@ -204,11 +216,16 @@ def main(args: argparse.Namespace) -> None:
     )
 
     train_data, val_data = get_datasets(config, tokenizer, logger)
-    collator = GRISPCollator(tokenizer.pad_token_id, config.max_length)  # type: ignore
+    collator = GRISPCollator(
+        tokenizer.pad_token_id,  # type: ignore
+        config.max_length,
+        args.log_level,
+    )
 
     run_name = os.path.basename(args.output_dir)
 
     os.makedirs(args.output_dir, exist_ok=True)
+    # save config
     with open(os.path.join(args.output_dir, "config.yaml"), "w") as f:
         yaml.dump(config.model_dump(), f)
 
@@ -239,6 +256,7 @@ def main(args: argparse.Namespace) -> None:
         weight_decay=config.weight_decay,
         num_train_epochs=config.num_epochs,
         seed=config.seed,
+        bf16=True,
         report_to="none",
         run_name=run_name,
         metric_for_best_model="eval_loss",
@@ -250,6 +268,7 @@ def main(args: argparse.Namespace) -> None:
 
     trainer = Trainer(
         model=model,
+        processing_class=tokenizer,
         args=training_args,
         train_dataset=train_data,
         eval_dataset=val_data,
