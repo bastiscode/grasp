@@ -40,3 +40,5 @@ knowledge_graphs:
     entities_type: env(ENTITIES_TYPE:null)
     properties_type: env(PROPERTIES_TYPE:null)
     notes_file: env(KG_NOTES_FILE:null)
+
+port: env(PORT:12345)
