@@ -190,7 +190,7 @@ class GRISPRunConfig(BaseModel):
 
     temperature: float | None = 0.4
     min_p: float | None = None
-    top_k: int | None = 40
+    top_k: int | None = None
     top_p: float | None = 0.9
     repeat_penalty: float | None = None
     do_sample: bool = True
@@ -320,11 +320,6 @@ def generate_skeletons(
         add_generation_prompt=True,
     )  # type: ignore
 
-    bla = get_skeleton_prompt(
-        manager.kg, question, "SELECT * WHERE { ?s ?p ?o } LIMIT 10"
-    )
-    logger.debug(tokenizer.decode(tokenizer.apply_chat_template(bla)))
-
     fmt = tokenizer.decode(token_ids)
     logger.debug(f"Generating skeletons:\n{fmt}")
 
@@ -339,39 +334,37 @@ def generate_skeletons(
         top_p=cfg.top_p,
         repeat_penalty=cfg.repeat_penalty,
         do_sample=cfg.do_sample,
+        beam_width=cfg.skeleton_n,
     )
 
-    score_fn = log_likelihood_score(alpha=0.5)
+    # small penalty for longer sequences
+    score_fn = log_likelihood_score(alpha=0.1)
 
-    beams = []
-    for lower in range(0, cfg.skeleton_n, cfg.batch_size):
-        upper = min(lower + cfg.batch_size, cfg.skeleton_n)
-        batch = consume_generator(
-            beam_search(
-                decode_fn=partial(decode_fn, model=model),
-                initial=[Beam(token_ids.copy()) for _ in range(upper - lower)],
-                pad_token_id=tokenizer.pad_token_id,  # type: ignore
-                max_length=tokenizer.model_max_length,
-                stop_fn=lambda beam: beam.last_token_id in eos_token_ids,  # type: ignore
-                device=next(model.parameters()).device,
-                beam_width=1,
-                score_fn=score_fn,
-                sample_fn=sample_fn,
-                logit_fns=logit_fns,
-                cache_fn=cache_fn,
-                max_new_tokens=1024,
-                return_unfinished=True,
-            )
+    beams = consume_generator(
+        beam_search(
+            decode_fn=partial(decode_fn, model=model),
+            # initial=[Beam(token_ids.copy()) for _ in range(upper - lower)],
+            initial=[Beam(token_ids)],
+            pad_token_id=tokenizer.pad_token_id,  # type: ignore
+            max_length=tokenizer.model_max_length,
+            stop_fn=lambda beam: beam.last_token_id in eos_token_ids,  # type: ignore
+            device=next(model.parameters()).device,
+            beam_width=cfg.skeleton_n,
+            score_fn=score_fn,
+            sample_fn=sample_fn,
+            logit_fns=logit_fns,
+            cache_fn=cache_fn,
+            max_new_tokens=1024,
+            stop_condition="max_outputs",
+            return_unfinished=True,
         )
-        beams.extend(batch)
-
-    beams = sorted(beams, key=lambda beam: score_fn(beam[0]), reverse=True)
+    )[0]
 
     seen = set()
     outputs = []
     for beam in beams:
-        assert len(beam) == 1
-        beam = beam[0]
+        # assert len(beam) == 1
+        # beam = beam[0]
 
         decoded = tokenizer.decode(beam.decoded_token_ids, skip_special_tokens=True)
         logger.debug(f"Generated skeleton with score={score_fn(beam):.5f}:\n{decoded}")
