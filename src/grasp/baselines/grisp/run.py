@@ -7,7 +7,6 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass
-from functools import partial
 from logging import Logger
 
 import torch
@@ -18,23 +17,14 @@ from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    Cache,
-    DynamicCache,
+    GenerationConfig,
     PreTrainedModel,
     PreTrainedTokenizerBase,
 )
 from universal_ml_utils.configuration import load_config
-from universal_ml_utils.decoding import (
-    Beam,
-    LogitFn,
-    SampleFn,
-    beam_search,
-    log_likelihood_score,
-    utils,
-)
 from universal_ml_utils.io import dump_json, dump_jsonl, load_json, load_jsonl
 from universal_ml_utils.logging import get_logger
-from universal_ml_utils.ops import consume_generator, extract_field
+from universal_ml_utils.ops import extract_field
 
 from grasp.baselines.grisp.data import (
     ALT_LABELS,
@@ -44,7 +34,7 @@ from grasp.baselines.grisp.data import (
     get_skeleton_prompt,
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
-from grasp.baselines.grisp.utils import load_sparql_parser, patch_tokenizer
+from grasp.baselines.grisp.utils import load_sparql_parser, set_chat_template
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.types import (
@@ -195,113 +185,14 @@ class GRISPRunConfig(BaseModel):
     repeat_penalty: float | None = None
     do_sample: bool = True
 
-    batch_size: int = 8
-
     skeleton_n: int = 8
     skeleton_top_k: int = 3
 
     selection_top_k: int = 3
     autocomplete: bool = True
     backtrack: bool = True
-    rerank: bool = False
-
-
-def forward_pass(
-    model: PreTrainedModel | PeftModel,
-    token_ids: torch.Tensor,
-    position_ids: torch.Tensor | None = None,
-    pad_mask: torch.Tensor | None = None,
-    cache: Cache | None = None,
-) -> tuple[torch.Tensor, Cache]:
-    output = model(
-        input_ids=token_ids,
-        attention_mask=pad_mask,
-        position_ids=position_ids,
-        past_key_values=cache,
-        use_cache=True,
-    )
-    return output.logits, output.past_key_values
-
-
-def decode_fn(
-    token_ids: torch.Tensor,
-    position_ids: torch.Tensor,
-    pad_mask: torch.Tensor,
-    cache: Cache | None,
-    model: PreTrainedModel | PeftModel,
-) -> tuple[torch.Tensor, Cache]:
-    logits, cache = forward_pass(
-        model,
-        token_ids,
-        position_ids,
-        pad_mask,
-        cache,
-    )
-    return logits[:, -1], cache
-
-
-def cache_fn(
-    cache: Cache,
-    mask: list[int],
-    lengths: list[int],
-) -> Cache:
-    assert isinstance(cache, DynamicCache)
-    max_length = max(lengths)
-    if max(lengths) < cache.get_seq_length():
-        for i in range(len(cache)):
-            print("Truncating cache to max length", max_length)
-            cache.key_cache[i] = cache.key_cache[i][..., -max_length:, :]
-            cache.value_cache[i] = cache.value_cache[i][..., -max_length:, :]
-    cache.reorder_cache(torch.tensor(mask))  # type: ignore
-    return cache
-
-
-def update_fn(beam: Beam, beam_width: int) -> Beam | None:
-    # just update constraint
-    const = beam.info["const"]
-    if const.is_invalid():
-        return None
-
-    if beam_width > 1:
-        # for beam search we need to clone the constraint
-        const = const.clone()
-        beam.info["const"] = const
-
-    const.next(beam.last_token_id)
-    return beam
-
-
-def get_sample_and_logit_fns(
-    temperature: float | None = None,
-    top_k: int | None = None,
-    top_p: float | None = None,
-    min_p: float | None = None,
-    repeat_penalty: float | None = None,
-    do_sample: bool = True,
-    beam_width: int = 1,
-) -> tuple[SampleFn, list[LogitFn]]:
-    logit_fns = []
-    sample_fn = utils.sample() if do_sample else utils.greedy()
-
-    keep_min = 2 if beam_width > 1 else 1
-
-    if repeat_penalty is not None:
-        logit_fns.append(utils.repeat_penalty(repeat_penalty))
-
-    if do_sample and temperature is not None:
-        logit_fns.append(utils.temperature_scaling(temperature))
-
-    if do_sample and top_k is not None:
-        assert top_k > beam_width, "top k must be greater than beam width"
-        logit_fns.append(utils.top_k_masking(top_k))
-
-    if do_sample and top_p is not None:
-        logit_fns.append(utils.nucleus_masking(top_p, keep_min))
-
-    if do_sample and min_p is not None:
-        logit_fns.append(utils.min_p_masking(min_p, keep_min))
-
-    return sample_fn, logit_fns
+    rerank: bool = True
+    check_empty: bool = True
 
 
 def generate_skeletons(
@@ -315,65 +206,50 @@ def generate_skeletons(
 ) -> list[Skeleton]:
     input = get_skeleton_prompt(manager.kg, question)
 
-    token_ids: list[int] = tokenizer.apply_chat_template(
+    device = next(model.parameters()).device
+    enc = tokenizer.apply_chat_template(
         input,
         add_generation_prompt=True,
-    )  # type: ignore
+        return_tensors="pt",
+        return_dict=True,
+    ).to(device)  # type: ignore
+    prompt_length = enc["input_ids"].shape[1]  # type: ignore
 
-    fmt = tokenizer.decode(token_ids)
+    fmt = tokenizer.decode(enc["input_ids"][0])  # type: ignore
     logger.debug(f"Generating skeletons:\n{fmt}")
 
-    eos_token_ids = model.generation_config.eos_token_id  # type: ignore
-    if not isinstance(eos_token_ids, list):
-        eos_token_ids = [eos_token_ids]  # type: ignore
-
-    sample_fn, logit_fns = get_sample_and_logit_fns(
-        temperature=cfg.temperature,
-        min_p=cfg.min_p,
-        top_k=cfg.top_k,
-        top_p=cfg.top_p,
-        repeat_penalty=cfg.repeat_penalty,
-        do_sample=cfg.do_sample,
-        beam_width=cfg.skeleton_n,
+    outputs = model.generate(  # type: ignore
+        **enc,
+        generation_config=GenerationConfig(
+            num_beams=cfg.skeleton_n,
+            temperature=cfg.temperature,
+            top_p=cfg.top_p,
+            top_k=cfg.top_k,
+            min_p=cfg.min_p,
+            repetition_penalty=cfg.repeat_penalty,
+            do_sample=cfg.do_sample,
+            max_new_tokens=1024,
+            renormalize_logits=True,
+            num_return_sequences=cfg.skeleton_n,
+            return_dict_in_generate=True,
+            output_scores=True,
+        ),
     )
 
-    # small penalty for longer sequences
-    score_fn = log_likelihood_score(alpha=0.1)
-
-    beams = consume_generator(
-        beam_search(
-            decode_fn=partial(decode_fn, model=model),
-            # initial=[Beam(token_ids.copy()) for _ in range(upper - lower)],
-            initial=[Beam(token_ids)],
-            pad_token_id=tokenizer.pad_token_id,  # type: ignore
-            max_length=tokenizer.model_max_length,
-            stop_fn=lambda beam: beam.last_token_id in eos_token_ids,  # type: ignore
-            device=next(model.parameters()).device,
-            beam_width=cfg.skeleton_n,
-            score_fn=score_fn,
-            sample_fn=sample_fn,
-            logit_fns=logit_fns,
-            cache_fn=cache_fn,
-            max_new_tokens=1024,
-            stop_condition="max_outputs",
-            return_unfinished=True,
-        )
-    )[0]
-
+    skeletons = []
     seen = set()
-    outputs = []
-    for beam in beams:
-        # assert len(beam) == 1
-        # beam = beam[0]
+    for i in range(len(outputs["sequences"])):
+        token_ids = outputs["sequences"][i]
+        decoded_token_ids = token_ids[prompt_length:]
+        decoded = tokenizer.decode(decoded_token_ids, skip_special_tokens=True)
 
-        decoded = tokenizer.decode(beam.decoded_token_ids, skip_special_tokens=True)
-        logger.debug(f"Generated skeleton with score={score_fn(beam):.5f}:\n{decoded}")
+        if cfg.skeleton_n > 1:
+            score = outputs["sequences_scores"][i].item()
+            logger.debug(f"Generated skeleton with score={score:.5f}:\n{decoded}")
+        else:
+            logger.debug(f"Generated skeleton:\n{decoded}")
 
-        if beam.stop_reason != "done":
-            logger.debug("Generation for skeleton did not finish, skipping")
-            continue
-
-        elif decoded in seen:
+        if decoded in seen:
             logger.debug("Already seen skeleton, skipping")
             continue
 
@@ -384,14 +260,14 @@ def generate_skeletons(
             continue
 
         seen.add(decoded)
-        outputs.append(skeleton)
+        skeletons.append(skeleton)
 
     # only take top k skeletons, others are just for logging
     logger.debug(
-        f"Generated {len(outputs)} valid unique skeletons, "
+        f"Generated {len(skeletons)} valid unique skeletons, "
         f"taking top {cfg.skeleton_top_k}"
     )
-    return outputs[: cfg.skeleton_top_k]
+    return skeletons[: cfg.skeleton_top_k]
 
 
 def reorder_alternatives(
@@ -434,7 +310,8 @@ def reorder_alternatives(
     option_ids = torch.tensor(option_ids, dtype=torch.long, device=device)
 
     # shape [1, S, V]
-    logits, _ = forward_pass(model, input_ids.unsqueeze(0))
+    with torch.inference_mode():
+        logits = model(input_ids.unsqueeze(0)).logits
 
     # get last logits [V]
     logits = logits[0, -1]
@@ -553,6 +430,11 @@ def find_alternatives(
     return Alternatives(deque(alternatives), obj_type)
 
 
+def is_api_failure(exception: Exception) -> bool:
+    exc_msg = str(exception).lower()
+    return "read timeout" in exc_msg or "503" in exc_msg or "504" in exc_msg
+
+
 def replace_iris_left_to_right(
     skeleton: Skeleton,
     model: PreTrainedModel | PeftModel,
@@ -565,7 +447,35 @@ def replace_iris_left_to_right(
     # init empty memo
     memo: dict[str, Alternatives] = {}
 
-    while not skeleton.done:
+    while True:
+        if skeleton.done:
+            if not cfg.check_empty:
+                break
+
+            try:
+                # reject empty queries
+                sparql = skeleton.materialize()
+                logger.debug(f"Checking result of final SPARQL query:\n{sparql}")
+                result = manager.execute_sparql(skeleton.materialize())
+                logger.debug(f"Result:\n{manager.format_sparql_result(result)}")
+                reject = result.is_empty
+            except Exception as e:
+                logger.warning(f"Error executing final SPARQL to check emptiness: {e}")
+                reject = not is_api_failure(e)
+
+            if not reject:
+                break
+
+            elif skeleton.replaced == 0 or not cfg.backtrack:
+                logger.debug("Final SPARQL query is empty, abandoning skeleton")
+                return None
+
+            logger.debug(
+                "Final SPARQL query is empty, backtracking to previous placeholder"
+            )
+            skeleton.pop_selection()
+            continue
+
         prefix, sparql, query, variant = skeleton.prepare_for_selection()
 
         # set alternatives for current placeholder
@@ -736,7 +646,7 @@ def load_model_and_tokenizer(
     logger.info(f"Loaded model {model.config.name_or_path}:\n{model}")
 
     tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)
-    tokenizer = patch_tokenizer(tokenizer)
+    tokenizer = set_chat_template(tokenizer)
 
     return model, tokenizer
 

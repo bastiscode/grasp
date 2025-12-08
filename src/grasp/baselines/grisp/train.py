@@ -3,10 +3,10 @@ import os
 import random
 from logging import Logger
 
-from torch.utils.data import ConcatDataset, Dataset
 import yaml
 from peft import LoraConfig, PeftModel, get_peft_model
 from pydantic import BaseModel
+from torch.utils.data import ConcatDataset, Dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -26,7 +26,7 @@ from grasp.baselines.grisp.data import (
     GRISPSkeletonDataset,
     load_samples,
 )
-from grasp.baselines.grisp.utils import patch_tokenizer
+from grasp.baselines.grisp.utils import set_chat_template
 from grasp.configs import KgConfig
 from grasp.manager import load_kg_manager
 
@@ -36,7 +36,7 @@ class Lora(BaseModel):
     lora_alpha: int = 32
     target_modules: list[str] | str = "all-linear"
     save_modules: list[str] | None = None
-    dropout: float = 0.1
+    dropout: float = 0.05
 
 
 class GRISPTrainConfig(BaseModel):
@@ -49,9 +49,9 @@ class GRISPTrainConfig(BaseModel):
     type: str
     train_files: list[str]
     val: list[str] | float
-    max_length: int = 1024
+    max_length: int = 8192
     mask_inputs: bool = True
-    num_workers: int = 0
+    num_workers: int = 4
     knowledge_graph: KgConfig | None = None
 
     # data augmentation
@@ -59,7 +59,7 @@ class GRISPTrainConfig(BaseModel):
     selection_p: float = 0.2
 
     # training hyperparameters
-    lr: float = 1e-4
+    lr: float = 5e-5
     weight_decay: float = 0.01
     warmup_ratio: float = 0.05
     batch_size: int = 16
@@ -95,7 +95,7 @@ def load_model_and_tokenizer(
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
     model = AutoModelForCausalLM.from_pretrained(config.model, dtype="auto")
     tokenizer = AutoTokenizer.from_pretrained(config.model)
-    tokenizer = patch_tokenizer(tokenizer)
+    tokenizer = set_chat_template(tokenizer)
 
     if config.lora is not None:
         peft_config = LoraConfig(

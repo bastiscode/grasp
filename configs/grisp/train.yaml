@@ -4,8 +4,7 @@ knowledge_graph:
   kg: env(KG:wikidata)
   endpoint: env(ENDPOINT:null)
 
-model: env(MODEL:Qwen/Qwen3-4B-Instruct-2507)
-eos_token: env(EOS:null)
+model: env(MODEL:google/gemma-3-1B-pt)
 
 train_files:
   - env(TRAIN_FILE)
@@ -15,15 +14,16 @@ val: env(VAL)
 num_workers: env(NUM_WORKERS:4)
 do_compile: env(DO_COMPILE:false)
 
+max_length: env(MAX_LENGTH:8192)
 mask_inputs: env(MASK_INPUTS:true)
 batch_size: env(BATCH_SIZE:8)
 gradient_accumulation_steps: env(GRADIENT_ACCUMULATION_STEPS:1)
 num_epochs: env(NUM_EPOCHS:1)
 
-skeleton_p: env(SKELETON_P:0.2)
-selection_p: env(SELECTION_P:0.2)
+skeleton_p: env(SKELETON_P:0.1)
+selection_p: env(SELECTION_P:0.1)
 
-lr: env(LR:1e-4)
+lr: env(LR:5e-5)
 
 lora:
   r: env(LORA_R:32)

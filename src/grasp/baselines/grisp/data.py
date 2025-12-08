@@ -94,13 +94,13 @@ def extract_query_and_variant_from_nl_iri(nl_iri: dict) -> tuple[str, str | None
 class Skeleton:
     @staticmethod
     def parse(sparql: str, parser: LR1Parser) -> "Skeleton":
-        parse = parser.parse(sparql)
-        return Skeleton(sparql, parse)
+        sparql_parse = parser.parse(sparql)
+        return Skeleton(sparql, sparql_parse)
 
-    def __init__(self, sparql: str, parse: dict) -> None:
-        self.parse = parse
+    def __init__(self, sparql: str, sparql_parse: dict) -> None:
+        self.sparql_parse = sparql_parse
         self.sparql_encoded = sparql.encode()
-        self.nl_iris = list(find_all(self.parse, "NL_IRI"))
+        self.nl_iris = list(find_all(self.sparql_parse, "NL_IRI"))
         self.selections: list[Selection] = []
         self.identifiers: list[str] = []
 
@@ -603,7 +603,7 @@ class GRISPCollator:
         labels = output["labels"]
         if torch.all(labels == IGNORE_INDEX):
             self.logger.warning(
-                "No labels for this batch, setting one to"
+                "No labels for this batch, setting one to "
                 "avoid nan issues during training"
             )
             last_dim = labels.shape[1] - 1
