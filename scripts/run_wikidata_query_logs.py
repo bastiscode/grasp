@@ -7,14 +7,15 @@ from typing import Any
 
 import requests
 from tqdm import tqdm
-from universal_ml_utils.io import load_jsonl
+from universal_ml_utils.io import dump_json, load_json, load_jsonl
 
 
 def send_post(
     url: str,
+    idx: int,
     data: Any,
     timeout: int = 300,
-) -> dict | None:
+) -> tuple[int, dict] | None:
     try:
         response = requests.post(
             url,
@@ -25,9 +26,25 @@ def send_post(
             },
             timeout=timeout,
         )
-        return response.json()
+        return idx, response.json()
     except Exception:
         return None
+
+
+def path(idx: int, dir: str) -> str:
+    return os.path.join(dir, f"{idx}.json")
+
+
+def exists(idx: int, dir: str) -> bool:
+    return os.path.exists(path(idx, dir))
+
+
+def failed(idx: int, dir: str) -> bool:
+    try:
+        result = load_json(path(idx, dir))
+        return result is None or "output" not in result or result["output"] is None
+    except Exception:
+        return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +52,7 @@ def parse_args() -> argparse.Namespace:
         description="Send JSONL POST requests to GRASP in parallel."
     )
     parser.add_argument("input_file", help="Path to input JSONL file")
-    parser.add_argument("output_file", help="Path to output JSONL file")
+    parser.add_argument("output_dir", help="Path to output dir")
     parser.add_argument("endpoint", help="GRASP endpoint")
     parser.add_argument(
         "--seed",
@@ -56,40 +73,50 @@ def parse_args() -> argparse.Namespace:
         help="Max parallel requests",
     )
     parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Whether to retry failed samples",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Whether to overwrite the output file if it exists",
+        help="Whether to overwrite the output files if it exists",
     )
     return parser.parse_args()
 
 
 def run(args: argparse.Namespace) -> None:
-    lines = load_jsonl(args.input_file)
+    lines = list(enumerate(load_jsonl(args.input_file)))
     random.seed(args.seed)
     random.shuffle(lines)
 
-    skip = 0
-    if os.path.exists(args.output_file) and not args.overwrite:
-        skip = len(load_jsonl(args.output_file))
-        print(f"Resuming from existing output file, skipping {skip} lines")
+    # filter out existing files
+    lines = [
+        (idx, data)
+        for idx, data in lines
+        if not exists(idx, args.output_dir)
+        or args.overwrite
+        or (args.retry_failed and failed(idx, args.output_dir))
+    ]
 
     # Use a single session for all requests
-    with (
-        ThreadPoolExecutor(max_workers=args.parallel) as executor,
-        open(args.output_file, "a" if skip else "w") as f,
-    ):
+    with ThreadPoolExecutor(max_workers=args.parallel) as executor:
         futures = (
-            executor.submit(send_post, args.endpoint, line, args.timeout)
-            for line in lines[skip:]
+            executor.submit(send_post, args.endpoint, idx, data, args.timeout)
+            for idx, data in lines
         )
 
         for future in tqdm(
             as_completed(futures),
-            total=len(lines) - skip,
+            total=len(lines),
             desc="Processing",
         ):
             result = future.result()
-            f.write(json.dumps(result) + "\n")
+            if result is None:
+                continue
+
+            idx, result = result
+            dump_json(result, path(idx, args.output_dir))
 
 
 if __name__ == "__main__":
