@@ -424,7 +424,7 @@ def reorder_alternatives(
         add_generation_prompt=True,
     )  # type: ignore
 
-    fmt = tokenizer.decode(input_ids)
+    fmt = tokenizer.decode(input_ids)  # type: ignore
     logger.debug(f"Reranking alternatives:\n{fmt}")
 
     device = next(model.parameters()).device
@@ -766,10 +766,11 @@ def main(args: argparse.Namespace) -> None:
     skeleton_model, skeleton_tokenizer = model, tokenizer
     selection_model, selection_tokenizer = None, None
 
-    if train_cfg.type == "skeleton" and False:
-        assert args.selection_run is not None, (
-            "Main model is skeleton only, specify selection model separately"
+    if train_cfg.type == "skeleton" and args.selection_run is None:
+        logger.warning(
+            "Main model is skeleton only, selection quality may be suboptimal"
         )
+    elif train_cfg.type == "skeleton":
         logger.info(f"Loading selection model from {args.selection_run}")
         selection_model, selection_tokenizer = load_model_and_tokenizer(
             args.selection_run,
