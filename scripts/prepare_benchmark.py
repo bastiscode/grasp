@@ -7,7 +7,7 @@ from datasets import load_dataset
 
 from grasp.configs import KgConfig
 from grasp.manager import load_kg_manager
-from grasp.utils import Sample
+from grasp.tasks.sparql_qa.examples import SparqlQaSample as Sample
 
 
 def parse_args() -> argparse.Namespace:
@@ -681,7 +681,7 @@ def prepare(args: argparse.Namespace):
     os.makedirs(args.out_dir, exist_ok=True)
 
     cfg = KgConfig(kg=kg)
-    manager = load_kg_manager("sparql-qa", cfg)
+    manager = load_kg_manager(cfg)
 
     for split, samples in benchmark.items():
         out = os.path.join(args.out_dir, f"{split}.jsonl")
