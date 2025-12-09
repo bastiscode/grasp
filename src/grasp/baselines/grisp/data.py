@@ -1,4 +1,5 @@
 import argparse
+from logging import Logger
 import os
 import random
 import re
@@ -31,6 +32,8 @@ EOR = "</rep>"
 ALT_LABELS = string.ascii_uppercase
 
 IGNORE_INDEX = -100
+
+Messages = list[dict[str, str]]
 
 
 class IRI(BaseModel):
@@ -72,6 +75,19 @@ class GRISPSample(BaseModel):
     @property
     def has_placeholders(self) -> bool:
         return any(isinstance(part, IRI) for part in self.sparql)
+
+
+class GRISPMaterializedSample(BaseModel):
+    skeletons: list[Messages]
+    selections: list[Messages]
+
+    @property
+    def has_skeletons(self) -> bool:
+        return len(self.skeletons) > 0
+
+    @property
+    def has_selections(self) -> bool:
+        return len(self.selections) > 0
 
 
 def extract_value_from_nl_iri(nl_iri: dict) -> str:
@@ -388,12 +404,82 @@ def tokenize_messages(
     }
 
 
-def load_samples(file_paths: list[str]) -> list[GRISPSample]:
+def load_samples(
+    file_paths: list[str],
+    materialized: bool = False,
+) -> list[GRISPSample] | list[GRISPMaterializedSample]:
     samples = []
     for path in file_paths:
         loaded_samples = load_jsonl(path)
-        samples.extend((GRISPSample(**sample) for sample in loaded_samples))
+        samples.extend(
+            (
+                GRISPSample(**sample)
+                if not materialized
+                else GRISPMaterializedSample(**sample)
+                for sample in loaded_samples
+            )
+        )
     return samples
+
+
+def tokenize_and_log(
+    messages: Messages,
+    tokenizer: PreTrainedTokenizerBase,
+    mask_inputs: bool,
+    logger: Logger,
+) -> dict[str, torch.Tensor]:
+    output = tokenize_messages(messages, tokenizer, mask_inputs)
+    logger.debug(f"Input:\n{tokenizer.decode(output['input_ids'])}")
+    target = tokenizer.decode(
+        [label for label in output["labels"] if label != IGNORE_INDEX],
+    )
+    logger.debug(f"Target:\n{target}")
+    return output
+
+
+class GRISPMaterializedSkeletonDataset(Dataset):
+    def __init__(
+        self,
+        samples: list[GRISPMaterializedSample],
+        tokenizer: PreTrainedTokenizerBase,
+        mask_inputs: bool = True,
+        log_level: str | None = None,
+    ) -> None:
+        self.samples = [sample for sample in samples if sample.has_skeletons]
+        self.tokenizer = tokenizer
+        self.mask_inputs = mask_inputs
+
+        self.logger = get_logger(
+            "GRISP MATERIALIZED SKELETON DATASET",
+            log_level,
+        )
+
+        self.counter = {}
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        sample = self.samples[idx]
+
+        count = self.counter.get(idx, 0)
+        self.counter[idx] = count + 1
+
+        messages = sample.skeletons[count % len(sample.skeletons)]
+
+        return tokenize_and_log(
+            messages,
+            self.tokenizer,
+            self.mask_inputs,
+            self.logger,
+        )
+
+
+def prepare_skeleton(
+    sample: GRISPSample, is_val: bool = False, p: float = 0.2
+) -> Messages:
+    question, skeleton = materialize_sample(sample, is_val, p)
+    return get_skeleton_prompt(sample.kg, question, skeleton)
 
 
 class GRISPSkeletonDataset(Dataset):
@@ -419,16 +505,132 @@ class GRISPSkeletonDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         sample = self.samples[idx]
-        question, skeleton = materialize_sample(sample, self.is_val, self.p)
-        prompt = get_skeleton_prompt(sample.kg, question, skeleton)
-        output = tokenize_messages(prompt, self.tokenizer, self.mask_inputs)
 
-        self.logger.debug(f"Input:\n{self.tokenizer.decode(output['input_ids'])}")
-        target = self.tokenizer.decode(
-            [label for label in output["labels"] if label != IGNORE_INDEX],
+        messages = prepare_skeleton(sample, self.is_val, self.p)
+
+        return tokenize_and_log(
+            messages,
+            self.tokenizer,
+            self.mask_inputs,
+            self.logger,
         )
-        self.logger.debug(f"Target:\n{target}")
-        return output
+
+
+class GRISPMaterializedSelectionDataset(Dataset):
+    def __init__(
+        self,
+        samples: list[GRISPMaterializedSample],
+        tokenizer: PreTrainedTokenizerBase,
+        mask_inputs: bool = True,
+        log_level: str | None = None,
+    ) -> None:
+        self.samples = [sample for sample in samples if sample.has_selections]
+        self.tokenizer = tokenizer
+        self.mask_inputs = mask_inputs
+        self.logger = get_logger("GRISP MATERIALIZED SELECTION DATASET", log_level)
+
+        self.counter = {}
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict:
+        sample = self.samples[idx]
+
+        count = self.counter.get(idx, 0)
+        self.counter[idx] = count + 1
+
+        messages = sample.selections[count % len(sample.selections)]
+
+        return tokenize_and_log(
+            messages,
+            self.tokenizer,
+            self.mask_inputs,
+            self.logger,
+        )
+
+
+def prepare_selection(
+    sample: GRISPSample,
+    manager: KgManager,
+    is_val: bool = False,
+    skeleton_p: float = 0.2,
+    selection_p: float = 0.2,
+    selection_min_k: int = 2,
+    selection_max_k: int = 10,
+) -> Messages:
+    question, skeleton = materialize_sample(sample, is_val, skeleton_p)
+    sparql = materialize_sparql(sample.sparql)
+
+    _, items = get_sparql_items(sparql, manager)
+    items = [item for item in items if not item.is_other_or_literal]
+    assert len(items) > 0, "No valid item to replace found in sample"
+
+    parser = load_sparql_parser()
+    skeleton = Skeleton.parse(skeleton, parser)
+
+    upper = random.randint(0, len(items) - 1)
+    for item in items[:upper]:
+        skeleton.add_selection(item.selection, manager)
+
+    item = items[upper]
+    target_alt = item.selection.alternative
+
+    # prefix and variant not used during training
+    # because we dont autocomplete for efficiency
+    # and only check for variant after selection
+    _, sparql, query, _ = skeleton.prepare_for_selection()
+
+    k = selection_max_k if is_val else random.randint(selection_min_k, selection_max_k)
+
+    alternatives = manager.get_selection_alternatives(
+        query,
+        # None means search in the full index corresponding to the obj_type
+        {item.obj_type: None},
+        k,
+    )
+    alternatives = alternatives.get(item.obj_type, [])
+
+    drop_infos = not is_val and random.random() < selection_p
+    drop_target = not is_val and random.random() < selection_p
+    shuffle_alts = not is_val and random.random() < selection_p
+
+    if shuffle_alts:
+        # shuffle all alternatives to counter position bias
+        # only the None alternative should always be last
+        none_alt = alternatives.pop()
+        random.shuffle(alternatives)
+        alternatives.append(none_alt)
+
+    target_option: int | None = None
+    for i, alt in enumerate(alternatives):
+        if drop_infos and alt.infos:
+            alt.infos.clear()
+
+        if alt != target_alt:
+            continue
+
+        # drop target alternative 20% of the time during training
+        if drop_target:
+            alternatives.pop(i)
+        else:
+            target_option = i
+
+        break
+
+    prompt, options = get_selection_prompt_and_options(
+        manager,
+        question,
+        sparql,
+        skeleton.selections,
+        alternatives,
+    )
+
+    # if target option is None, we need to select the last
+    # option, which is the "None of the above" option
+    option = options[-1] if target_option is None else options[target_option]
+    prompt.append({"role": "assistant", "content": option})
+    return prompt
 
 
 class GRISPSelectionDataset(Dataset):
@@ -466,88 +668,20 @@ class GRISPSelectionDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         sample = self.samples[idx]
 
-        question, skeleton = materialize_sample(sample, self.is_val, self.skeleton_p)
-        sparql = materialize_sparql(sample.sparql)
-
-        _, items = get_sparql_items(sparql, self.manager)
-        items = [item for item in items if not item.is_other_or_literal]
-        assert len(items) > 0, "No valid item to replace found in sample"
-
-        skeleton = Skeleton.parse(skeleton, self.parser)
-
-        upper = random.randint(0, len(items) - 1)
-        for item in items[:upper]:
-            skeleton.add_selection(item.selection, self.manager)
-
-        item = items[upper]
-        target_alt = item.selection.alternative
-        self.logger.debug(f"Target alternative: {target_alt.get_selection_string()}")
-
-        # prefix and variant not used during training
-        # because we dont autocomplete for efficiency
-        # and only check for variant after selection
-        _, sparql, query, _ = skeleton.prepare_for_selection()
-
-        k = 10 if self.is_val else random.randint(2, 10)
-
-        alternatives = self.manager.get_selection_alternatives(
-            query,
-            # None means search in the full index corresponding to the obj_type
-            {item.obj_type: None},
-            k,
-        )
-        alternatives = alternatives.get(item.obj_type, [])
-
-        drop_infos = not self.is_val and random.random() < self.selection_p
-        drop_target = not self.is_val and random.random() < self.selection_p
-        shuffle_alts = not self.is_val and random.random() < self.selection_p
-        self.logger.debug(
-            f"Augmentations: {drop_infos=}, {drop_target=}, {shuffle_alts=}"
-        )
-
-        if shuffle_alts:
-            # shuffle all alternatives to counter position bias
-            # only the None alternative should always be last
-            none_alt = alternatives.pop()
-            random.shuffle(alternatives)
-            alternatives.append(none_alt)
-
-        target_option: int | None = None
-        for i, alt in enumerate(alternatives):
-            if drop_infos and alt.infos:
-                alt.infos.clear()
-
-            if alt != target_alt:
-                continue
-
-            # drop target alternative 20% of the time during training
-            if drop_target:
-                alternatives.pop(i)
-            else:
-                target_option = i
-
-            break
-
-        prompt, options = get_selection_prompt_and_options(
+        messages = prepare_selection(
+            sample,
             self.manager,
-            question,
-            sparql,
-            skeleton.selections,
-            alternatives,
+            self.is_val,
+            self.skeleton_p,
+            self.selection_p,
         )
 
-        # if target option is None, we need to select the last
-        # option, which is the "None of the above" option
-        option = options[-1] if target_option is None else options[target_option]
-        prompt.append({"role": "assistant", "content": option})
-
-        output = tokenize_messages(prompt, self.tokenizer, self.mask_inputs)
-        self.logger.debug(f"Input:\n{self.tokenizer.decode(output['input_ids'])}")
-        target = self.tokenizer.decode(
-            [label for label in output["labels"] if label != IGNORE_INDEX],
+        return tokenize_and_log(
+            messages,
+            self.tokenizer,
+            self.mask_inputs,
+            self.logger,
         )
-        self.logger.debug(f"Target:\n{target}")
-        return output
 
 
 def pad(values: list[list[int]], pad_value: int, max_length: int) -> torch.Tensor:

@@ -22,6 +22,8 @@ from universal_ml_utils.logging import get_logger
 
 from grasp.baselines.grisp.data import (
     GRISPCollator,
+    GRISPMaterializedSelectionDataset,
+    GRISPMaterializedSkeletonDataset,
     GRISPSelectionDataset,
     GRISPSkeletonDataset,
     load_samples,
@@ -49,6 +51,7 @@ class GRISPTrainConfig(BaseModel):
     type: str
     train_files: list[str]
     val: list[str] | float
+    materialized: bool = False
     max_length: int = 8192
     mask_inputs: bool = True
     num_workers: int = 4
@@ -112,20 +115,20 @@ def load_model_and_tokenizer(
     return model, tokenizer
 
 
-def get_datasets(
+def load_datasets(
     cfg: GRISPTrainConfig,
     tokenizer: PreTrainedTokenizerBase,
     logger: Logger,
 ) -> tuple[Dataset, Dataset]:
     if cfg.type == "both":
         cfg.type = "skeleton"
-        train_skel, val_skel = get_datasets(
+        train_skel, val_skel = load_datasets(
             cfg,
             tokenizer,
             logger,
         )
         cfg.type = "selection"
-        train_sel, val_sel = get_datasets(
+        train_sel, val_sel = load_datasets(
             cfg,
             tokenizer,
             logger,
@@ -135,7 +138,7 @@ def get_datasets(
         val_data = ConcatDataset([val_skel, val_sel])
         return train_data, val_data
 
-    samples = load_samples(cfg.train_files)
+    samples = load_samples(cfg.train_files, cfg.materialized)
     dataset_kwargs = {
         "samples": samples,
         "tokenizer": tokenizer,
@@ -143,28 +146,36 @@ def get_datasets(
         "log_level": logger.level,
     }
     if cfg.type == "skeleton":
-        dataset_cls = GRISPSkeletonDataset
-        dataset_kwargs["p"] = cfg.skeleton_p
+        if cfg.materialized:
+            dataset_cls = GRISPMaterializedSkeletonDataset
+        else:
+            dataset_cls = GRISPSkeletonDataset
+            dataset_kwargs["p"] = cfg.skeleton_p
 
     elif cfg.type == "selection":
-        dataset_cls = GRISPSelectionDataset
-        assert cfg.knowledge_graph is not None, (
-            "KG config must be provided for selection dataset"
-        )
-        manager = load_kg_manager(cfg.knowledge_graph)
-        dataset_kwargs["manager"] = manager
-        dataset_kwargs["skeleton_p"] = cfg.skeleton_p
-        dataset_kwargs["selection_p"] = cfg.selection_p
-        logger.warning("Setting num workers to 0 for selection type training")
-        cfg.num_workers = 0
+        if cfg.materialized:
+            dataset_cls = GRISPMaterializedSelectionDataset
+        else:
+            dataset_cls = GRISPSelectionDataset
+            assert cfg.knowledge_graph is not None, (
+                "KG config must be provided for selection dataset"
+            )
+            manager = load_kg_manager(cfg.knowledge_graph)
+            dataset_kwargs["manager"] = manager
+            dataset_kwargs["skeleton_p"] = cfg.skeleton_p
+            dataset_kwargs["selection_p"] = cfg.selection_p
+            logger.warning("Setting num workers to 0 for online selection training")
+            cfg.num_workers = 0
     else:
         raise ValueError(f"Unknown train type: {cfg.type}")
 
     train_data = dataset_cls(**dataset_kwargs)
 
     if isinstance(cfg.val, list):
-        dataset_kwargs["samples"] = load_samples(cfg.val)
-        dataset_kwargs["is_val"] = True
+        dataset_kwargs["samples"] = load_samples(cfg.val, cfg.materialized)
+        if not cfg.materialized:
+            dataset_kwargs["is_val"] = True
+
         val_data = dataset_cls(**dataset_kwargs)
         return train_data, val_data
 
@@ -215,7 +226,7 @@ def main(args: argparse.Namespace) -> None:
         f"Trainable parameters: {trainable / 1e6:.2f}M ({trainable / total:.2%})"
     )
 
-    train_data, val_data = get_datasets(config, tokenizer, logger)
+    train_data, val_data = load_datasets(config, tokenizer, logger)
     collator = GRISPCollator(
         tokenizer.pad_token_id,  # type: ignore
         config.max_length,

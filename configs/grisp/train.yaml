@@ -11,6 +11,8 @@ train_files:
 
 val: env(VAL)
 
+materialized: env(MATERIALIZED:false)
+
 num_workers: env(NUM_WORKERS:4)
 do_compile: env(DO_COMPILE:false)
 
