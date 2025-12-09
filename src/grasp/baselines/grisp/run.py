@@ -334,20 +334,14 @@ def reorder_alternatives(
         )
     )
 
-    reranked = []
-    for index in sorted_indices:
-        if index == len(alternatives):
-            break
+    if sorted_indices[0] == len(alternatives):
+        logger.debug(
+            "Top reranked alternative is 'None', returning empty list for selection"
+        )
+        return []
 
-        option = ALT_LABELS[index]
-        alt = alternatives[index]
-        reranked.append(alt)
-    logger.debug(
-        f"Taking the top {len(reranked)} reranked alternatives "
-        "before 'None' for selection in order"
-    )
-
-    return reranked
+    # return reordered alternatives
+    return [alternatives[i] for i in sorted_indices if i < len(alternatives)]
 
 
 @dataclass
@@ -496,6 +490,23 @@ def replace_iris_left_to_right(
             memo[prefix] = alternatives
 
         alternatives = memo[prefix]
+        if cfg.rerank:
+            # use model to rerank alternatives before selecting
+            # will return an empty list if 'None' is top ranked
+            # such that we can continue with backtracking
+            reordered = reorder_alternatives(
+                model,
+                tokenizer,
+                manager,
+                question,
+                sparql,
+                skeleton.selections,
+                list(alternatives.alternatives),
+                logger,
+            )
+
+            alternatives.alternatives = deque(reordered)
+
         if alternatives.is_empty:
             if skeleton.replaced == 0:
                 logger.debug(
@@ -515,21 +526,6 @@ def replace_iris_left_to_right(
             )
             skeleton.pop_selection()
             continue
-
-        elif cfg.rerank:
-            # use model to rerank alternatives before selecting
-            reranked = reorder_alternatives(
-                model,
-                tokenizer,
-                manager,
-                question,
-                sparql,
-                skeleton.selections,
-                list(alternatives.alternatives),
-                logger,
-            )
-
-            alternatives.alternatives = deque(reranked)
 
         # just try out next alternative in order
         alternative = alternatives.pop()
