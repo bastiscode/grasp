@@ -329,51 +329,6 @@ def materialize_sample(
     return question, materialize_skeleton(sample.sparql, is_val, p)
 
 
-def get_ranges(
-    messages: list[dict[str, str]],
-    text: str,
-    role: str,
-) -> list[tuple[int, int]]:
-    ranges = []
-    start = 0
-
-    for i, message in enumerate(messages):
-        if message["role"] != role:
-            continue
-
-        start = text.find(message["content"], start)
-        assert start != -1, "Message content not found in conversation transcript"
-
-        next_message = messages[i + 1] if i + 1 < len(messages) else None
-        if next_message is None:
-            ranges.append((start, len(text)))
-            break
-
-        next_content = next_message["content"]
-        end = text.find(next_content, start + len(message["content"]))
-        assert end != -1, "Next message content not found in conversation transcript"
-        ranges.append((start, end))
-        start = end
-
-    return ranges
-
-
-def get_masked_labels(
-    token_ids: list[int],
-    offsets: list[tuple[int, int]],
-    ranges: list[tuple[int, int]],
-) -> list[int]:
-    labels = []
-
-    for token_id, (off_start, off_end) in zip(token_ids, offsets):
-        if any(off_start >= start and off_end <= end for start, end in ranges):
-            labels.append(token_id)
-        else:
-            labels.append(IGNORE_INDEX)
-
-    return labels
-
-
 def tokenize_messages(
     messages: list[dict[str, str]],
     tokenizer: PreTrainedTokenizerBase,
@@ -392,11 +347,26 @@ def tokenize_messages(
         return_assistant_tokens_mask=True,
         return_dict=True,
     )  # type: ignore
+
     mask = enc["assistant_masks"]
-    assert len(mask) == len(enc["input_ids"])
-    labels = [
-        id if mask == 1 else IGNORE_INDEX for id, mask in zip(enc["input_ids"], mask)
-    ]
+    chat_temp = tokenizer.chat_template
+    assert chat_temp is not None, "Expected chat template to be set in tokenizer"
+    if "{% generation %}" not in chat_temp or all(m == 0 for m in mask):
+        # invalid assitant tokens mask, fallback to computing labels
+        # manually
+        prompt_ids = tokenizer.apply_chat_template(
+            messages[:-1],
+            add_generation_prompt=True,
+        )
+        prompt_len = len(prompt_ids)
+        non_prompt_ids = enc["input_ids"][prompt_len:]
+        labels = [IGNORE_INDEX] * prompt_len + non_prompt_ids
+    else:
+        labels = [
+            id if mask == 1 else IGNORE_INDEX
+            for id, mask in zip(enc["input_ids"], mask, strict=True)
+        ]
+
     return {
         "input_ids": enc["input_ids"],
         "attention_mask": enc["attention_mask"],

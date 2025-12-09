@@ -44,6 +44,7 @@ class Lora(BaseModel):
 class GRISPTrainConfig(BaseModel):
     # model
     model: str
+    overwrite_chat_template: bool = False
     do_compile: bool = False
     lora: Lora | None = None
 
@@ -62,10 +63,10 @@ class GRISPTrainConfig(BaseModel):
     selection_p: float = 0.2
 
     # training hyperparameters
-    lr: float = 5e-5
+    lr: float = 1e-4
     weight_decay: float = 0.01
     warmup_ratio: float = 0.05
-    batch_size: int = 16
+    batch_size: int = 8
     num_epochs: int = 1
     gradient_accumulation_steps: int = 1
     gradient_checkpointing: bool = False
@@ -98,7 +99,8 @@ def load_model_and_tokenizer(
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
     model = AutoModelForCausalLM.from_pretrained(config.model, dtype="auto")
     tokenizer = AutoTokenizer.from_pretrained(config.model)
-    tokenizer = set_chat_template(tokenizer)
+    if config.overwrite_chat_template:
+        tokenizer = set_chat_template(tokenizer)
 
     if config.lora is not None:
         peft_config = LoraConfig(
@@ -255,7 +257,7 @@ def main(args: argparse.Namespace) -> None:
         eval_strategy="steps",
         eval_steps=eval_steps,
         save_strategy="best",
-        save_total_limit=2,
+        save_total_limit=1,
         logging_strategy="steps",
         logging_steps=logging_steps,
         per_device_train_batch_size=config.batch_size,

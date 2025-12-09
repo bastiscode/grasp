@@ -90,9 +90,7 @@ def main(args: argparse.Namespace) -> None:
 
     samples = load_samples([args.input_file])
 
-    kg_manager = load_kg_manager(
-        KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint)
-    )
+    manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
 
     random.seed(args.seed)
     n = args.num_materializations if not args.is_val else 1
@@ -114,7 +112,7 @@ def main(args: argparse.Namespace) -> None:
             selections = [
                 prepare_selection(
                     sample,
-                    kg_manager,
+                    manager,
                     args.is_val,
                     args.skeleton_p,
                     args.selection_p,

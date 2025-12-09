@@ -396,7 +396,13 @@ def find_alternatives(
                 f"Searching for fitting IRIs at position {position.value} "
                 f"with autocompletion SPARQL:\n{autocomp_sparql}"
             )
-            search_items = manager.get_search_items(autocomp_sparql, position, MAX_IRIS)
+            search_items = manager.get_search_items(
+                autocomp_sparql,
+                position,
+                MAX_IRIS,
+                # 6 seconds to execute query
+                (3.5, 6.0),
+            )
 
             total_items = sum(len(v) for v in search_items.values())
             logger.debug(
@@ -456,7 +462,13 @@ def replace_iris_left_to_right(
                 # reject empty queries
                 sparql = skeleton.materialize()
                 logger.debug(f"Checking result of final SPARQL query:\n{sparql}")
-                result = manager.execute_sparql(skeleton.materialize())
+                result = manager.execute_sparql(
+                    skeleton.materialize(),
+                    # 6 seconds to execute query
+                    request_timeout=(3.5, 6.0),
+                    # 3 seconds to read result at max
+                    read_timeout=3.0,
+                )
                 logger.debug(f"Result:\n{manager.format_sparql_result(result)}")
                 reject = result.is_empty
             except Exception as e:
@@ -481,21 +493,6 @@ def replace_iris_left_to_right(
         # set alternatives for current placeholder
         if prefix not in memo:
             alternatives = find_alternatives(manager, cfg, prefix, query, logger)
-            if cfg.rerank:
-                # use model to rerank alternatives before selecting
-                reranked = reorder_alternatives(
-                    model,
-                    tokenizer,
-                    manager,
-                    question,
-                    sparql,
-                    skeleton.selections,
-                    list(alternatives.alternatives),
-                    logger,
-                )
-
-                alternatives.alternatives = deque(reranked)
-
             memo[prefix] = alternatives
 
         alternatives = memo[prefix]
@@ -518,6 +515,21 @@ def replace_iris_left_to_right(
             )
             skeleton.pop_selection()
             continue
+
+        elif cfg.rerank:
+            # use model to rerank alternatives before selecting
+            reranked = reorder_alternatives(
+                model,
+                tokenizer,
+                manager,
+                question,
+                sparql,
+                skeleton.selections,
+                list(alternatives.alternatives),
+                logger,
+            )
+
+            alternatives.alternatives = deque(reranked)
 
         # just try out next alternative in order
         alternative = alternatives.pop()
@@ -646,7 +658,11 @@ def load_model_and_tokenizer(
     logger.info(f"Loaded model {model.config.name_or_path}:\n{model}")
 
     tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)
-    tokenizer = set_chat_template(tokenizer)
+
+    train_cfg_path = os.path.join(directory, "config.yaml")
+    train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
+    if train_cfg.overwrite_chat_template:
+        tokenizer = set_chat_template(tokenizer)
 
     return model, tokenizer
 

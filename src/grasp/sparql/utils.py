@@ -17,8 +17,8 @@ from grasp.sparql.types import AskResult, Binding, Position, SelectResult
 REQUEST_TIMEOUT = (6, 30)
 
 # default read timeout
-# 60 seconds for everything (including receiving the response)
-READ_TIMEOUT = 60
+# if you cannot read the full response in 10 seconds, it is likely too large
+READ_TIMEOUT = 10
 
 QLEVER_API = "https://qlever.dev/api"
 
