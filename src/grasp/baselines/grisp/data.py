@@ -476,7 +476,9 @@ class GRISPMaterializedSkeletonDataset(Dataset):
 
 
 def prepare_skeleton(
-    sample: GRISPSample, is_val: bool = False, p: float = 0.2
+    sample: GRISPSample,
+    is_val: bool = False,
+    p: float = 0.2,
 ) -> Messages:
     question, skeleton = materialize_sample(sample, is_val, p)
     return get_skeleton_prompt(sample.kg, question, skeleton)
@@ -556,8 +558,6 @@ def prepare_selection(
     is_val: bool = False,
     skeleton_p: float = 0.2,
     selection_p: float = 0.2,
-    selection_min_k: int = 2,
-    selection_max_k: int = 10,
 ) -> Messages:
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
@@ -581,7 +581,8 @@ def prepare_selection(
     # and only check for variant after selection
     _, sparql, query, _ = skeleton.prepare_for_selection()
 
-    k = selection_max_k if is_val else random.randint(selection_min_k, selection_max_k)
+    # TODO: fix hardcoded k values
+    k = 10 if is_val else random.randint(2, 10)
 
     alternatives = manager.get_selection_alternatives(
         query,
