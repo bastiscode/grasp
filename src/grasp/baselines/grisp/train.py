@@ -201,7 +201,9 @@ def load_datasets(
     train_data = dataset_cls(**dataset_kwargs)
 
     dataset_kwargs["samples"] = val_samples
-    dataset_kwargs["is_val"] = True
+    if not cfg.materialized:
+        dataset_kwargs["is_val"] = True
+
     val_data = dataset_cls(**dataset_kwargs)
     return train_data, val_data
 
