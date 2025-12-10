@@ -295,6 +295,7 @@ def reorder_alternatives(
 
     fmt = tokenizer.decode(input_ids)  # type: ignore
     logger.debug(f"Reranking alternatives:\n{fmt}")
+    logger.debug(f"Last 10 input ids for reranking: {input_ids[-10:]}")  # type: ignore
 
     device = next(model.parameters()).device
     input_ids = torch.tensor(input_ids, dtype=torch.long, device=device)
@@ -305,6 +306,7 @@ def reorder_alternatives(
             add_special_tokens=False,
         )  # type: ignore
         assert len(option_token_ids) == 1, "Option must be a single token"
+        logger.debug(f"Option '{option}' token id: {option_token_ids[0]}")
         option_ids.append(option_token_ids[0])
 
     option_ids = torch.tensor(option_ids, dtype=torch.long, device=device)
@@ -312,6 +314,7 @@ def reorder_alternatives(
     # shape [1, S, V]
     with torch.inference_mode():
         logits = model(input_ids.unsqueeze(0)).logits
+        logger.debug(f"Score logits shape: {logits.shape}")
 
     # get last logits [V]
     logits = logits[0, -1]
@@ -644,19 +647,21 @@ def load_model_and_tokenizer(
     checkpoint = find_best_checkpoint(directory)
     logger.info(f"Best checkpoint found at {checkpoint}")
 
+    train_cfg_path = os.path.join(directory, "config.yaml")
+    train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
+
     model = AutoModelForCausalLM.from_pretrained(
         checkpoint,
         dtype="auto",
         device_map=device,
     )
+
     model.config.use_cache = True
     model.eval()
     logger.info(f"Loaded model {model.config.name_or_path}:\n{model}")
 
-    tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)
+    tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)  # type: ignore
 
-    train_cfg_path = os.path.join(directory, "config.yaml")
-    train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
     if train_cfg.overwrite_chat_template:
         tokenizer = set_chat_template(tokenizer)
 

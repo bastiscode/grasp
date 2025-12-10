@@ -399,10 +399,13 @@ def tokenize_and_log(
     logger: Logger,
 ) -> dict[str, torch.Tensor]:
     output = tokenize_messages(messages, tokenizer, mask_inputs)
-    logger.debug(f"Input:\n{tokenizer.decode(output['input_ids'])}")
-    target = tokenizer.decode(
-        [label for label in output["labels"] if label != IGNORE_INDEX],
+    logger.debug(f"Sample:\n{tokenizer.decode(output['input_ids'])}")
+    label_ids = [label for label in output["labels"] if label != IGNORE_INDEX]
+    logger.debug(
+        f"Last 10 Input IDS: {output['input_ids'][-10 - len(label_ids) : -len(label_ids)]}"
     )
+    logger.debug(f"Target IDs: {label_ids}")
+    target = tokenizer.decode(label_ids)
     logger.debug(f"Target:\n{target}")
     return output
 
