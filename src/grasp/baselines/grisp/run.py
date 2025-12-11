@@ -188,6 +188,7 @@ class GRISPRunConfig(BaseModel):
     skeleton_n: int = 8
     skeleton_top_k: int = 3
 
+    selection_max_time: float = 60.0
     selection_top_k: int = 3
     autocomplete: bool = True
     backtrack: bool = True
@@ -228,7 +229,7 @@ def generate_skeletons(
             min_p=cfg.min_p,
             repetition_penalty=cfg.repeat_penalty,
             do_sample=cfg.do_sample,
-            max_new_tokens=1024,
+            max_new_tokens=512,
             renormalize_logits=True,
             num_return_sequences=cfg.skeleton_n,
             return_dict_in_generate=True,
@@ -438,7 +439,7 @@ def is_api_failure(exception: Exception) -> bool:
     return "read timeout" in exc_msg or "503" in exc_msg or "504" in exc_msg
 
 
-def replace_iris_left_to_right(
+def select_iris_left_to_right(
     skeleton: Skeleton,
     model: PreTrainedModel | PeftModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -447,10 +448,14 @@ def replace_iris_left_to_right(
     manager: KgManager,
     logger: Logger,
 ) -> str | None:
+    start = time.perf_counter()
     # init empty memo
     memo: dict[str, Alternatives] = {}
 
     while True:
+        if time.perf_counter() - start > cfg.selection_max_time:
+            raise RuntimeError("Exceeded maximum time for GRISP run")
+
         if skeleton.done:
             if not cfg.check_empty:
                 break
@@ -590,15 +595,19 @@ def run(
     )
 
     for skeleton in skeletons:
-        sparql = replace_iris_left_to_right(
-            skeleton,
-            select_model or model,
-            select_tokenizer or tokenizer,
-            cfg,
-            question,
-            manager,
-            logger,
-        )
+        try:
+            sparql = select_iris_left_to_right(
+                skeleton,
+                select_model or model,
+                select_tokenizer or tokenizer,
+                cfg,
+                question,
+                manager,
+                logger,
+            )
+        except Exception as e:
+            logger.warning(f"Error selecting IRIs for skeleton: {e}")
+            break
 
         # take first fully assigned skeleton as final answer
         if sparql is not None:
