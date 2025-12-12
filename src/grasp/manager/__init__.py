@@ -471,7 +471,7 @@ class KgManager:
         self,
         query: str | None = None,
         k: int = 10,
-        id_map: dict[int, set[str]] | None = None,
+        id_map: dict[int, list[str]] | None = None,
         **search_kwargs: Any,
     ) -> list[Alternative]:
         return self.get_index_alternatives(
@@ -488,7 +488,7 @@ class KgManager:
         self,
         query: str | None = None,
         k: int = 10,
-        id_map: dict[int, set[str]] | None = None,
+        id_map: dict[int, list[str]] | None = None,
         **search_kwargs: Any,
     ) -> list[Alternative]:
         return self.get_index_alternatives(
