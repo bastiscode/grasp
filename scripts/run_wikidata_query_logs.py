@@ -47,8 +47,10 @@ def failed_output(output: dict | None) -> bool:
 
     result = output.get("sparql_result", output.get("formatted", ""))
     return (
-        "Got no rows" in result
-        or "SPARQL execution failed" in result
+        # comment this out for now, since it is actually not a failure
+        # in terms of getting a valid response
+        # "Got no rows" in result or
+        "SPARQL execution failed" in result
         or "Error executing SPARQL query over" in result
     )
 
