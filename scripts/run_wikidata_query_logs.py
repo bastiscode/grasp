@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,10 +38,29 @@ def exists(idx: int, dir: str) -> bool:
     return os.path.exists(path(idx, dir))
 
 
+def failed_output(output: dict | None) -> bool:
+    if output is None:
+        return True
+    elif output["type"] == "cancel":
+        # explicit cancel is not a failure
+        return False
+
+    result = output.get("sparql_result", output.get("formatted", ""))
+    return (
+        "Got no rows" in result
+        or "SPARQL execution failed" in result
+        or "Error executing SPARQL query over" in result
+    )
+
+
+def failed_result(result: dict | None) -> bool:
+    return result is None or "output" not in result
+
+
 def failed(idx: int, dir: str) -> bool:
     try:
         result = load_json(path(idx, dir))
-        return result is None or "output" not in result or result["output"] is None
+        return failed_result(result) or failed_output(result["output"])
     except Exception:
         return True
 
