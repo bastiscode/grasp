@@ -1,7 +1,7 @@
 from typing import Any
 
 from grasp.configs import GraspConfig
-from grasp.functions import TaskFunctions
+from grasp.functions import ExecutionResult, TaskFunctions
 from grasp.manager import KgManager
 from grasp.model import Message, Response
 from grasp.sparql.utils import find, find_all, parse_string, parse_to_string
@@ -163,7 +163,7 @@ def prepare_sparql(
     max_rows: int = 10,
     max_columns: int = 10,
     remove_known: bool = False,
-) -> str:
+) -> tuple[ExecutionResult, str]:
     assert len(managers) == 1, "Only one kg manager expected"
     manager = managers[0]
     result, selections = prepare_sparql_result(
@@ -184,7 +184,7 @@ def prepare_sparql(
         except Exception:
             pass
 
-    return format_sparql_result(manager, result, selections)
+    return result, format_sparql_result(manager, result, selections)
 
 
 def input_and_state(
@@ -194,13 +194,14 @@ def input_and_state(
     max_columns: int,
 ) -> tuple[str, None]:
     sparql = clean_sparql(sparql, managers)
-    return prepare_sparql(
+    _, formatted = prepare_sparql(
         sparql,
         managers,
         max_rows,
         max_columns,
         remove_known=True,
-    ), None
+    )
+    return formatted, None
 
 
 def output(
@@ -218,15 +219,22 @@ def output(
             output["type"] = "answer"
             questions = tool_call.args["questions"]
             output["formatted"] = f"Questions:\n{format_list(questions)}\n\n"
-            output["formatted"] += prepare_sparql(
+
+            result, formatted = prepare_sparql(
                 tool_call.args["sparql"],
                 managers,
                 max_rows,
                 max_columns,
             )
 
+            output["sparql_fixed"] = result.sparql
+            output["sparql_result"] = result.formatted
+
+            output["formatted"] += formatted
+
         elif tool_call.name == "cancel":
             output["type"] = "cancel"
+            output["reason"] = tool_call.args["reason"]
             output["formatted"] = f"Cancelled:\n{tool_call.args['reason']}"
 
         else:
