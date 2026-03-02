@@ -59,10 +59,21 @@ def failed_result(result: dict | None) -> bool:
     return result is None or "output" not in result
 
 
-def failed(idx: int, dir: str) -> bool:
+def has_error_reason(result: dict | None, reason: str) -> bool:
+    return (
+        result is not None
+        and result["error"] is not None
+        and result["error"]["reason"] == reason
+    )
+
+
+def failed(idx: int, dir: str, error_reason: str | None) -> bool:
     try:
         result = load_json(path(idx, dir))
-        return failed_result(result) or failed_output(result["output"])
+        is_fail = failed_result(result) or failed_output(result["output"])
+        if error_reason is not None:
+            is_fail = is_fail and has_error_reason(result, error_reason)
+        return is_fail
     except Exception:
         return True
 
@@ -98,6 +109,12 @@ def parse_args() -> argparse.Namespace:
         help="Whether to retry failed samples",
     )
     parser.add_argument(
+        "--error-reason",
+        type=str,
+        default=None,
+        help="Only retry samples that failed with this error reason",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Whether to overwrite the output files if it exists",
@@ -116,7 +133,10 @@ def run(args: argparse.Namespace) -> None:
         for idx, data in lines
         if not exists(idx, args.output_dir)
         or args.overwrite
-        or (args.retry_failed and failed(idx, args.output_dir))
+        or (
+            args.retry_failed is not None
+            and failed(idx, args.output_dir, args.error_reason)
+        )
     ]
 
     # Use a single session for all requests
