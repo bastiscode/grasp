@@ -37,8 +37,6 @@ knowledge_graphs:
   - kg: wikidata
     endpoint: env(KG_ENDPOINT:http://localhost:7001)
     example_index: env(KG_EXAMPLES:null)
-    entities_type: env(ENTITIES_TYPE:null)
-    properties_type: env(PROPERTIES_TYPE:null)
     notes_file: env(KG_NOTES_FILE:null)
 
 port: env(PORT:12345)
