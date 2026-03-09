@@ -78,6 +78,25 @@ def failed(idx: int, dir: str, error_reason: str | None) -> bool:
         return True
 
 
+def valid(idx: int, dir: str) -> bool:
+    return exists(idx, dir) and not failed(idx, dir, None)
+
+
+def should_process(
+    idx: int,
+    output_dir: str,
+    skip_dirs: list[str],
+    overwrite: bool,
+    retry_failed: bool,
+    error_reason: str | None,
+) -> bool:
+    if overwrite:
+        return True
+    if retry_failed and failed(idx, output_dir, error_reason):
+        return True
+    return not exists(idx, output_dir) and not any(valid(idx, d) for d in skip_dirs)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Send JSONL POST requests to GRASP in parallel."
@@ -119,6 +138,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Whether to overwrite the output files if it exists",
     )
+    parser.add_argument(
+        "--skip-dir",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Skip samples that already exist in these directories (e.g. outputs from previous models)",
+    )
     return parser.parse_args()
 
 
@@ -127,15 +153,16 @@ def run(args: argparse.Namespace) -> None:
     random.seed(args.seed)
     random.shuffle(lines)
 
-    # filter out existing files
     lines = [
         (idx, data)
         for idx, data in lines
-        if not exists(idx, args.output_dir)
-        or args.overwrite
-        or (
-            args.retry_failed is not None
-            and failed(idx, args.output_dir, args.error_reason)
+        if should_process(
+            idx,
+            args.output_dir,
+            args.skip_dir,
+            args.overwrite,
+            args.retry_failed,
+            args.error_reason,
         )
     ]
 
