@@ -8,8 +8,10 @@ from grasp.configs import GraspConfig
 from grasp.functions import find_manager
 from grasp.manager import KgManager, format_kgs
 from grasp.model import Message, ToolCall
+from grasp.tasks.base import FeedbackTask, GraspTask
 from grasp.tasks.sparql_qa.examples import (
     SparqlQaExampleIndex,
+    SparqlQaSample,
 )
 from grasp.tasks.sparql_qa.examples import (
     call_function as call_example_function,
@@ -17,7 +19,6 @@ from grasp.tasks.sparql_qa.examples import (
 from grasp.tasks.sparql_qa.examples import (
     functions as example_functions,
 )
-from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import format_list, format_notes
 
@@ -480,12 +481,6 @@ Explanation:
 {output["formatted"]}"""
 
     return prompt
-
-
-# ── Task class ──────────────────────────────────────────────────────────────
-
-
-from grasp.tasks.base import FeedbackTask, GraspTask  # noqa: E402
 
 
 class SparqlQaTask(GraspTask, FeedbackTask):

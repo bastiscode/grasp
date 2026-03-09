@@ -3,6 +3,7 @@ from typing import Any
 from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.model import Message, Response
+from grasp.tasks.sparql_qa import SparqlQaTask
 from grasp.tasks.sparql_qa.examples import (
     SparqlQaExampleIndex,
 )
@@ -82,12 +83,6 @@ def output(messages: list[Message]) -> dict | None:
         "output": last_response.message,
         "formatted": last_response.message,
     }
-
-
-# ── Task class ──────────────────────────────────────────────────────────────
-
-
-from grasp.tasks.sparql_qa import SparqlQaTask  # noqa: E402
 
 
 class GeneralQaTask(SparqlQaTask):

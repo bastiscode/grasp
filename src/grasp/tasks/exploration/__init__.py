@@ -3,8 +3,8 @@ from typing import Any
 from pydantic import BaseModel
 
 from grasp.configs import GraspConfig, NotesConfig, NotesFromExplorationConfig
-from grasp.manager import KgManager
 from grasp.model import Message
+from grasp.tasks.base import GraspTask
 from grasp.tasks.exploration.functions import call_function as call_note_function
 from grasp.tasks.exploration.functions import note_functions
 from grasp.utils import format_list, format_notes
@@ -58,7 +58,7 @@ Examples of potentially useful types of notes include:
 - tips for when and how to use certain functions"""
 
 
-def input(state: ExplorationState) -> str:
+def format_state(state: ExplorationState) -> str:
     kg_specific_notes = format_list(
         f"{kg}:\n{format_notes(kg_specific_notes, indent=2, enumerated=True)}"
         for kg, kg_specific_notes in sorted(state.kg_notes.items())
@@ -96,36 +96,6 @@ General notes across knowledge graphs:
     }
 
 
-def call_function(
-    config: GraspConfig,
-    managers: list[KgManager],
-    fn_name: str,
-    fn_args: dict,
-    known: set[str],
-    state: ExplorationState | None = None,
-    example_indices: dict | None = None,
-) -> str:
-    assert isinstance(config, NotesConfig)
-    assert state is not None, "State must be provided for exploration task"
-    return call_note_function(
-        state.kg_notes,
-        state.notes,
-        fn_name,
-        fn_args,
-        config.max_notes,
-        config.max_note_length,
-    )
-
-
-# ── Task class ──────────────────────────────────────────────────────────────
-
-
-from grasp.tasks.base import GraspTask  # noqa: E402
-
-# save reference before it is shadowed by the method parameter name
-_exploration_input = input
-
-
 class ExplorationTask(GraspTask):
     name = "exploration"
 
@@ -146,8 +116,15 @@ class ExplorationTask(GraspTask):
         state: Any,
         example_indices: dict | None,
     ) -> str:
-        return call_function(
-            self.config, self.managers, fn_name, fn_args, known, state, example_indices
+        assert isinstance(self.config, NotesConfig)
+        assert state is not None, "State must be provided for exploration task"
+        return call_note_function(
+            state.kg_notes,
+            state.notes,
+            fn_name,
+            fn_args,
+            self.config.max_notes,
+            self.config.max_note_length,
         )
 
     def done(self, fn_name: str) -> bool:
@@ -157,7 +134,7 @@ class ExplorationTask(GraspTask):
         assert isinstance(input, ExplorationState), (
             "Input for exploration must already be an ExplorationState"
         )
-        return _exploration_input(input), input
+        return format_state(input), input
 
     def output(self, messages: list[Message], state: Any) -> dict:
         return output(state)

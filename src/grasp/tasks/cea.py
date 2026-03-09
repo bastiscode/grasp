@@ -7,8 +7,10 @@ from universal_ml_utils.table import generate_table
 from grasp.configs import GraspConfig
 from grasp.functions import find_manager
 from grasp.manager import KgManager, format_kgs
+from grasp.model import Message
 from grasp.sparql.types import Alternative, ObjType
 from grasp.sparql.utils import parse_into_binding
+from grasp.tasks.base import FeedbackTask, GraspTask
 from grasp.tasks.examples import Sample
 from grasp.utils import FunctionCallException, format_list, format_notes
 
@@ -461,10 +463,6 @@ def call_function(
         raise ValueError(f"Unknown function {fn_name}")
 
 
-def output(state: AnnotationState) -> dict:
-    return state.to_dict()
-
-
 def feedback_system_message(
     managers: list[KgManager],
     kg_notes: dict[str, list[str]],
@@ -502,13 +500,6 @@ def feedback_instructions(inputs: list[str], output: dict) -> str:
     return prompt
 
 
-# ── Task class ──────────────────────────────────────────────────────────────
-
-
-from grasp.model import Message  # noqa: E402
-from grasp.tasks.base import FeedbackTask, GraspTask  # noqa: E402
-
-
 class CeaTask(GraspTask, FeedbackTask):
     name = "cea"
 
@@ -539,8 +530,8 @@ class CeaTask(GraspTask, FeedbackTask):
     def setup(self, input: Any) -> tuple[str, Any]:
         return input_and_state(input, self.config)
 
-    def output(self, messages: list[Message], state: Any) -> dict:
-        return output(state)
+    def output(self, messages: list[Message], state: AnnotationState) -> dict:
+        return state.to_dict()
 
     @property
     def default_input_field(self) -> str | None:

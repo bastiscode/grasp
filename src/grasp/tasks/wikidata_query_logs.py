@@ -5,24 +5,9 @@ from grasp.functions import ExecutionResult
 from grasp.manager import KgManager
 from grasp.model import Message, Response
 from grasp.sparql.utils import find, find_all, parse_string, parse_to_string
+from grasp.tasks.base import GraspTask
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import format_list
-
-
-def call_function(
-    config: GraspConfig,
-    managers: list[KgManager],
-    fn_name: str,
-    fn_args: dict,
-    known: set[str],
-    state: Any | None = None,
-    example_indices: dict | None = None,
-) -> str:
-    if fn_name == "answer" or fn_name == "cancel":
-        return "Stopping"
-
-    else:
-        raise ValueError(f"Unknown function {fn_name}")
 
 
 def functions() -> list[dict]:
@@ -246,12 +231,6 @@ def output(
         return None
 
 
-# ── Task class ──────────────────────────────────────────────────────────────
-
-
-from grasp.tasks.base import GraspTask  # noqa: E402
-
-
 class WdqlTask(GraspTask):
     name = "wikidata-query-logs"
 
@@ -272,9 +251,11 @@ class WdqlTask(GraspTask):
         state: Any,
         example_indices: dict | None,
     ) -> str:
-        return call_function(
-            self.config, self.managers, fn_name, fn_args, known, state, example_indices
-        )
+        if fn_name == "answer" or fn_name == "cancel":
+            return "Stopping"
+
+        else:
+            raise ValueError(f"Unknown function {fn_name}")
 
     def done(self, fn_name: str) -> bool:
         return fn_name in {"answer", "cancel"}
