@@ -1,7 +1,7 @@
 from typing import Any
 
 from grasp.configs import GraspConfig
-from grasp.functions import ExecutionResult, TaskFunctions
+from grasp.functions import ExecutionResult
 from grasp.manager import KgManager
 from grasp.model import Message, Response
 from grasp.sparql.utils import find, find_all, parse_string, parse_to_string
@@ -25,7 +25,7 @@ def call_function(
         raise ValueError(f"Unknown function {fn_name}")
 
 
-def functions() -> TaskFunctions:
+def functions() -> list[dict]:
     fns = [
         {
             "name": "answer",
@@ -68,7 +68,7 @@ def functions() -> TaskFunctions:
             "strict": True,
         },
     ]
-    return fns, call_function
+    return fns
 
 
 def rules() -> list[str]:
@@ -244,3 +244,60 @@ def output(
 
     except Exception:
         return None
+
+
+# ── Task class ──────────────────────────────────────────────────────────────
+
+
+from grasp.tasks.base import GraspTask  # noqa: E402
+
+
+class WdqlTask(GraspTask):
+    name = "wikidata-query-logs"
+
+    def system_information(self) -> str:
+        return system_information(self.config)
+
+    def rules(self) -> list[str]:
+        return rules()
+
+    def function_definitions(self) -> list[dict]:
+        return functions()
+
+    def call_function(
+        self,
+        fn_name: str,
+        fn_args: dict,
+        known: set[str],
+        state: Any,
+        example_indices: dict | None,
+    ) -> str:
+        return call_function(
+            self.config, self.managers, fn_name, fn_args, known, state, example_indices
+        )
+
+    def done(self, fn_name: str) -> bool:
+        return fn_name in {"answer", "cancel"}
+
+    def setup(self, input: Any) -> tuple[str, Any]:
+        assert isinstance(input, str), (
+            "Input for wikidata-query-logs must be a string (SPARQL query)"
+        )
+        return input_and_state(
+            input,
+            self.managers,
+            self.config.result_max_rows,
+            self.config.result_max_columns,
+        )
+
+    def output(self, messages: list[Message], state: Any) -> dict | None:
+        return output(
+            messages,
+            self.managers,
+            self.config.result_max_rows,
+            self.config.result_max_columns,
+        )
+
+    @property
+    def default_input_field(self) -> str | None:
+        return "sparql"

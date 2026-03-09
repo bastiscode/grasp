@@ -4,21 +4,8 @@ from typing import Any
 import litellm
 from universal_ml_utils.logging import get_logger
 
-from grasp.configs import GraspConfig
-from grasp.manager import KgManager
 from grasp.model import Message, call_model
-from grasp.tasks.cea import (
-    feedback_instructions as cea_feedback_instructions,
-)
-from grasp.tasks.cea import (
-    feedback_system_message as cea_feedback_system_instructions,
-)
-from grasp.tasks.sparql_qa import (
-    feedback_instructions as sparql_qa_feedback_instructions,
-)
-from grasp.tasks.sparql_qa import (
-    feedback_system_message as sparql_qa_feedback_system_instructions,
-)
+from grasp.tasks.base import FeedbackTask, GraspTask
 from grasp.utils import format_message, format_response
 
 
@@ -63,49 +50,25 @@ and provide suggestions for improving the output if applicable.""",
     ]
 
 
-def system_instructions(
-    task: str,
-    managers: list[KgManager],
-    kg_notes: dict[str, list[str]],
-    notes: list[str],
-) -> str:
-    if task == "sparql-qa":
-        return sparql_qa_feedback_system_instructions(managers, kg_notes, notes)
-
-    elif task == "cea":
-        return cea_feedback_system_instructions(managers, kg_notes, notes)
-
-    raise ValueError(f"Feedback system message not implemented for task: {task}")
-
-
-def feedback_instructions(task: str, inputs: list[str], output: Any) -> str:
-    if task == "sparql-qa":
-        return sparql_qa_feedback_instructions(inputs, output)
-
-    elif task == "cea":
-        return cea_feedback_instructions(inputs, output)
-
-    raise ValueError(f"Feedback not implemented for task: {task}")
-
-
 def generate_feedback(
-    task: str,
-    managers: list[KgManager],
-    config: GraspConfig,
+    task: GraspTask,
     kg_notes: dict[str, list[str]],
     notes: list[str],
     inputs: list[str],
-    output: dict,
+    output: Any,
     logger: Logger = get_logger("GRASP FEEDBACK"),
 ) -> dict | None:
+    if not isinstance(task, FeedbackTask):
+        return None
+
     messages: list[Message] = [
         Message(
             role="system",
-            content=system_instructions(task, managers, kg_notes, notes),
+            content=task.feedback_system_message(kg_notes, notes),
         ),
         Message(
             role="user",
-            content=feedback_instructions(task, inputs, output),
+            content=task.feedback_instructions(inputs, output),
         ),
     ]
 
@@ -113,7 +76,7 @@ def generate_feedback(
         logger.debug(format_message(msg))
 
     try:
-        response = call_model(messages, functions(), config)
+        response = call_model(messages, functions(), task.config)
     except litellm.exceptions.Timeout:
         logger.error("LLM API timed out during feedback generation")
         return None

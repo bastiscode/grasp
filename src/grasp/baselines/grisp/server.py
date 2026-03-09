@@ -29,7 +29,9 @@ active_connections = 0
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Serve GRISP model over HTTP/WebSocket")
+    parser = argparse.ArgumentParser(
+        description="Serve GRISP model over HTTP/WebSocket"
+    )
     parser.add_argument(
         "config",
         type=str,
@@ -48,6 +50,7 @@ class GRISPServerConfig(GRISPRunConfig):
     run_directory: str
     selection_run: str | None = None
     device: str = "auto"
+    dtype: str = "auto"
 
     port: int = 6790
     max_connections: int = 10
@@ -88,21 +91,26 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
 
     logger.info(f"Loading model from {config.run_directory}")
     skeleton_model, skeleton_tokenizer = load_model_and_tokenizer(
-        config.run_directory, config.device, logger
+        config.run_directory,
+        config.device,
+        config.dtype,
+        logger,
     )
 
     selection_model, selection_tokenizer = None, None
     if train_cfg.type == "skeleton" and config.selection_run is not None:
         logger.info(f"Loading selection model from {config.selection_run}")
         selection_model, selection_tokenizer = load_model_and_tokenizer(
-            config.selection_run, config.device, logger
+            config.selection_run,
+            config.device,
+            config.dtype,
+            logger,
         )
 
     # load KG manager
-    kg_config = KgConfig(kg=config.kg, endpoint=config.endpoint)
-    manager = load_kg_manager(kg_config)
+    manager = load_kg_manager(config.knowledge_graph)
 
-    if kg_config.has_embedding_index:
+    if config.knowledge_graph.has_embedding_index:
         from search_rdf.model import TextEmbeddingModel
 
         emb_model = TextEmbeddingModel(config.embedding_model)
@@ -112,13 +120,13 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
     parser = load_sparql_parser()
 
     logger.info(
-        f"GRISP server ready: kg={config.kg}, "
+        f"GRISP server ready: kg={config.knowledge_graph.kg}, "
         f"model={skeleton_model.config.name_or_path}"  # type: ignore
     )
 
     @app.get("/knowledge_graphs")
     async def _knowledge_graphs():
-        return [config.kg]
+        return [config.knowledge_graph.kg]
 
     @app.get("/config")
     async def _config():
@@ -294,7 +302,10 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
                                 await websocket.send_json({"error": msg})
                                 break
 
-                            if payload.get("type") == "output" and output_logger is not None:
+                            if (
+                                payload.get("type") == "output"
+                                and output_logger is not None
+                            ):
                                 output_logger.info(json.dumps(payload))
 
                             await websocket.send_json(payload)

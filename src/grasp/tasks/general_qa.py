@@ -1,7 +1,6 @@
 from typing import Any
 
 from grasp.configs import GraspConfig
-from grasp.functions import TaskFunctions
 from grasp.manager import KgManager
 from grasp.model import Message, Response
 from grasp.tasks.sparql_qa.examples import (
@@ -34,9 +33,8 @@ possibly multiple times.
 4. Output your final answer to the question and stop."""
 
 
-def functions(config: GraspConfig) -> TaskFunctions:
-    fns = sparql_qa_example_functions(config)
-    return fns, call_function
+def functions(config: GraspConfig) -> list[dict]:
+    return sparql_qa_example_functions(config)
 
 
 def call_function(
@@ -66,6 +64,9 @@ you know the answer by heart, still try to verify it with the knowledge graphs."
     ]
 
 
+_module_call_function = call_function
+
+
 def output(messages: list[Message]) -> dict | None:
     last_response: Response | None = None
     for message in reversed(messages):
@@ -81,3 +82,40 @@ def output(messages: list[Message]) -> dict | None:
         "output": last_response.message,
         "formatted": last_response.message,
     }
+
+
+# ── Task class ──────────────────────────────────────────────────────────────
+
+
+from grasp.tasks.sparql_qa import SparqlQaTask  # noqa: E402
+
+
+class GeneralQaTask(SparqlQaTask):
+    name = "general-qa"
+
+    def system_information(self) -> str:
+        return system_information()
+
+    def rules(self) -> list[str]:
+        return rules()
+
+    def function_definitions(self) -> list[dict]:
+        return functions(self.config)
+
+    def call_function(
+        self,
+        fn_name: str,
+        fn_args: dict,
+        known: set[str],
+        state: Any,
+        example_indices: dict | None,
+    ) -> str:
+        return _module_call_function(
+            self.config, self.managers, fn_name, fn_args, known, state, example_indices
+        )
+
+    def done(self, fn_name: str) -> bool:
+        return False
+
+    def output(self, messages: list[Message], state: Any) -> dict | None:
+        return output(messages)

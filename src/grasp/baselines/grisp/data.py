@@ -20,7 +20,7 @@ from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.item import Item, extract_sparql_items
 from grasp.sparql.types import Alternative, Selection
 from grasp.sparql.utils import find_all
-from grasp.tasks import SparqlQaSample
+from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.utils import format_list, get_available_knowledge_graphs
 
 BOI = "<iri>"
@@ -340,6 +340,7 @@ def tokenize_messages(
         enc: dict = tokenizer.apply_chat_template(
             messages,
             return_dict=True,
+            enable_thinking=False,
         )  # type: ignore
         enc["labels"] = enc["input_ids"]  # type: ignore
         return enc  # type: ignore
@@ -348,6 +349,7 @@ def tokenize_messages(
         messages,
         return_assistant_tokens_mask=True,
         return_dict=True,
+        enable_thinking=False,
     )  # type: ignore
 
     mask = enc["assistant_masks"]
@@ -359,6 +361,8 @@ def tokenize_messages(
         prompt_ids = tokenizer.apply_chat_template(
             messages[:-1],
             add_generation_prompt=True,
+            return_dict=True,
+            enable_thinking=False,
         )
         prompt_len = len(prompt_ids)
         non_prompt_ids = enc["input_ids"][prompt_len:]

@@ -56,8 +56,7 @@ npm run preview
 
 | Variable | Default | Description |
 |---|---|---|
-| `BASE_PATH` | `""` | SvelteKit path prefix (e.g. `/grisp`) for when the site is hosted under a subpath. |
-| `API_BASE` | `/api` | API base URL. Relative paths are prefixed with `BASE_PATH` (e.g. `BASE_PATH=/v1` + `API_BASE=/api` → `/v1/api`). Set to an absolute URL (e.g. `http://localhost:6790`) to talk directly to a GRISP server. |
+| `API_BASE` | `/api` | API base URL. Relative paths are resolved against the current page URL at runtime. Set to an absolute URL (e.g. `http://localhost:6790`) to talk directly to a GRISP server. |
 | `COPYRIGHT` | `University of Freiburg` | Copyright holder text displayed in the footer. |
 
 ## Docker
@@ -71,7 +70,6 @@ Override build args as needed:
 
 ```bash
 docker build -t grisp-website \
-  --build-arg BASE_PATH=/grisp \
   --build-arg API_BASE=/api \
   --build-arg COPYRIGHT="Your Organization" \
   .

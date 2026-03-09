@@ -3,6 +3,8 @@ type: env(TYPE:both)
 knowledge_graph:
   kg: env(KG:wikidata)
   endpoint: env(ENDPOINT:null)
+  entities_type: env(ENTITIES_TYPE:fuzzy)
+  properties_type: env(PROPERTIES_TYPE:embedding)
 
 model: env(MODEL:Qwen/Qwen2.5-7B-Instruct)
 overwrite_chat_template: env(OVERWRITE_CHAT_TEMPLATE:false)

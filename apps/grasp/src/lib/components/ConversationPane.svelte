@@ -110,7 +110,7 @@
         status = query
           ? `Searching for object "${query}" of ${property}...`
           : `Searching for objects of ${property}...`;
-      } else if (toolName === 'search_constrained' || toolName === 'search') {
+      } else if (toolName === 'search_constrained' || toolName === 'search_with_constraints' || toolName === 'search') {
         const query = args.query || '';
         const position = args.position || 'item';
         const constraints = args.constraints || {};
@@ -125,7 +125,7 @@
             ? `Searching for ${position} "${query}"...`
             : `Searching for ${position}...`;
         }
-      } else if (toolName === 'search_autocomplete') {
+      } else if (toolName === 'search_autocomplete' || toolName === 'search_with_filter') {
         const query = args.query || '';
         status = query
           ? `Searching for "${query}" with SPARQL query constraint...`

@@ -27,6 +27,6 @@ knowledge_graphs:
   - kg: env(KG:wikidata)
     endpoint: env(KG_ENDPOINT:null)
     example_index: env(KG_EXAMPLES:null)
-    entities_type: env(ENTITIES_TYPE:keyword)
+    entities_type: env(ENTITIES_TYPE:fuzzy)
     properties_type: env(PROPERTIES_TYPE:embedding)
     notes_file: env(KG_NOTES_FILE:null)

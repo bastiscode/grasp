@@ -6,12 +6,12 @@ in a generate-then-retrieve fashion. The retrieval is performed
 iteratively using search and list-wise re-ranking, and guided by
 the model's own generated SPARQL skeletons and the knowledge graph structure.
 
-You can also [download](https://ad-publications.cs.uni-freiburg.de/grisp/runs)
+You can also [download](https://ad-publications.cs.uni-freiburg.de/grisp/)
 and run our fine-tuned models for Freebase and Wikidata.
 
 ## Installation
 
-See the [main README](../../../README.md) for installation instructions
+See the [main README](../../../../README.md) for installation instructions
 of GRASP. Then make sure you have the GRISP extension installed as well:
 
 ```bash
@@ -30,7 +30,7 @@ is provided [`here`](../../../../configs/grisp/train.yaml).
 We will show a running example with the WikiWebQuestions dataset for
 Wikidata. Make sure that you have set up the corresponding GRASP
 indices for the knowledge graph you want to work with before
-starting with the steps below. Again, see the [main README](../../../README.md)
+starting with the steps below. Again, see the [main README](../../../../README.md)
 for instructions on how to do this.
 
 1: Prepare your data in jsonl format
@@ -105,14 +105,73 @@ python -m grasp.baselines.grisp.train \
 An exemplary run config with the most important inference options
 is provided [`here`](../../../../configs/grisp/run.yaml).
 
+### Use a pre-trained model
+
+Pre-trained GRISP models for Wikidata and Freebase are available
+[here](https://ad-publications.cs.uni-freiburg.de/grisp/). If you want to use
+them, make sure to have set up the GRASP indices for the
+corresponding knowledge graph before running the model.
+
+For example, to download and use our Wikidata WDQL model based on Qwen2.5 7B:
+
+```bash
+# Download the model
+wget https://ad-publications.cs.uni-freiburg.de/grisp/qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26.tar.gz
+# Extract it
+tar -xzf qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26.tar.gz
+# Run on a single question
+python -m grasp.baselines.grisp.run \
+  configs/grisp/run.yaml \
+  qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26 \
+  run \
+  --input "Where was Angela Merkel born?"
+
+# Or run on a file with questions, e.g. the WWQ test set
+python -m grasp.baselines.grisp.run \
+  configs/grisp/run.yaml \
+  qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26 \
+  file \
+  --input-file data/benchmark/wikidata/wwq/test.jsonl
+```
+
+### Run a custom model
+
+If you trained your own model, just use your training output directory as
+the model path.
+
 ```bash
 python -m grasp.baselines.grisp.run \
   configs/grisp/run.yaml \
-  data/grisp/runs/my-wikidata-wwq-model \ # path to the trained model
-  file \ # when evaluating on a dataset, use the file subcommand
-  --input-file data/benchmark/wikidata/wwq/test.jsonl \ # path to test data
-  --output-file data/grisp/runs/my-wikidata-wwq-model/predictions.jsonl
+  data/grisp/runs/my-wikidata-wwq-model \ # Path to your training output directory
+  file \
+  --input-file data/benchmark/wikidata/wwq/test.jsonl
 ```
+
+## Serve a GRISP model
+
+```bash
+python -m grasp.baselines.grisp.server configs/grisp/serve.yaml
+```
+
+The server runs on port 6790 by default and exposes the following HTTP endpoints.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/knowledge_graphs` | GET | Returns list with the configured KG name |
+| `/config` | GET | Returns the server configuration |
+| `/run` | POST | Run GRISP on a single question |
+
+#### `POST /run`
+
+**Request body:**
+
+```json
+{"question": "Where was Angela Merkel born?"}
+```
+
+**Response:** GRISP output as a JSON object
+
+**Error codes:** `503` server busy, `504` generation timeout
 
 ## Evaluate a GRISP model
 

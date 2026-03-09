@@ -35,7 +35,7 @@ from grasp.notes import (
     take_notes_from_samples,
 )
 from grasp.server import serve
-from grasp.tasks import Task, default_input_field
+from grasp.tasks import Task, get_task
 from grasp.tasks.examples import load_example_indices, task_to_index
 from grasp.utils import (
     get_available_knowledge_graphs,
@@ -531,7 +531,7 @@ def run_grasp(args: argparse.Namespace) -> None:
     notes, kg_notes = load_notes(config)
 
     if args.input_field is None:
-        input_field = default_input_field(args.task)
+        input_field = get_task(args.task, managers, config).default_input_field
     else:
         input_field = args.input_field
 

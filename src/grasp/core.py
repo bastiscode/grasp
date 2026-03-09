@@ -17,15 +17,7 @@ from grasp.functions import (
 from grasp.manager import KgManager, format_kgs, load_kg_manager
 from grasp.manager.utils import describe_index
 from grasp.model import Message, Response, call_model
-from grasp.tasks import rules as general_rules
-from grasp.tasks import (
-    task_done,
-    task_functions,
-    task_output,
-    task_rules,
-    task_setup,
-    task_system_information,
-)
+from grasp.tasks import get_task, rules as general_rules
 from grasp.tasks.examples import ExampleIndex
 from grasp.tasks.feedback import format_feedback, generate_feedback
 from grasp.tasks.sparql_qa.examples import find_examples
@@ -40,7 +32,7 @@ from grasp.utils import (
 
 
 def system_instructions(
-    task: str,
+    t,
     config: GraspConfig,
     managers: list[KgManager],
     kg_notes: dict[str, list[str]],
@@ -60,10 +52,8 @@ def system_instructions(
         title, desc = describe_index(index)
         index_infos.append(f"{title}: {desc}")
 
-    system_info = task_system_information(task, config)
-
     instructions = f"""\
-{system_info}
+{t.system_information()}
 
 Available knowledge graphs:
 {format_kgs(managers, kg_notes)}
@@ -85,7 +75,7 @@ SPARQL prefixes for use in function calls:
 {format_prefixes(prefixes)}
 
 Additional rules to follow:
-{format_list(general_rules() + task_rules(task))}"""
+{format_list(general_rules() + t.rules())}"""
 
     return instructions
 
@@ -149,16 +139,13 @@ def generate(
         config.know_before_use = True
         logger.debug("Enabling know-before-use for CEA task")
 
+    t = get_task(task, managers, config)
+
     # setup functions
     fns = kg_functions(managers, config.fn_set)
-    additional_fns = task_functions(managers, task, config)
-    if additional_fns is not None:
-        additional_fns, task_handler = additional_fns
-        fns.extend(additional_fns)
-    else:
-        task_handler = None
+    fns.extend(t.function_definitions())
 
-    input, task_state = task_setup(task, input, managers, config)
+    input, task_state = t.setup(input)
     yield {"type": "input", "input": input}
 
     if notes is None:
@@ -167,7 +154,7 @@ def generate(
         kg_notes = {}
 
     # setup messages
-    system_instruction = system_instructions(task, config, managers, kg_notes, notes)
+    system_instruction = system_instructions(t, config, managers, kg_notes, notes)
     yield {
         "type": "system",
         "config": config.model_dump(),
@@ -305,7 +292,7 @@ def generate(
                     tool_call.name,
                     tool_call.args,
                     known,
-                    task_handler,
+                    t,
                     task_state,
                     example_indices,
                 )
@@ -327,7 +314,7 @@ def generate(
                 "result": tool_call.result,
             }
 
-            if task_done(task, tool_call.name):
+            if t.done(tool_call.name):
                 # we are done
                 should_stop = True
 
@@ -349,7 +336,7 @@ def generate(
             break
 
         # get latest output
-        output = task_output(task, messages, managers, config, task_state)
+        output = t.output(messages, task_state)
         if output is None:
             break
 
@@ -357,9 +344,7 @@ def generate(
         try:
             inputs = [message.content for message in messages if message.role == "user"]
             feedback = generate_feedback(
-                task,
-                managers,
-                config,
+                t,
                 kg_notes,
                 notes,
                 inputs,  # type: ignore
@@ -393,7 +378,7 @@ def generate(
         # reset loop detection
         last_resp_hash = None
 
-    output = task_output(task, messages, managers, config, task_state)
+    output = t.output(messages, task_state)
 
     out_msg = Message(
         role="output",

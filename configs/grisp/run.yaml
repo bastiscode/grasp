@@ -1,5 +1,8 @@
-kg: env(KG)
-endpoint: env(ENDPOINT:null)
+knowledge_graph:
+  kg: env(KG:wikidata)
+  endpoint: env(ENDPOINT:null)
+  entities_type: env(ENTITIES_TYPE:fuzzy)
+  properties_type: env(PROPERTIES_TYPE:embedding)
 
 temperature: env(TEMPERATURE:0.4)
 min_p: env(MIN_P:null)

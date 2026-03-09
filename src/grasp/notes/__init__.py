@@ -20,7 +20,7 @@ from grasp.functions import find_manager
 from grasp.manager import KgManager
 from grasp.model import Message
 from grasp.notes.utils import consume_iterator, format_output, link
-from grasp.tasks import task_to_sample
+from grasp.tasks import get_task
 from grasp.tasks.cea import AnnotationState, CeaSample, prepare_annotation
 from grasp.tasks.exploration import ExplorationState
 from grasp.tasks.exploration.functions import call_function, note_functions
@@ -47,10 +47,10 @@ def take_notes_from_samples(
     logger = get_logger("GRASP NOTE TAKING", log_level)
     agent_logger = get_logger("GRASP AGENT", log_level)
 
-    managers = setup(config)
+    managers, _ = setup(config)
     notes, kg_notes = load_notes(config)
 
-    sample_cls = task_to_sample(task)
+    sample_cls = get_task(task, managers, config).sample_cls()
 
     assert config.seed is not None, "Seed must be set for adaptation"
 
@@ -130,7 +130,7 @@ def take_notes_from_outputs(
 
     logger = get_logger("GRASP NOTE TAKING", log_level)
 
-    managers = setup(config)
+    managers, _ = setup(config)
     notes, kg_notes = load_notes(config)
 
     assert config.seed is not None, "Seed must be set for adaptation"
@@ -190,7 +190,7 @@ def take_notes_from_exploration(
 
     agent_logger = get_logger("GRASP AGENT", log_level)
 
-    managers = setup(config)
+    managers, _ = setup(config)
     notes, kg_notes = load_notes(config)
 
     os.makedirs(out_dir, exist_ok=True)

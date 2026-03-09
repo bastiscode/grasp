@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 from itertools import chain
-from typing import Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 import validators
 from universal_ml_utils.ops import partition_by
@@ -24,32 +24,13 @@ from grasp.sparql.types import (
 from grasp.sparql.utils import find_all, parse_string
 from grasp.utils import FunctionCallException
 
+if TYPE_CHECKING:
+    from grasp.tasks.base import GraspTask
+
 # maximum number of results for constraining with sub indices
 MAX_RESULTS = 131072
 # minimum score for similarity search index
 MIN_SCORE = 0.5
-
-
-# a function gets the config, kg manager, function name, function arguments,
-# known entities and properties, and an optional state object and example indices;
-# it return a string observation and the updated additional state object
-TaskHandler = Callable[
-    [
-        GraspConfig,
-        list[KgManager],
-        str,
-        dict,
-        set[str],
-        Any | None,
-        dict | None,
-    ],
-    str,
-]
-
-
-# tuple of function definitions as JSON schema, and a handler for executing the
-# functions
-TaskFunctions = tuple[list[dict], TaskHandler]
 
 
 def kg_functions(managers: list[KgManager], fn_set: str) -> list[dict]:
@@ -57,8 +38,8 @@ def kg_functions(managers: list[KgManager], fn_set: str) -> list[dict]:
         "base",
         "search",
         "search_extended",
-        "search_autocomplete",
-        "search_constrained",
+        "search_filter",
+        "search_constraints",
         "all",
     ], f"Unknown function set {fn_set}"
     kgs = [manager.kg for manager in managers]
@@ -268,12 +249,10 @@ search_object_of_property(kg="wikidata", property="wdt:P106", query="football")"
             ]
         )
 
-    if fn_set in ["search_autocomplete", "all"]:
+    if fn_set in ["search_filter", "all"]:
         fns.append(
             {
-                "name": "search"
-                if fn_set == "search_autocomplete"
-                else "search_autocomplete",
+                "name": "search_with_filter",
                 "description": """\
 Search for knowledge graph items in a context-sensitive way by specifying a constraining \
 SPARQL query together with a search query. The SPARQL query must be a SELECT query \
@@ -285,11 +264,11 @@ properties otherwise.
 
 For example, to search for Albert Einstein at the subject position in \
 Wikidata, do the following:
-search(kg="wikidata", sparql="SELECT * WHERE { ?search ?p ?o }", query="albert einstein")
+search_with_filter(kg="wikidata", sparql="SELECT ?search WHERE { ?search ?p ?o }", query="albert einstein")
 
 Or to search for properties of Albert Einstein related to his birth in \
 Wikidata, do the following:
-search(kg="wikidata", sparql="SELECT * WHERE { wd:Q937 ?search ?o }", query="birth")""",
+search_with_filter(kg="wikidata", sparql="SELECT ?search WHERE { wd:Q937 ?search ?o }", query="birth")""",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -314,12 +293,10 @@ search(kg="wikidata", sparql="SELECT * WHERE { wd:Q937 ?search ?o }", query="bir
             }
         )
 
-    if fn_set in ["search_constrained", "all"]:
+    if fn_set in ["search_constraints", "all"]:
         fns.append(
             {
-                "name": "search"
-                if fn_set == "search_constrained"
-                else "search_constrained",
+                "name": "search_with_constraints",
                 "description": """\
 Search for knowledge graph items at a particular position (subject, property, or object) \
 with optional constraints. If constraints are provided, they are used to limit the search \
@@ -328,11 +305,11 @@ given knowledge graph internally if the position is subject or object, and the i
 otherwise.
 
 For example, to search for the subject Albert Einstein in Wikidata, do the following:
-search(kg="wikidata", position="subject", query="albert einstein")
+search_with_constraints(kg="wikidata", position="subject", query="albert einstein")
 
 Or to search for properties of Albert Einstein related to his birth in Wikidata, \
 do the following:
-search(kg="wikidata", position="property", query="birth", \
+search_with_constraints(kg="wikidata", position="property", query="birth", \
 constraints={"subject": "wd:Q937"})""",
                 "parameters": {
                     "type": "object",
@@ -401,7 +378,7 @@ def call_function(
     fn_name: str,
     fn_args: dict,
     known: set[str],
-    task_handler: TaskHandler | None = None,
+    task: "GraspTask | None" = None,
     task_state: Any = None,
     example_indices: dict | None = None,
 ) -> str:
@@ -448,7 +425,7 @@ def call_function(
         )
 
     elif fn_name == "search_property_of_entity":
-        return search_constrained(
+        return search_with_constraints(
             managers,
             fn_args["kg"],
             "property",
@@ -460,7 +437,7 @@ def call_function(
         )
 
     elif fn_name == "search_object_of_property":
-        return search_constrained(
+        return search_with_constraints(
             managers,
             fn_args["kg"],
             "object",
@@ -471,10 +448,8 @@ def call_function(
             min_score=MIN_SCORE,
         )
 
-    elif (
-        fn_name == "search" and config.fn_set == "search_constrained"
-    ) or fn_name == "search_constrained":
-        return search_constrained(
+    elif fn_name == "search_with_constraints":
+        return search_with_constraints(
             managers,
             fn_args["kg"],
             fn_args["position"],
@@ -485,10 +460,8 @@ def call_function(
             min_score=MIN_SCORE,
         )
 
-    elif (
-        fn_name == "search" and config.fn_set == "search_autocomplete"
-    ) or fn_name == "search_autocomplete":
-        return search_autocomplete(
+    elif fn_name == "search_with_filter":
+        return search_with_filter(
             managers,
             fn_args["kg"],
             fn_args["sparql"],
@@ -498,16 +471,8 @@ def call_function(
             min_score=MIN_SCORE,
         )
 
-    elif task_handler is not None:
-        return task_handler(
-            config,
-            managers,
-            fn_name,
-            fn_args,
-            known,
-            task_state,
-            example_indices,
-        )
+    elif task is not None:
+        return task.call_function(fn_name, fn_args, known, task_state, example_indices)
 
     else:
         raise ValueError(f"Unknown function {fn_name}")
@@ -938,7 +903,7 @@ SELECT ?s ?p ?o WHERE {{
     )
 
 
-def search_constrained(
+def search_with_constraints(
     managers: list[KgManager],
     kg: str,
     position: str,
@@ -1045,7 +1010,7 @@ def format_alternatives(alternatives: dict[ObjType, list[Alternative]], k: int) 
     return "\n\n".join(fm)
 
 
-def search_autocomplete(
+def search_with_filter(
     managers: list[KgManager],
     kg: str,
     sparql: str,

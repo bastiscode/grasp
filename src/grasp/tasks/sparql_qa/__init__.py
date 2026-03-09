@@ -5,7 +5,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError
 
 from grasp.configs import GraspConfig
-from grasp.functions import TaskFunctions, find_manager
+from grasp.functions import find_manager
 from grasp.manager import KgManager, format_kgs
 from grasp.model import Message, ToolCall
 from grasp.tasks.sparql_qa.examples import (
@@ -17,6 +17,7 @@ from grasp.tasks.sparql_qa.examples import (
 from grasp.tasks.sparql_qa.examples import (
     functions as example_functions,
 )
+from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import format_list, format_notes
 
@@ -58,7 +59,7 @@ should be an ASK query.',
     ]
 
 
-def functions(managers: list[KgManager], config: GraspConfig) -> TaskFunctions:
+def functions(managers: list[KgManager], config: GraspConfig) -> list[dict]:
     kgs = [manager.kg for manager in managers]
     fns = [
         {
@@ -133,7 +134,7 @@ the SPARQL query needs to be executed",
 
     fns.extend(example_functions(config))
 
-    return fns, call_function
+    return fns
 
 
 def call_function(
@@ -479,3 +480,61 @@ Explanation:
 {output["formatted"]}"""
 
     return prompt
+
+
+# ── Task class ──────────────────────────────────────────────────────────────
+
+
+from grasp.tasks.base import FeedbackTask, GraspTask  # noqa: E402
+
+
+class SparqlQaTask(GraspTask, FeedbackTask):
+    name = "sparql-qa"
+
+    def system_information(self) -> str:
+        return system_information()
+
+    def rules(self) -> list[str]:
+        return rules()
+
+    def function_definitions(self) -> list[dict]:
+        return functions(self.managers, self.config)
+
+    def call_function(
+        self,
+        fn_name: str,
+        fn_args: dict,
+        known: set[str],
+        state: Any,
+        example_indices: dict | None,
+    ) -> str:
+        return call_function(
+            self.config, self.managers, fn_name, fn_args, known, state, example_indices
+        )
+
+    def done(self, fn_name: str) -> bool:
+        return fn_name in {"answer", "cancel"}
+
+    def output(self, messages: list[Message], state: Any) -> dict | None:
+        return output(
+            messages,
+            self.managers,
+            self.config.result_max_rows,
+            self.config.result_max_columns,
+        )
+
+    @property
+    def default_input_field(self) -> str | None:
+        return "question"
+
+    @classmethod
+    def sample_cls(cls) -> type[SparqlQaSample]:
+        return SparqlQaSample
+
+    def feedback_system_message(
+        self, kg_notes: dict[str, list[str]], notes: list[str]
+    ) -> str:
+        return feedback_system_message(self.managers, kg_notes, notes)
+
+    def feedback_instructions(self, inputs: list[str], output: dict) -> str:
+        return feedback_instructions(inputs, output)

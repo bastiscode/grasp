@@ -1,8 +1,10 @@
+from typing import Any
+
 from pydantic import BaseModel
 
 from grasp.configs import GraspConfig, NotesConfig, NotesFromExplorationConfig
-from grasp.functions import TaskFunctions
 from grasp.manager import KgManager
+from grasp.model import Message
 from grasp.tasks.exploration.functions import call_function as call_note_function
 from grasp.tasks.exploration.functions import note_functions
 from grasp.utils import format_list, format_notes
@@ -115,5 +117,47 @@ def call_function(
     )
 
 
-def functions(managers: list[KgManager]) -> TaskFunctions:
-    return note_functions(managers), call_function
+# ── Task class ──────────────────────────────────────────────────────────────
+
+
+from grasp.tasks.base import GraspTask  # noqa: E402
+
+# save reference before it is shadowed by the method parameter name
+_exploration_input = input
+
+
+class ExplorationTask(GraspTask):
+    name = "exploration"
+
+    def system_information(self) -> str:
+        return system_information(self.config)
+
+    def rules(self) -> list[str]:
+        return rules()
+
+    def function_definitions(self) -> list[dict]:
+        return note_functions(self.managers)
+
+    def call_function(
+        self,
+        fn_name: str,
+        fn_args: dict,
+        known: set[str],
+        state: Any,
+        example_indices: dict | None,
+    ) -> str:
+        return call_function(
+            self.config, self.managers, fn_name, fn_args, known, state, example_indices
+        )
+
+    def done(self, fn_name: str) -> bool:
+        return fn_name == "stop"
+
+    def setup(self, input: Any) -> tuple[str, Any]:
+        assert isinstance(input, ExplorationState), (
+            "Input for exploration must already be an ExplorationState"
+        )
+        return _exploration_input(input), input
+
+    def output(self, messages: list[Message], state: Any) -> dict:
+        return output(state)
