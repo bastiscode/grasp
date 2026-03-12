@@ -1,12 +1,12 @@
-import math
-import os
 import sys
-import tempfile
-import time
 from typing import Any, Iterable
 
-from search_rdf import Data, FuzzyIndex
-from search_rdf.model import TextEmbeddingModel
+from search_rdf import Data, EmbeddingIndex
+from search_rdf.model import (
+    HuggingFaceImageModel,
+    OpenClipModel,
+    SentenceTransformerModel,
+)
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.table import generate_table
 
@@ -14,20 +14,23 @@ from grasp.configs import KgConfig
 from grasp.manager.cache import Cache
 from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import (
+    EmbeddingModel,
+    Index,
     SearchIndex,
-    describe_index,
-    find_obj_type_from_prefixes,
-    get_common_sparql_prefixes,
-    load_kg_caches,
+    load_image_from_url,
+    format_index_meta,
+    get_embedding_model_key,
+    load_embedding_model,
     load_kg_indices,
+    load_kg_info_caches,
     load_kg_info_sparqls,
     load_kg_normalizers,
     load_kg_prefixes,
+    load_other_indices,
 )
 from grasp.sparql.types import (
     Alternative,
     AskResult,
-    Binding,
     ObjType,
     Position,
     Selection,
@@ -41,7 +44,6 @@ from grasp.sparql.utils import (
     SPARQLException,
     ask_to_select,
     autocomplete_prefix,
-    autocomplete_sparql,
     execute,
     find_longest_prefix,
     fix_prefixes,
@@ -52,9 +54,9 @@ from grasp.sparql.utils import (
     load_iri_and_literal_parser,
     load_property_info_sparql,
     load_sparql_parser,
-    parse_string,
     prettify,
     query_type,
+    wrap_iri,
 )
 from grasp.utils import clip, format_list, ordered_unique
 
@@ -72,6 +74,7 @@ class KgManager:
         entity_cache: Cache | None = None,
         property_cache: Cache | None = None,
         prefixes: dict[str, str] | None = None,
+        indices: dict[str, Index] | None = None,
         endpoint: str | None = None,
     ):
         self.kg = kg
@@ -98,12 +101,30 @@ class KgManager:
 
         self.endpoint = endpoint or get_endpoint(self.kg)
 
-        self.embedding_model: TextEmbeddingModel | None = None
+        self.indices = indices or {}
+
+        self.embedding_models: dict[str, EmbeddingModel] = {}
 
         self.logger = get_logger(f"{self.kg.upper()} KG MANAGER")
 
-    def set_embedding_model(self, model: TextEmbeddingModel) -> None:
-        self.embedding_model = model
+    def load_models(
+        self,
+        models: dict[str, EmbeddingModel] | None = None,
+    ) -> dict[str, EmbeddingModel]:
+        if models is None:
+            models = {}
+
+        if self.entity_index is not None:
+            models = load_embedding_model(self.entity_index, models)
+
+        if self.property_index is not None:
+            models = load_embedding_model(self.property_index, models)
+
+        for sub in self.indices.values():
+            models = load_embedding_model(sub.index, models)
+
+        self.embedding_models = models
+        return models
 
     def set_info_retrieval(self, enable: bool) -> None:
         self.disable_info_retrieval = not enable
@@ -115,20 +136,6 @@ class KgManager:
         is_prefix: bool = False,
     ) -> str:
         return prettify(sparql, self.sparql_parser, indent, is_prefix)
-
-    def check_sparql(self, sparql: str, is_prefix: bool = False) -> bool:
-        try:
-            parse_string(
-                sparql,
-                self.sparql_parser,
-                skip_empty=True,
-                collapse_single=True,
-                is_prefix=is_prefix,
-            )
-            return True
-        except Exception as e:
-            self.logger.debug(f"Invalid SPARQL query {sparql}: {e}")
-            return False
 
     def execute_sparql(
         self,
@@ -206,7 +213,7 @@ class KgManager:
                     if val.lang is not None:
                         formatted += f" (lang:{val.lang})"
                     elif val.datatype is not None:
-                        datatype = self.format_iri(f"<{val.datatype}>")
+                        datatype = self.format_iri(val.datatype)
                         formatted += f" ({datatype})"
 
                     formatted_row.append(formatted)
@@ -292,28 +299,6 @@ class KgManager:
         formatted += f":\n{table}"
         return formatted
 
-    def get_formatted_sparql_result(
-        self,
-        sparql: str,
-        request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
-        max_retries: int = 0,
-        max_rows: int = 10,
-        max_columns: int = 10,
-    ) -> str:
-        half_rows = math.ceil(max_rows / 2)
-        half_columns = math.ceil(max_columns / 2)
-        try:
-            result = self.execute_sparql(sparql, request_timeout, max_retries)
-            return self.format_sparql_result(
-                result,
-                half_rows,
-                half_rows,
-                half_columns,
-                half_columns,
-            )
-        except Exception as e:
-            return f"SPARQL execution failed:\n{e}"
-
     def find_longest_prefix(self, iri: str) -> tuple[str, str] | None:
         return find_longest_prefix(iri, self.prefixes)
 
@@ -336,80 +321,91 @@ class KgManager:
             sort,
         )
 
-    def normalizer(
-        self,
-        obj_type: ObjType,
-    ) -> Normalizer | None:
-        if obj_type == ObjType.ENTITY:
+    def normalizer(self, name: str) -> Normalizer:
+        if name == "entity":
             return self.entity_normalizer
-        elif obj_type == ObjType.PROPERTY:
+        elif name == "property":
             return self.property_normalizer
+        elif name in self.indices:
+            return Normalizer()
         else:
-            return None
+            raise ValueError(f"Unknown index name '{name}'")
 
-    def index(
-        self,
-        obj_type: ObjType,
-    ) -> SearchIndex | None:
-        if obj_type == ObjType.ENTITY:
+    def index(self, name: str) -> SearchIndex:
+        if name == "entity":
+            assert self.entity_index is not None, "Entity index is not loaded"
             return self.entity_index
-        elif obj_type == ObjType.PROPERTY:
+        elif name == "property":
+            assert self.property_index is not None, "Property index is not loaded"
             return self.property_index
+        elif name in self.indices:
+            return self.indices[name].index
+        else:
+            raise ValueError(f"Unknown index name '{name}'")
+
+    def data(self, name: str) -> Data:
+        if name == "entity":
+            assert self.entity_data is not None, "Entity data is not loaded"
+            return self.entity_data
+        elif name == "property":
+            assert self.property_data is not None, "Property data is not loaded"
+            return self.property_data
+        elif name in self.indices:
+            return self.indices[name].index.data()
+        else:
+            raise ValueError(f"Unknown index name '{name}'")
+
+    def get_info_sparql(self, name: str) -> str | None:
+        if name == "entity":
+            return self.entity_info_sparql
+        elif name == "property":
+            return self.property_info_sparql
+        elif name in self.indices:
+            return self.indices[name].info_sparql
         else:
             return None
 
-    def data(
-        self,
-        obj_type: ObjType,
-    ) -> Data | None:
-        if obj_type == ObjType.ENTITY:
-            return self.entity_data
-        elif obj_type == ObjType.PROPERTY:
-            return self.property_data
+    def get_info_cache(self, name: str) -> Cache | None:
+        if name == "entity":
+            return self.entity_cache
+        elif name == "property":
+            return self.property_cache
+        elif name in self.indices:
+            return self.indices[name].cache
         else:
             return None
+
+    @property
+    def index_names(self) -> list[str]:
+        names = []
+        if self.entity_index is not None:
+            names.append("entity")
+        if self.property_index is not None:
+            names.append("property")
+        names.extend(self.indices.keys())
+        return names
 
     def normalize(
         self,
         identifier: str,
-        obj_type: ObjType,
+        index_name: str,
     ) -> tuple[str, str | None] | None:
-        if obj_type == ObjType.ENTITY:
-            return self.entity_normalizer.normalize(identifier)
-        elif obj_type == ObjType.PROPERTY:
-            return self.property_normalizer.normalize(identifier)
-        else:
-            return None
+        return self.normalizer(index_name).normalize(identifier)
 
     def denormalize(
         self,
         identifier: str,
-        obj_type: ObjType,
+        index_name: str,
         variant: str | None = None,
     ) -> str | None:
-        if obj_type == ObjType.ENTITY:
-            return self.entity_normalizer.denormalize(identifier, variant)
-        elif obj_type == ObjType.PROPERTY:
-            return self.property_normalizer.denormalize(identifier, variant)
-        else:
-            return identifier
+        return self.normalizer(index_name).denormalize(identifier, variant)
 
     def check_identifier(
         self,
         identifier: str,
-        obj_type: ObjType,
+        index_name: str,
     ) -> bool:
-        if obj_type == ObjType.ENTITY:
-            data = self.entity_data
-        elif obj_type == ObjType.PROPERTY:
-            data = self.property_data
-        else:
-            data = None
-
-        if data is None:
-            return False
-
-        return data.id_from_identifier(identifier) is not None
+        return self.data(index_name).id_from_identifier(identifier) is not None
 
     def label(
         self,
@@ -485,106 +481,180 @@ class KgManager:
             matched_label=matched_via,
         )
 
-    def parse_bindings(self, result: Iterable[Binding | None]) -> dict[ObjType, Any]:
-        entities = {}
-        properties = {}
-        others = []
-        literals = []
-        for binding in result:
-            if binding is None:
+    def _embed_query(
+        self,
+        index: EmbeddingIndex,
+        query: str,
+        query_type: str = "text",
+    ) -> list[float]:
+        model_key = get_embedding_model_key(index)
+        model = self.embedding_models[model_key]
+
+        if query_type == "text":
+            if isinstance(model, SentenceTransformerModel):
+                return model.embed([query])[0].tolist()
+            elif isinstance(model, OpenClipModel):
+                return model.embed_text([query])[0].tolist()
+            elif isinstance(model, HuggingFaceImageModel):
+                raise ValueError("Image embedding model does not support text queries")
+            else:
+                raise ValueError(f"Unsupported embedding model type: {type(model)}")
+
+        elif query_type == "image":
+            image = load_image_from_url(query)
+            if isinstance(model, OpenClipModel):
+                return model.embed_image([image])[0].tolist()
+            elif isinstance(model, HuggingFaceImageModel):
+                return model.embed([image])[0].tolist()
+            elif isinstance(model, SentenceTransformerModel):
+                raise ValueError(
+                    "SentenceTransformer model does not support image queries"
+                )
+            else:
+                raise ValueError(f"Unsupported embedding model type: {type(model)}")
+
+        else:
+            raise ValueError(
+                f"Unsupported query_type '{query_type}', expected 'text' or 'image'"
+            )
+
+    def search_index(
+        self,
+        index_name: str,
+        query: str | None = None,
+        k: int = 10,
+        identifier_map: dict[str, list[str]] | None = None,
+        query_type: str = "text",
+        **search_kwargs: Any,
+    ) -> list[Alternative]:
+        index = self.index(index_name)
+        data = self.data(index_name)
+        normalizer = self.normalizer(index_name)
+
+        field_map = {}
+
+        if query is None:
+            if identifier_map is None:
+                identifiers = [data.identifier(id) or "" for id in range(k)]
+            else:
+                identifiers = sorted(
+                    identifier_map,
+                    key=lambda ident: data.id_from_identifier(ident) or len(data),
+                )[:k]
+        else:
+            kwargs = {}
+            if index.index_type == "embedding":
+                kwargs["min_score"] = search_kwargs.get("min_score")
+                assert isinstance(index, EmbeddingIndex)
+                embedding = self._embed_query(index, query, query_type)
+                kwargs["embedding"] = embedding
+            else:
+                kwargs["query"] = query
+
+            if identifier_map is None:
+                allow_ids = None
+            else:
+                allow_ids = set()
+                for identifier in identifier_map:
+                    id = data.id_from_identifier(identifier)
+                    if id is not None:
+                        allow_ids.add(id)
+
+            identifiers = []
+            for id, field, _ in index.search(k=k, allow_ids=allow_ids, **kwargs):
+                identifier = data.identifier(id)
+                assert identifier is not None, "should not happen"
+                identifiers.append(identifier)
+                field_map[identifier] = data.field(id, field)
+
+        info_sparql = self.get_info_sparql(index_name)
+        info_cache = self.get_info_cache(index_name)
+        infos = self.get_infos_for_identifiers(
+            identifiers, info_sparql, info_cache, data
+        )
+
+        alternatives = []
+        for identifier in identifiers:
+            if identifier_map is not None:
+                variants = identifier_map.get(identifier)
+            else:
+                variants = normalizer.default_variants()
+
+            matched_via = None
+            if field_map:
+                matched_via = field_map.get(identifier)
+
+            alternative = self.build_alternative_with_infos(
+                identifier,
+                infos.get(identifier, {}),
+                variants,
+                matched_via,
+            )
+            alternatives.append(alternative)
+
+        return alternatives
+
+    def get_candidate_ids(
+        self,
+        index_name: str,
+        sparql: str,
+        max_candidates: int | None = None,
+        timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
+        max_retries: int = 0,
+    ) -> dict[str, list[str]]:
+        typ = query_type(sparql, self.sparql_parser)
+        if typ != "select":
+            raise SPARQLException("SPARQL query is not a SELECT query")
+
+        if not has_iri(sparql, self.sparql_parser):
+            raise SPARQLException("SPARQL query contains no IRIs to constrain with")
+
+        self.logger.debug(
+            f"Getting candidate IDs for index '{index_name}' with {sparql}"
+        )
+        result = self.execute_sparql(sparql, timeout, max_retries)
+
+        if not isinstance(result, SelectResult):
+            raise SPARQLException("SPARQL query is not a SELECT query")
+        if result.num_columns != 1:
+            raise SPARQLException("SPARQL query must return a single column")
+        if max_candidates is not None and len(result) > max_candidates:
+            raise SPARQLException(
+                f"Got more than the maximum supported number of "
+                f"candidates ({max_candidates:,})"
+            )
+
+        self.logger.debug(
+            f"Got {len(result):,} candidate items for index '{index_name}'"
+        )
+
+        normalizer = self.normalizer(index_name)
+        data = self.data(index_name)
+
+        identifier_map: dict[str, list[str]] = {}
+        for bindings in result.bindings():
+            binding = next(iter(bindings), None)
+            if binding is None or binding.typ != "uri":
                 continue
 
-            elif binding.typ == "bnode":
-                # ignore bnodes
-                continue
+            iri = binding.identifier()
 
-            identifier = binding.identifier()
-            infos = []
-
-            if binding.typ == "literal":
-                if binding.datatype is not None:
-                    datatype = self.format_iri(f"<{binding.datatype}>")
-                    infos.append(datatype)
-                elif binding.lang is not None:
-                    infos.append(binding.lang)
-
-                literals.append((identifier, binding.value, infos))
-                continue
-
-            # typ is uri
-            unmatched = True
-            for identifier_map, obj_type in [
-                (entities, ObjType.ENTITY),
-                (properties, ObjType.PROPERTY),
-            ]:
-                norm = self.normalize(identifier, obj_type)
-                if norm is None or not self.check_identifier(norm[0], obj_type):
+            norm = normalizer.normalize(iri)
+            if norm is not None:
+                normalized_iri, variant = norm
+                if data.id_from_identifier(normalized_iri) is not None:
+                    if normalized_iri not in identifier_map:
+                        identifier_map[normalized_iri] = []
+                    if variant is not None:
+                        identifier_map[normalized_iri].append(variant)
                     continue
 
-                identifier, variant = norm
-                if identifier not in identifier_map:
-                    identifier_map[identifier] = []
+            # direct match fallback
+            if data.id_from_identifier(iri) is not None:
+                if iri not in identifier_map:
+                    identifier_map[iri] = []
 
-                if variant is not None:
-                    identifier_map[identifier].append(variant)
-
-                unmatched = False
-
-            if unmatched:
-                others.append((identifier, self.format_iri(identifier), infos))
-
-        common_prefixes = get_common_sparql_prefixes()
-
-        unindexed = []
-        common = []
-        for item in others:
-            obj_type = find_obj_type_from_prefixes(
-                item[0],
-                self.prefixes,
-                common_prefixes,
-            )
-            if obj_type == ObjType.UNINDEXED:
-                unindexed.append(item)
-            elif obj_type == ObjType.COMMON:
-                common.append(item)
-
-        return {
-            ObjType.ENTITY: entities,
-            ObjType.PROPERTY: properties,
-            ObjType.UNINDEXED: others,
-            ObjType.COMMON: common,
-            ObjType.LITERAL: literals,
-        }
-
-    def search_entity(
-        self,
-        query: str | None = None,
-        k: int = 10,
-        identifier_map: dict[str, list[str]] | None = None,
-        **search_kwargs: Any,
-    ) -> list[Alternative]:
-        return self.search(
-            ObjType.ENTITY,
-            query,
-            k,
-            identifier_map,
-            **search_kwargs,
-        )
-
-    def search_property(
-        self,
-        query: str | None = None,
-        k: int = 10,
-        identifier_map: dict[str, list[str]] | None = None,
-        **search_kwargs: Any,
-    ) -> list[Alternative]:
-        return self.search(
-            ObjType.PROPERTY,
-            query,
-            k,
-            identifier_map,
-            **search_kwargs,
-        )
+        return identifier_map
 
     def retrieve_infos_for_identifiers(
         self,
@@ -597,7 +667,9 @@ class KgManager:
             assert "{IDS}" in info_sparql, (
                 "SPARQL must contain {IDS} placeholder for identifiers"
             )
-            info_sparql = info_sparql.replace("{IDS}", " ".join(identifiers))
+            info_sparql = info_sparql.replace(
+                "{IDS}", " ".join(wrap_iri(id) for id in identifiers)
+            )
             self.logger.debug(f"Retrieving infos with SPARQL:\n{info_sparql}")
             result = self.execute_sparql(
                 info_sparql,
@@ -721,319 +793,12 @@ class KgManager:
 
         return infos
 
-    def search(
-        self,
-        obj_type: ObjType,
-        query: str | None = None,
-        k: int = 10,
-        identifier_map: dict[str, list[str]] | None = None,
-        **search_kwargs: Any,
-    ) -> list[Alternative]:
-        index = self.index(obj_type)
-        data = self.data(obj_type)
-        normalizer = self.normalizer(obj_type)
-        assert index is not None and data is not None and normalizer is not None, (
-            f"No index, data, or normalizer for object type {obj_type}"
-        )
-
-        field_map = {}
-
-        if query is None:
-            if identifier_map is None:
-                # first k
-                identifiers = [data.identifier(id) or "" for id in range(k)]
-            else:
-                # first k with lowest ids
-                identifiers = sorted(
-                    identifier_map,
-                    key=lambda ident: data.id_from_identifier(ident) or len(data),
-                )[:k]
-        else:
-            kwargs = {}
-            if index.index_type == "embedding":
-                # embedding index can also have min score passed
-                kwargs["min_score"] = search_kwargs.get("min_score")
-                assert self.embedding_model is not None, (
-                    "Embedding model must be set for embedding index search"
-                )
-                embedding: list[float] = self.embedding_model.embed([query])[0].tolist()  # type: ignore
-                kwargs["embedding"] = embedding
-            else:
-                kwargs["query"] = query
-
-            if identifier_map is None:
-                allow_ids = None
-            else:
-                allow_ids = set()
-                for identifier in identifier_map:
-                    id = data.id_from_identifier(identifier)
-                    if id is not None:
-                        allow_ids.add(id)
-
-            identifiers = []
-            for id, field, _ in index.search(k=k, allow_ids=allow_ids, **kwargs):
-                identifier = data.identifier(id)
-                assert identifier is not None, "should not happen"
-                identifiers.append(identifier)
-                field_map[identifier] = data.field(id, field)
-
-        infos = self.get_infos_for_identifiers_of_type(identifiers, obj_type)
-
-        alternatives = []
-        for identifier in identifiers:
-            if identifier_map is not None:
-                variants = identifier_map[identifier]
-            else:
-                variants = normalizer.default_variants()
-
-            matched_via = None
-            if field_map:
-                matched_via = field_map.get(identifier)
-
-            alternative = self.build_alternative_with_infos(
-                identifier,
-                infos.get(identifier, {}),
-                variants,
-                matched_via,
-            )
-            alternatives.append(alternative)
-
-        return alternatives
-
-    def get_temporary_index_alternatives(
-        self,
-        obj_type: ObjType,
-        items: list[tuple[str, str, list[str]]],
-        query: str | None = None,
-        k: int = 10,
-    ) -> list[Alternative]:
-        if query is None:
-            return [
-                Alternative(
-                    identifier=identifier,
-                    short_identifier=self.format_iri(identifier),
-                    label=label,
-                    infos=infos,
-                )
-                for identifier, label, infos in items[:k]
-            ]
-
-        def make_text_item(identifier: str, value: str) -> dict:
-            field: dict = {"type": "text", "value": value, "tags": ["main"]}
-            return {"identifier": identifier, "fields": [field]}
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # build temporary index and search in it
-            data_dir = os.path.join(temp_dir, "data")
-            index_dir = os.path.join(temp_dir, "index")
-            os.makedirs(index_dir, exist_ok=True)
-            self.logger.debug(
-                f"Building temporary index in {temp_dir} "
-                f"with data at {data_dir} and index in {index_dir}"
-            )
-
-            data_items = []
-            items_map = {}
-            for item in items:
-                identifier, label, _ = item
-                data_items.append(make_text_item(identifier, label))
-                items_map[identifier] = item
-
-            # build index data
-            Data.build_from_items(data_items, data_dir)
-            data = Data.load(data_dir)
-
-            # use a fuzzy index here because it is faster to build
-            # and query
-            FuzzyIndex.build(data, index_dir)
-            index = FuzzyIndex.load(data, index_dir)
-
-            alternatives = []
-            matches = index.search(query, k=k)
-            for id, *_ in matches:
-                identifier = short_identifier = data.identifier(id)
-                assert identifier is not None, "should not happen"
-
-                if obj_type == ObjType.LITERAL:
-                    # for literals, clip the identifier to make it more readable
-                    short_identifier = clip(identifier)
-                else:
-                    short_identifier = self.format_iri(identifier)
-
-                identifier, label, infos = items_map[identifier]
-                alternatives.append(
-                    Alternative(
-                        identifier=identifier,
-                        short_identifier=short_identifier,
-                        label=label,
-                        infos=infos,
-                    )
-                )
-
-            return alternatives
-
     def autocomplete_prefix(
         self,
         prefix: str,
         limit: int | None = None,
     ) -> tuple[str, str, Position]:
         return autocomplete_prefix(prefix, self.sparql_parser, limit)
-
-    def autocomplete_sparql(
-        self,
-        sparql: str,
-        limit: int | None = None,
-    ) -> tuple[str, Position]:
-        return autocomplete_sparql(sparql, self.sparql_parser, "search", limit)
-
-    def get_default_search_items(
-        self,
-        position: Position,
-    ) -> dict[ObjType, Any]:
-        output = {}
-        # entities can be subjects and objects
-        if position == Position.SUBJECT or position == Position.OBJECT:
-            # None (full index) by default
-            output[ObjType.ENTITY] = None
-
-        # properties can only be properties
-        if position == Position.PROPERTY:
-            # None (full index) by default
-            output[ObjType.PROPERTY] = None
-
-        # literals can only be objects
-        if position == Position.OBJECT:
-            # empty by default
-            output[ObjType.LITERAL] = []
-
-        # other iris can always be subjects, properties, and objects
-        # empty by default
-        output[ObjType.UNINDEXED] = []
-        return output
-
-    def get_search_items(
-        self,
-        sparql: str,
-        position: Position,
-        max_candidates: int | None = None,
-        timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
-        max_retries: int = 0,
-    ) -> dict[ObjType, Any]:
-        # start with defaults
-        search_items = self.get_default_search_items(position)
-
-        typ = query_type(sparql, self.sparql_parser)
-        if typ != "select":
-            # fall back to full search on non-select queries
-            raise SPARQLException("SPARQL query is not a SELECT query")
-
-        elif not has_iri(sparql, self.sparql_parser):
-            # contains no iris, with no restriction we do not need
-            # to query the endpoint for autocompletion
-            raise SPARQLException("SPARQL query contains no IRIs to constrain with")
-
-        self.logger.debug(f"Getting search items with {sparql}")
-        try:
-            result = self.execute_sparql(sparql, timeout, max_retries)
-        except Exception as e:
-            self.logger.debug(
-                f"Getting autocompletion result for position {position} "
-                f"with sparql {sparql} failed with error: {e}"
-            )
-            raise SPARQLException(f"SPARQL execution failed: {e}")
-
-        # some checks that should not happen, just to be sure
-        if not isinstance(result, SelectResult):
-            raise SPARQLException("SPARQL query is not a select query")
-        elif result.num_columns != 1:
-            raise SPARQLException("SPARQL query does not return a single column")
-        elif max_candidates is not None and len(result) > max_candidates:
-            raise SPARQLException(
-                f"Got more than the maximum supported number of {position.value} "
-                f"candidates ({max_candidates:,})"
-            )
-
-        self.logger.debug(
-            f"Got {len(result):,} fitting items for position {position} "
-            f"with sparql '{sparql}'"
-        )
-
-        # split result into entities, properties, other iris
-        # and literals
-        start = time.perf_counter()
-        parsed_search_items = self.parse_bindings(
-            next(iter(bindings), None) for bindings in result.bindings()
-        )
-        end = time.perf_counter()
-        self.logger.debug(
-            f"Parsing {len(result):,} search items took {1000 * (end - start):.2f}ms"
-        )
-
-        # overwrite defaults where needed
-        for obj_type in search_items:
-            if obj_type not in parsed_search_items:
-                continue
-
-            search_items[obj_type] = parsed_search_items[obj_type]
-
-        return search_items
-
-    def get_selection_alternatives(
-        self,
-        search_query: str | None,
-        search_items: dict[ObjType, Any],
-        k: int,
-        **search_kwargs: Any,
-    ) -> dict[ObjType, list[Alternative]]:
-        self.logger.debug(
-            f'Getting top {k} selection alternatives with query "{search_query}" for '
-            f"object types {', '.join(obj_type.value for obj_type in search_items)}"
-        )
-        alternatives = {}
-
-        start = time.perf_counter()
-
-        if ObjType.ENTITY in search_items:
-            alternatives[ObjType.ENTITY] = self.search_entity(
-                search_query,
-                k,
-                search_items[ObjType.ENTITY],
-                **search_kwargs,
-            )
-
-        if ObjType.PROPERTY in search_items:
-            alternatives[ObjType.PROPERTY] = self.search_property(
-                search_query,
-                k,
-                search_items[ObjType.PROPERTY],
-                **search_kwargs,
-            )
-
-        end = time.perf_counter()
-        self.logger.debug(
-            f"Getting entity and property alternatives "
-            f"took {1000 * (end - start):.2f}ms"
-        )
-
-        start = time.perf_counter()
-
-        for obj_type in [ObjType.UNINDEXED, ObjType.LITERAL]:
-            if obj_type not in search_items:
-                continue
-
-            alternatives[obj_type] = self.get_temporary_index_alternatives(
-                obj_type,
-                search_items[obj_type],
-                search_query,
-                k,
-            )
-
-        end = time.perf_counter()
-        self.logger.debug(
-            f"Getting other and literal alternatives took {1000 * (end - start):.2f}ms"
-        )
-
-        return alternatives
 
     def format_selections(self, selections: list[Selection]) -> str:
         rename_obj_type = [
@@ -1061,12 +826,14 @@ def load_kg_manager(
     skip_caches: bool = False,
 ) -> KgManager:
     ent_index = prop_index = None
+    indices = {}
     if not skip_indices:
         ent_index, prop_index = load_kg_indices(
             cfg.kg,
             cfg.entities_type,
             cfg.properties_type,
         )
+        indices = load_other_indices(cfg.kg, cfg.indices)
 
     prefixes = load_kg_prefixes(cfg.kg, cfg.endpoint)
     ent_norm, prop_norm = load_kg_normalizers(cfg.kg)
@@ -1074,7 +841,7 @@ def load_kg_manager(
 
     ent_cache = prop_cache = None
     if not skip_caches:
-        ent_cache, prop_cache = load_kg_caches(cfg.kg)
+        ent_cache, prop_cache = load_kg_info_caches(cfg.kg)
 
     return KgManager(
         cfg.kg,
@@ -1087,6 +854,7 @@ def load_kg_manager(
         ent_cache,
         prop_cache,
         prefixes,
+        indices,
         cfg.endpoint,
     )
 
@@ -1105,21 +873,32 @@ def format_kgs(managers: list[KgManager], kg_notes: dict[str, list[str]]) -> str
 
 
 def format_kg(manager: KgManager, notes: list[str]) -> str:
-    msg = f"{manager.kg} at {manager.endpoint}"
+    msg = f'"{manager.kg}" at {manager.endpoint}'
 
     parts = []
     if manager.entity_index is not None:
-        ent_type, _ = describe_index(manager.entity_index)
-        parts.append(f"{ent_type.lower()} for entities")
+        parts.append(
+            f'"entity" index ({format_index_meta(manager.entity_index)}): '
+            "Entities indexed by their labels and synonyms"
+        )
     if manager.property_index is not None:
-        prop_type, _ = describe_index(manager.property_index)
-        parts.append(f"{prop_type.lower()} for properties")
+        parts.append(
+            f'"property" index ({format_index_meta(manager.property_index)}): '
+            "Properties indexed by their labels, synonyms, and identifiers"
+        )
+
+    if manager.indices:
+        other_items = []
+        for name, idx in manager.indices.items():
+            other_items.append(
+                f'"{name}" ({format_index_meta(idx.index)}): {idx.description}'
+            )
+        parts.append("Other indices:\n" + format_list(other_items, indent=4))
+
+    if notes:
+        parts.append("Notes:\n" + format_list(notes, indent=4))
 
     if parts:
-        msg += " with " + " and ".join(parts)
+        msg += "\n" + format_list(parts, indent=2)
 
-    if not notes:
-        return msg
-
-    msg += ", and notes:\n" + format_list(notes, indent=2)
     return msg

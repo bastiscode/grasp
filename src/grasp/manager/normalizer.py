@@ -2,18 +2,18 @@ from grasp.sparql.utils import find_longest_prefix
 
 WIKIDATA_PROPERTY_VARIANTS = {
     # ordered by most frequently used, dict keeps insertion order
-    "wdt": "<http://www.wikidata.org/prop/direct/",
-    "p": "<http://www.wikidata.org/prop/",
-    "ps": "<http://www.wikidata.org/prop/statement/",
-    "pq": "<http://www.wikidata.org/prop/qualifier/",
-    "pr": "<http://www.wikidata.org/prop/reference/",
-    "wdtn": "<http://www.wikidata.org/prop/direct-normalized/",
-    "psn": "<http://www.wikidata.org/prop/statement/value-normalized/",
-    "pqn": "<http://www.wikidata.org/prop/qualifier/value-normalized/",
-    "prn": "<http://www.wikidata.org/prop/reference/value-normalized/",
-    "psv": "<http://www.wikidata.org/prop/statement/value/",
-    "pqv": "<http://www.wikidata.org/prop/qualifier/value/",
-    "prv": "<http://www.wikidata.org/prop/reference/value/",
+    "wdt": "http://www.wikidata.org/prop/direct/",
+    "p": "http://www.wikidata.org/prop/",
+    "ps": "http://www.wikidata.org/prop/statement/",
+    "pq": "http://www.wikidata.org/prop/qualifier/",
+    "pr": "http://www.wikidata.org/prop/reference/",
+    "wdtn": "http://www.wikidata.org/prop/direct-normalized/",
+    "psn": "http://www.wikidata.org/prop/statement/value-normalized/",
+    "pqn": "http://www.wikidata.org/prop/qualifier/value-normalized/",
+    "prn": "http://www.wikidata.org/prop/reference/value-normalized/",
+    "psv": "http://www.wikidata.org/prop/statement/value/",
+    "pqv": "http://www.wikidata.org/prop/qualifier/value/",
+    "prv": "http://www.wikidata.org/prop/reference/value/",
 }
 
 
@@ -29,7 +29,7 @@ class Normalizer:
 
 
 class WikidataPropertyNormalizer(Normalizer):
-    NORM_PREFIX = "<http://www.wikidata.org/entity/"
+    NORM_PREFIX = "http://www.wikidata.org/entity/"
 
     def normalize(self, iri: str) -> tuple[str, str | None] | None:
         longest = find_longest_prefix(iri, WIKIDATA_PROPERTY_VARIANTS)

@@ -25,6 +25,7 @@ class GraspTask(ABC):
     def __init__(self, managers: list[KgManager], config: GraspConfig) -> None:
         self.managers = managers
         self.config = config
+        self.state: Any = None
 
     @abstractmethod
     def system_information(self) -> str: ...
@@ -41,7 +42,6 @@ class GraspTask(ABC):
         fn_name: str,
         fn_args: dict,
         known: set[str],
-        state: Any,
         example_indices: dict | None,
     ) -> str: ...
 
@@ -49,12 +49,12 @@ class GraspTask(ABC):
     def done(self, fn_name: str) -> bool: ...
 
     @abstractmethod
-    def output(self, messages: list[Message], state: Any) -> dict | None: ...
+    def output(self, messages: list[Message]) -> dict | None: ...
 
-    def setup(self, input: Any) -> tuple[str, Any]:
+    def setup(self, input: Any) -> str:
         # default is no state, and string input
         assert isinstance(input, str), f"Input for {self.name} must be a string"
-        return input, None
+        return input
 
     @property
     def default_input_field(self) -> str | None:

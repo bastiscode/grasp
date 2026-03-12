@@ -5,7 +5,6 @@ from logging import Logger
 from typing import Any, Generator
 
 from litellm.exceptions import Timeout
-from search_rdf.model import TextEmbeddingModel
 from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
@@ -15,7 +14,7 @@ from grasp.functions import (
     kg_functions,
 )
 from grasp.manager import KgManager, format_kgs, load_kg_manager
-from grasp.manager.utils import describe_index
+from grasp.manager.utils import EmbeddingModel, describe_index_type
 from grasp.model import Message, Response, call_model
 from grasp.tasks import get_task, rules as general_rules
 from grasp.tasks.examples import ExampleIndex
@@ -47,10 +46,13 @@ def system_instructions(
         if manager.property_index is not None:
             index_types.add(manager.property_index.index_type)
 
+        for sub in manager.indices.values():
+            index_types.add(sub.index.index_type)
+
     index_infos = []
-    for index in sorted(index_types):
-        title, desc = describe_index(index)
-        index_infos.append(f"{title}: {desc}")
+    for index_type in sorted(index_types):
+        desc = describe_index_type(index_type)
+        index_infos.append(f'"{index_type}": {desc}')
 
     instructions = f"""\
 {t.system_information()}
@@ -58,7 +60,7 @@ def system_instructions(
 Available knowledge graphs:
 {format_kgs(managers, kg_notes)}
 
-Index types used for entities and properties:
+Index types used:
 {format_list(index_infos)}
 
 """
@@ -80,21 +82,15 @@ Additional rules to follow:
     return instructions
 
 
-def setup(config: GraspConfig) -> tuple[list[KgManager], TextEmbeddingModel | None]:
-    model: TextEmbeddingModel | None = None
+def setup(config: GraspConfig) -> tuple[list[KgManager], dict[str, EmbeddingModel]]:
+    models: dict[str, EmbeddingModel] = {}
     managers: list[KgManager] = []
     for kg in config.knowledge_graphs:
         manager = load_kg_manager(kg)
-
-        if kg.has_embedding_index and model is None:
-            model = TextEmbeddingModel(config.embedding_model)
-
-        if model is not None:
-            manager.set_embedding_model(model)
-
+        models = manager.load_models(models)
         managers.append(manager)
 
-    return managers, model
+    return managers, models
 
 
 def load_notes(config: GraspConfig) -> tuple[list[str], dict[str, list[str]]]:
@@ -145,7 +141,7 @@ def generate(
     fns = kg_functions(managers, config.fn_set)
     fns.extend(t.function_definitions())
 
-    input, task_state = t.setup(input)
+    input = t.setup(input)
     yield {"type": "input", "input": input}
 
     if notes is None:
@@ -293,7 +289,6 @@ def generate(
                     tool_call.args,
                     known,
                     t,
-                    task_state,
                     example_indices,
                 )
             except Exception as e:
@@ -336,7 +331,7 @@ def generate(
             break
 
         # get latest output
-        output = t.output(messages, task_state)
+        output = t.output(messages)
         if output is None:
             break
 
@@ -378,7 +373,7 @@ def generate(
         # reset loop detection
         last_resp_hash = None
 
-    output = t.output(messages, task_state)
+    output = t.output(messages)
 
     out_msg = Message(
         role="output",

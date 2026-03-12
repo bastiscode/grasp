@@ -103,7 +103,7 @@ def parse_into_binding(
             if pfx not in prefixes:
                 return None
 
-            uri = prefixes[pfx][1:] + name
+            uri = prefixes[pfx] + name
 
             # prefixed IRI
             return Binding(
@@ -171,7 +171,7 @@ def parse_into_binding(
                     if pfx not in prefixes:
                         return None
 
-                    datatype = prefixes[pfx][1:] + name
+                    datatype = prefixes[pfx] + name
 
                 return Binding(
                     typ="literal",
@@ -306,86 +306,6 @@ def has_iri(sparql: str, parser: LR1Parser) -> bool:
             skip={"BaseDecl", "PrefixDecl"},
         )
         is not None
-    )
-
-
-def autocomplete_sparql(
-    sparql: str,
-    parser: LR1Parser,
-    var: str,
-    limit: int | None = None,
-) -> tuple[str, Position]:
-    """
-    Autocomplete the SPARQL by checking that the target variable is
-    selected with SELECT DISTINCT and that it occurrs at least once
-    in the WHERE clause. Optionally add a LIMIT clause to the query.
-    """
-    try:
-        parse, _ = parse_string(sparql, parser)
-    except Exception as e:
-        raise SPARQLException("SPARQL query is not valid", sparql) from e
-
-    # check if query is a select query
-    query = find(parse, "QueryType")
-    assert query is not None, "SPARQL query has no type"
-
-    query = query["children"][0]
-    if query["name"] != "SelectQuery":
-        raise SPARQLException("SPARQL query is not a select query", sparql)
-
-    select_clause = query["children"][0]
-    select_clause["children"][1:] = [
-        {"name": "DISTINCT", "value": "DISTINCT", "byte_span": (0, 0)},
-        {"name": "VAR1", "value": f"?{var}", "byte_span": (0, 0)},
-    ]
-
-    body = query["children"][2]
-    autocomp_vars = list(
-        filter(
-            lambda x: x["value"] == f"?{var}",
-            find_all(body, "VAR1", skip={"SubSelect"}),
-        )
-    )
-    if not autocomp_vars:
-        raise SPARQLException(
-            f"Variable ?{var} must occurr in the WHERE clause at least once",
-            sparql,
-        )
-
-    for autocomp_var in autocomp_vars:
-        autocomp_start, _ = autocomp_var["byte_span"]
-
-        # set autocomp var and all values after it to empty string
-        autocomp_parse = deepcopy(parse)
-        for p in find_terminals(autocomp_parse):
-            start, _ = p["byte_span"]
-            if start >= autocomp_start:
-                p["value"] = ""
-
-        prefix = parse_to_string(autocomp_parse)
-
-        try:
-            *_, position = autocomplete_prefix(prefix, parser)
-        except Exception:
-            continue
-
-        if limit is not None:
-            # set limit
-            lim_off_clause = find(
-                parse,
-                "LimitOffsetClausesOptional",
-                skip={"SubSelect"},
-            )
-            assert lim_off_clause is not None, "Failed to find limit clause"
-            lim_off_clause.pop("children", None)
-            lim_off_clause["value"] = f"LIMIT {limit}"
-
-        return parse_to_string(parse), position
-
-    raise SPARQLException(
-        f"Failed to determine position (subject, property, or object) "
-        f"of ?{var} in the query",
-        sparql,
     )
 
 
@@ -603,7 +523,7 @@ def fix_prefixes(
         second = prefix_decl["children"][2]["value"]
 
         short = first.split(":", 1)[0]
-        long = second[:-1]
+        long = second[1:-1]
         exist[short] = long
 
     base_decl = find(parse, "BaseDecl", last=True)
@@ -657,7 +577,7 @@ def fix_prefixes(
                 "children": [
                     {"name": "PREFIX", "value": "PREFIX"},
                     {"name": "PNAME_NS", "value": f"{pfx}:"},
-                    {"name": "IRIREF", "value": f"{long}>"},
+                    {"name": "IRIREF", "value": wrap_iri(long)},
                 ],
             }
         )
@@ -840,7 +760,7 @@ def execute(
                 endpoint,
                 headers={
                     "Accept": "application/sparql-results+json",
-                    "User-Agent": "grasp-bot",
+                    "User-Agent": "grasp-rdf",
                 },
                 data={"query": sparql},
                 timeout=request_timeout,
@@ -927,28 +847,24 @@ def is_iri(iri: str) -> bool:
     return iri.startswith("<") and iri.endswith(">")
 
 
+def wrap_iri(iri: str) -> str:
+    return f"<{iri}>"
+
+
 def format_iri(
     iri: str,
     prefixes: dict[str, str],
     base_uri: str | None = None,
 ) -> str:
-    if not is_iri(iri):
+    if "://" not in iri:
         return iri
-
-    # disabled for now because base is almost never needed
-    # elif not is_fq_iri(iri):
-    #     assert base_uri is not None, (
-    #         f"Could not find a scheme in the IRI {iri}, it seems "
-    #         f"you provided a relative IRI without a BASE URI"
-    #     )
-    #     iri = "<" + urljoin(base_uri[1:-1], iri[1:-1]) + ">"
 
     longest = find_longest_prefix(iri, prefixes)
     if longest is None:
         return iri
 
     short, long = longest
-    val = iri[len(long) : -1]
+    val = iri[len(long):]
 
     # check if no bad characters are in the short form
     # by url encoding it and checking if it is still the same
@@ -980,7 +896,7 @@ def load_qlever_prefixes(endpoint: str) -> dict[str, str]:
         prefix, uri = rest.split(":", 1)
         uri = uri.strip()
         assert is_iri(uri), "Prefix must be in IRI format"
-        prefixes[prefix.strip()] = uri[:-1]
+        prefixes[prefix.strip()] = uri[1:-1]
 
     return prefixes
 

@@ -3,7 +3,7 @@ import os
 import random
 from typing import Iterator
 
-from search_rdf.model import TextEmbeddingModel
+from search_rdf.model import SentenceTransformerModel
 from tqdm import tqdm
 from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger, setup_logging
@@ -171,10 +171,7 @@ def main(args: argparse.Namespace) -> None:
 
     config = KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint)
     manager = load_kg_manager(config)
-
-    if config.has_embedding_index:
-        model = TextEmbeddingModel(args.embedding_model)
-        manager.set_embedding_model(model)
+    manager.load_models()
 
     def materialize_train() -> Iterator[dict]:
         for sample in tqdm(samples, desc=f"Materializing {desc} samples"):

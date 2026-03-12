@@ -167,7 +167,7 @@ def stream_json(
 
 
 def split_iri(iri: str) -> tuple[str, str]:
-    if not is_iri(iri):
+    if "://" not in iri:
         return "", iri
 
     # split iri into prefix and last part after final / or #
@@ -175,9 +175,9 @@ def split_iri(iri: str) -> tuple[str, str]:
     last_slash = iri.rfind("/")
     last = max(last_hashtag, last_slash)
     if last == -1:
-        return "", iri[1:-1]
+        return "", iri
     else:
-        return iri[1:last], iri[last + 1 : -1]
+        return iri[:last], iri[last + 1:]
 
 
 def camel_case_split(s: str) -> str:
@@ -203,7 +203,7 @@ def get_object_name_from_id(obj_id: str, prefixes: dict[str, str]) -> str:
         _, obj_name = split_iri(obj_id)
     else:
         _, long = pfx
-        obj_name = obj_id[len(long) : -1]
+        obj_name = obj_id[len(long):]
 
     # url decode the object name
     return unquote_plus(obj_name)
@@ -259,8 +259,7 @@ def prepare_json_items(
         else:
             tags = []
 
-        # wrap id with brackets
-        id = f"<{id}>"
+        # use plain IRI as identifier
 
         if last_id is not None and id != last_id:
             # yield previous item

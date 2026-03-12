@@ -144,7 +144,6 @@ def call_function(
     fn_name: str,
     fn_args: dict,
     known: set[str],
-    state: Any = None,
     example_indices: dict[str, SparqlQaExampleIndex] | None = None,
 ) -> str:
     if fn_name == "answer":
@@ -500,17 +499,16 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         fn_name: str,
         fn_args: dict,
         known: set[str],
-        state: Any,
         example_indices: dict | None,
     ) -> str:
         return call_function(
-            self.config, self.managers, fn_name, fn_args, known, state, example_indices
+            self.config, self.managers, fn_name, fn_args, known, example_indices=example_indices
         )
 
     def done(self, fn_name: str) -> bool:
         return fn_name in {"answer", "cancel"}
 
-    def output(self, messages: list[Message], state: Any) -> dict | None:
+    def output(self, messages: list[Message]) -> dict | None:
         return output(
             messages,
             self.managers,

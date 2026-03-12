@@ -113,14 +113,13 @@ class ExplorationTask(GraspTask):
         fn_name: str,
         fn_args: dict,
         known: set[str],
-        state: Any,
         example_indices: dict | None,
     ) -> str:
         assert isinstance(self.config, NotesConfig)
-        assert state is not None, "State must be provided for exploration task"
+        assert self.state is not None, "State must be provided for exploration task"
         return call_note_function(
-            state.kg_notes,
-            state.notes,
+            self.state.kg_notes,
+            self.state.notes,
             fn_name,
             fn_args,
             self.config.max_notes,
@@ -130,11 +129,12 @@ class ExplorationTask(GraspTask):
     def done(self, fn_name: str) -> bool:
         return fn_name == "stop"
 
-    def setup(self, input: Any) -> tuple[str, Any]:
+    def setup(self, input: Any) -> str:
         assert isinstance(input, ExplorationState), (
             "Input for exploration must already be an ExplorationState"
         )
-        return format_state(input), input
+        self.state = input
+        return format_state(input)
 
-    def output(self, messages: list[Message], state: Any) -> dict:
-        return output(state)
+    def output(self, messages: list[Message]) -> dict:
+        return output(self.state)

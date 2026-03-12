@@ -11,9 +11,10 @@ class KgConfig(BaseModel):
     notes_file: str | None = None
     example_index: str | None = None
 
-    @property
-    def has_embedding_index(self) -> bool:
-        return self.entities_type == "embedding" or self.properties_type == "embedding"
+    # additional indices to load
+    # built via search-rdf and exposed
+    # via $GRASP_INDEX_DIR/{kg}/indices.yaml
+    indices: list[str] = []
 
 
 class ModelConfig(BaseModel):

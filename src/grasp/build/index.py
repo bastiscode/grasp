@@ -4,7 +4,7 @@ from logging import Logger
 
 from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex, FuzzyIndex, KeywordIndex
-from search_rdf.model import TextEmbeddingModel
+from search_rdf.model import SentenceTransformerModel
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import flatten
 
@@ -73,7 +73,7 @@ def generate_embeddings(
     batch_size: int = 256,
     dim: int | None = None,
 ) -> None:
-    model = TextEmbeddingModel(model_name, device)
+    model = SentenceTransformerModel(model_name, device)
 
     texts = list(flatten(fields for _, fields in data))
     embedding = model.embed(texts, dim, batch_size, show_progress=True)

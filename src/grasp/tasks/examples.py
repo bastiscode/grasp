@@ -4,7 +4,7 @@ from typing import Any, Type
 
 from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex
-from search_rdf.model import TextEmbeddingModel
+from search_rdf.model import SentenceTransformerModel
 from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import flatten
@@ -20,7 +20,7 @@ class ExampleIndex:
         self,
         data: Data,
         index: EmbeddingIndex,
-        model: TextEmbeddingModel,
+        model: SentenceTransformerModel,
         samples: list[Sample],
     ) -> None:
         self.model = model
@@ -48,7 +48,7 @@ class ExampleIndex:
     def load(
         cls,
         dir: str,
-        model: TextEmbeddingModel,
+        model: SentenceTransformerModel,
     ) -> "ExampleIndex":
         data = Data.load(os.path.join(dir, "data"))
         embedding_path = os.path.join(dir, "data", "embedding.safetensors")
@@ -71,7 +71,7 @@ class ExampleIndex:
         cls,
         examples_file: str,
         output_dir: str,
-        model: TextEmbeddingModel,
+        model: SentenceTransformerModel,
         batch_size: int = 256,
         overwrite: bool = False,
         log_level: str | int | None = None,
@@ -134,7 +134,7 @@ def task_to_index(task: str) -> Type[ExampleIndex]:
 def load_example_indices(
     task: str,
     config: GraspConfig,
-    model: TextEmbeddingModel | str | None = None,
+    model: SentenceTransformerModel | str | None = None,
 ) -> dict[str, ExampleIndex]:
     try:
         index_cls = task_to_index(task)
@@ -143,7 +143,7 @@ def load_example_indices(
         return {}
 
     if isinstance(model, str):
-        model = TextEmbeddingModel(model)
+        model = SentenceTransformerModel(model)
 
     indices = {}
     for kg in config.knowledge_graphs:

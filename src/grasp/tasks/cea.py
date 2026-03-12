@@ -517,21 +517,21 @@ class CeaTask(GraspTask, FeedbackTask):
         fn_name: str,
         fn_args: dict,
         known: set[str],
-        state: Any,
         example_indices: dict | None,
     ) -> str:
         return call_function(
-            self.config, self.managers, fn_name, fn_args, known, state, example_indices
+            self.config, self.managers, fn_name, fn_args, known, self.state, example_indices
         )
 
     def done(self, fn_name: str) -> bool:
         return fn_name == "stop"
 
-    def setup(self, input: Any) -> tuple[str, Any]:
-        return input_and_state(input, self.config)
+    def setup(self, input: Any) -> str:
+        instructions, self.state = input_and_state(input, self.config)
+        return instructions
 
-    def output(self, messages: list[Message], state: AnnotationState) -> dict:
-        return state.to_dict()
+    def output(self, messages: list[Message]) -> dict:
+        return self.state.to_dict()
 
     @property
     def default_input_field(self) -> str | None:

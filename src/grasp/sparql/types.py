@@ -85,7 +85,7 @@ class Binding:
         assert self.typ in ["uri", "literal", "bnode"]
         match self.typ:
             case "uri":
-                return f"<{self.value}>"
+                return self.value
             case "literal":
                 if self.datatype is not None:
                     return f'"{self.value}"^^<{self.datatype}>'

@@ -110,11 +110,7 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
     # load KG manager
     manager = load_kg_manager(config.knowledge_graph)
 
-    if config.knowledge_graph.has_embedding_index:
-        from search_rdf.model import TextEmbeddingModel
-
-        emb_model = TextEmbeddingModel(config.embedding_model)
-        manager.set_embedding_model(emb_model)
+    manager.load_models()
 
     # load parser
     parser = load_sparql_parser()

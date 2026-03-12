@@ -13,7 +13,6 @@ import torch
 from grammar_utils.parse import LR1Parser
 from peft import AutoPeftModelForCausalLM, PeftModel
 from pydantic import BaseModel
-from search_rdf.model import TextEmbeddingModel
 from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
@@ -400,24 +399,30 @@ def find_alternatives(
         # if autocompletion fails, we are typically at a property
         position = Position.PROPERTY
 
-    search_items = manager.get_default_search_items(position)
+    if position == Position.PROPERTY:
+        index_name = "property"
+        obj_type = ObjType.PROPERTY
+    else:
+        index_name = "entity"
+        obj_type = ObjType.ENTITY
+
+    identifier_map = None
     if cfg.autocomplete and query_type != "ask":
         try:
             logger.debug(
                 f"Searching for fitting IRIs at position {position.value} "
                 f"with autocompletion SPARQL:\n{autocomp_sparql}"
             )
-            search_items = manager.get_search_items(
+            identifier_map = manager.get_candidate_ids(
+                index_name,
                 autocomp_sparql,
-                position,
                 MAX_IRIS,
                 # 6 seconds to execute query
                 (3.5, 6.0),
             )
 
-            total_items = sum(len(v) for v in search_items.values())
             logger.debug(
-                f"Got {total_items} fitting IRIs for position {position.value}"
+                f"Got {len(identifier_map)} fitting IRIs for position {position.value}"
             )
         except Exception as e:
             logger.warning(f"Error getting fitting IRIs: {e}")
@@ -427,18 +432,12 @@ def find_alternatives(
     logger.debug(
         f"Searching with query '{query}' from natural-language IRI in fitting IRIs"
     )
-    alternatives = manager.get_selection_alternatives(
+    alternatives = manager.search_index(
+        index_name,
         query,
-        search_items,
         cfg.selection_top_k,
+        identifier_map,
     )
-
-    if position == Position.PROPERTY:
-        obj_type = ObjType.PROPERTY
-    else:
-        obj_type = ObjType.ENTITY
-
-    alternatives = alternatives.get(obj_type, [])
 
     logger.debug(
         f"Found {len(alternatives)} alternatives:\n{format_alternatives(alternatives)}"
@@ -836,10 +835,7 @@ def main(args: argparse.Namespace) -> None:
         )
 
     manager = load_kg_manager(run_cfg.knowledge_graph)
-
-    if run_cfg.knowledge_graph.has_embedding_index:
-        model = TextEmbeddingModel(run_cfg.embedding_model)
-        manager.set_embedding_model(model)
+    manager.load_models()
 
     parser = load_sparql_parser()
 

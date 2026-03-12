@@ -4,7 +4,9 @@ import os
 import random
 import sys
 
-from search_rdf.model import TextEmbeddingModel
+from termcolor import colored
+
+from search_rdf.model import SentenceTransformerModel
 from tqdm import tqdm
 from universal_ml_utils.configuration import load_config
 from universal_ml_utils.io import (
@@ -38,6 +40,7 @@ from grasp.server import serve
 from grasp.tasks import Task, get_task
 from grasp.tasks.examples import load_example_indices, task_to_index
 from grasp.utils import (
+    format_trace,
     get_available_knowledge_graphs,
     is_invalid_output,
     parse_parameters,
@@ -503,6 +506,17 @@ def parse_args() -> argparse.Namespace:
     add_task_arg(example_parser)
     add_overwrite_arg(example_parser)
 
+    # visualize trace from GRASP output
+    show_parser = subparsers.add_parser(
+        "show",
+        help="Visualize the interaction trace from GRASP output (reads JSONL from stdin)",
+    )
+    show_parser.add_argument(
+        "--skip-system",
+        action="store_true",
+        help="Skip system, config, and functions messages",
+    )
+
     parser.add_argument(
         "--log-level",
         type=str,
@@ -732,6 +746,22 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
         )
 
 
+def show_grasp(args: argparse.Namespace) -> None:
+    separator = colored("=" * 80, "cyan")
+    first = True
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        if not first:
+            print(f"\n{separator}\n")
+        first = False
+
+        output = json.loads(line)
+        print(format_trace(output, skip_system=args.skip_system))
+
+
 def main():
     args = parse_args()
     if args.all_loggers:
@@ -783,8 +813,11 @@ def main():
     elif args.command == "evaluate":
         evaluate_grasp(args)
 
+    elif args.command == "show":
+        show_grasp(args)
+
     elif args.command == "examples":
-        model = TextEmbeddingModel(args.emb_model)
+        model = SentenceTransformerModel(args.emb_model)
         index = task_to_index(args.task)
         index.build(
             args.examples_file,

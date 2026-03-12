@@ -573,13 +573,10 @@ def prepare_selection(
     # TODO: fix hardcoded k values
     k = 10 if is_val else random.randint(2, 10)
 
-    alternatives = manager.get_selection_alternatives(
-        query,
-        # None means search in the full index corresponding to the obj_type
-        {item.obj_type: None if item.is_entity_or_property else []},
-        k,
-    )
-    alternatives = alternatives.get(item.obj_type, [])
+    if item.is_entity_or_property:
+        alternatives = manager.search_index(item.obj_type.value, query, k)
+    else:
+        alternatives = []
 
     drop_infos = not is_val and random.random() < selection_p
     drop_target = not is_val and random.random() < selection_p

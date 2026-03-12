@@ -248,7 +248,6 @@ class WdqlTask(GraspTask):
         fn_name: str,
         fn_args: dict,
         known: set[str],
-        state: Any,
         example_indices: dict | None,
     ) -> str:
         if fn_name == "answer" or fn_name == "cancel":
@@ -260,18 +259,19 @@ class WdqlTask(GraspTask):
     def done(self, fn_name: str) -> bool:
         return fn_name in {"answer", "cancel"}
 
-    def setup(self, input: Any) -> tuple[str, Any]:
+    def setup(self, input: Any) -> str:
         assert isinstance(input, str), (
             "Input for wikidata-query-logs must be a string (SPARQL query)"
         )
-        return input_and_state(
+        formatted, _ = input_and_state(
             input,
             self.managers,
             self.config.result_max_rows,
             self.config.result_max_columns,
         )
+        return formatted
 
-    def output(self, messages: list[Message], state: Any) -> dict | None:
+    def output(self, messages: list[Message]) -> dict | None:
         return output(
             messages,
             self.managers,
