@@ -92,9 +92,13 @@ def should_process(
 ) -> bool:
     if overwrite:
         return True
-    if retry_failed and failed(idx, output_dir, error_reason):
+    all_dirs = [output_dir] + skip_dirs
+    existing = [d for d in all_dirs if exists(idx, d)]
+    if not existing:
         return True
-    return not exists(idx, output_dir) and not any(valid(idx, d) for d in skip_dirs)
+    if retry_failed and all(failed(idx, d, error_reason) for d in existing):
+        return True
+    return False
 
 
 def parse_args() -> argparse.Namespace:
