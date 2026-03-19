@@ -548,6 +548,11 @@ class KgManager:
                 assert isinstance(index, EmbeddingIndex)
                 embedding = self._embed_query(index, query, query_type)
                 kwargs["embedding"] = embedding
+                # always perform exact search and a bit of re-ranking
+                # to improve quality
+                kwargs["exact"] = True
+                # factor of oversampling for re-ranking
+                kwargs["rerank"] = 2.0
             else:
                 kwargs["query"] = query
 

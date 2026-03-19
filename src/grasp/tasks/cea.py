@@ -33,6 +33,7 @@ class Table(BaseModel):
     data: list[list[str]]
     annotate_rows: list[int] | None = None
     annotate_columns: list[int] | None = None
+    description: str | None = None
 
     @property
     def width(self) -> int:
@@ -389,6 +390,9 @@ If there already are annotations for some cells, they are shown in parentheses \
 after the cell value.
 
 """
+
+    if state.table.description is not None:
+        instructions += f"Table description:\n{state.table.description}\n\n"
 
     if state.rows is not None and len(state.rows) != state.table.height:
         rows_to_annotate = ", ".join(str(r) for r in sorted(state.rows))

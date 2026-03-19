@@ -856,12 +856,17 @@ def format_iri(
     prefixes: dict[str, str],
     base_uri: str | None = None,
 ) -> str:
+    # strip angle brackets if present (e.g. from SPARQL parse tree IRIREF nodes)
+    wrapped = is_iri(iri)
+    if wrapped:
+        iri = iri[1:-1]
+
     if "://" not in iri:
-        return iri
+        return wrap_iri(iri) if wrapped else iri
 
     longest = find_longest_prefix(iri, prefixes)
     if longest is None:
-        return iri
+        return wrap_iri(iri) if wrapped else iri
 
     short, long = longest
     val = iri[len(long):]
@@ -871,7 +876,7 @@ def format_iri(
     if quote_plus(val) == val:
         return short + ":" + val
     else:
-        return iri
+        return wrap_iri(iri) if wrapped else iri
 
 
 def load_qlever_prefixes(endpoint: str) -> dict[str, str]:

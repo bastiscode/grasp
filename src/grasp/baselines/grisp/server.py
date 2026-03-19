@@ -9,11 +9,11 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Request as HTTPRequest
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from universal_ml_utils.configuration import load_config
 from universal_ml_utils.logging import get_logger
-from universal_ml_utils.ops import consume_generator
 
 from grasp.baselines.grisp.run import (
     GRISPRunConfig,
@@ -22,7 +22,6 @@ from grasp.baselines.grisp.run import (
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
 from grasp.baselines.grisp.utils import load_sparql_parser
-from grasp.configs import KgConfig
 from grasp.manager import load_kg_manager
 
 active_connections = 0
@@ -129,7 +128,7 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
         return config.model_dump()
 
     @app.post("/run")
-    async def _run(request: Request):
+    async def _run(request: Request, http_request: HTTPRequest):
         global active_connections
 
         if active_connections >= config.max_connections:
@@ -145,26 +144,42 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
         active_connections += 1
         logger.info(f"HTTP run request started ({active_connections=:,})")
 
+        stop_event = threading.Event()
+
         try:
 
             def run_generate() -> dict:
-                try:
-                    output = consume_generator(
-                        generate(
-                            skeleton_model,
-                            skeleton_tokenizer,
-                            config,
-                            request.question,
-                            manager,
-                            parser,
-                            logger,
-                            selection_model,
-                            selection_tokenizer,
-                        )
-                    )
-                except ValueError as exc:
-                    raise RuntimeError("No output produced") from exc
+                generator = generate(
+                    skeleton_model,
+                    skeleton_tokenizer,
+                    config,
+                    request.question,
+                    manager,
+                    parser,
+                    logger,
+                    selection_model,
+                    selection_tokenizer,
+                )
+
+                output = None
+                for output in generator:
+                    if stop_event.is_set():
+                        break
+
+                if output is None:
+                    raise RuntimeError("No output produced")
+
                 return output
+
+            async def monitor_disconnect():
+                while not stop_event.is_set():
+                    if await http_request.is_disconnected():
+                        logger.info("Client disconnected, stopping generation")
+                        stop_event.set()
+                        return
+                    await asyncio.sleep(1)
+
+            disconnect_task = asyncio.create_task(monitor_disconnect())
 
             try:
                 output = await asyncio.wait_for(
@@ -172,6 +187,7 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
                     timeout=config.max_generation_time,
                 )
             except asyncio.TimeoutError:
+                stop_event.set()
                 logger.warning(
                     f"Generation hit time limit of {config.max_generation_time:,} seconds"
                 )
@@ -187,6 +203,12 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
                     status_code=500,
                     detail=f"Failed to handle request:\n{exc}",
                 )
+            finally:
+                stop_event.set()
+                disconnect_task.cancel()
+
+            if stop_event.is_set() and await http_request.is_disconnected():
+                return {}
 
             if output_logger is not None:
                 output_logger.info(json.dumps(output))

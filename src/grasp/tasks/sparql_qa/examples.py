@@ -27,10 +27,6 @@ class SparqlQaExampleIndex(ExampleIndex):
     sample_cls = SparqlQaSample
 
 
-# similar examples should be at least have this cos sim
-MIN_EXAMPLE_SCORE = 0.5
-
-
 def functions(config: GraspConfig) -> list[dict]:
     example_indices = [
         kg.kg for kg in config.knowledge_graphs if kg.example_index is not None
@@ -218,11 +214,7 @@ def find_similar_examples(
 
     example_index = example_indices[kg]
 
-    examples = example_index.search(
-        question,
-        num_examples,
-        min_score=MIN_EXAMPLE_SCORE,
-    )
+    examples = example_index.search(question, num_examples)
 
     return format_examples(
         kg,

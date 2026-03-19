@@ -45,11 +45,7 @@ class ExampleIndex:
         return [self.samples[id] for id, *_ in matches]
 
     @classmethod
-    def load(
-        cls,
-        dir: str,
-        model: SentenceTransformerModel,
-    ) -> "ExampleIndex":
+    def load(cls, dir: str, model: SentenceTransformerModel) -> "ExampleIndex":
         data = Data.load(os.path.join(dir, "data"))
         embedding_path = os.path.join(dir, "data", "embedding.safetensors")
         index_dir = os.path.join(dir, "index")

@@ -1084,7 +1084,7 @@ SELECT DISTINCT {select_var} WHERE {{
         except Exception as e:
             info = f"""\
 Falling back to an unconstrained search on the full \
-search index due to an error:
+search index due to:
 {e}
 
 """
@@ -1144,7 +1144,7 @@ def search_with_filter(
     except Exception as e:
         info = f"""\
 Falling back to an unconstrained search on the full \
-search index due to an error:
+search index due to:
 {e}
 
 """
@@ -1163,4 +1163,3 @@ search index due to an error:
     update_known_from_alts(known, alternatives, normalizer)
 
     return info + format_index_alternatives(alternatives, index, k)
-

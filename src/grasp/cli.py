@@ -535,12 +535,17 @@ def run_grasp(args: argparse.Namespace) -> None:
     logger = get_logger("GRASP", args.log_level)
     config = GraspConfig(**load_config(args.config))
 
-    managers, model = setup(config)
+    managers, models = setup(config)
 
-    if model is None:
-        model = config.embedding_model
+    examples_model = models.get(f"sentence-transformer/{config.embedding_model}")
+    if examples_model is None:
+        examples_model = config.embedding_model
+    else:
+        assert isinstance(examples_model, SentenceTransformerModel), (
+            f"Expected examples embedding model to be a SentenceTransformerModel, got {type(examples_model)}"
+        )
 
-    example_indices = load_example_indices(args.task, config, model)
+    example_indices = load_example_indices(args.task, config, examples_model)
 
     notes, kg_notes = load_notes(config)
 
