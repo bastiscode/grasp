@@ -40,3 +40,4 @@ knowledge_graphs:
     notes_file: env(KG_NOTES_FILE:null)
 
 port: env(PORT:12345)
+max_generation_time: env(MAX_GENERATION_TIME:600)
