@@ -14,12 +14,13 @@ from universal_ml_utils.logging import get_logger
 
 from grasp.manager.utils import (
     get_common_sparql_prefixes,
-    load_kg_prefixes,
+    load_index_sparql,
+    load_kg_info,
+    merge_prefixes,
 )
 from grasp.sparql.utils import (
     find_longest_prefix,
     get_endpoint,
-    is_iri,
     load_entity_index_sparql,
     load_property_index_sparql,
 )
@@ -28,12 +29,13 @@ from grasp.utils import get_index_dir, ordered_unique
 
 def download_data(
     out_dir: str,
-    endpoint: str,
     sparql: str,
     logger: Logger,
     prefixes: dict[str, str],
+    endpoint: str | None = None,
     params: dict[str, str] | None = None,
     add_id_as_label: None | str = None,
+    result_file: str | None = None,
     overwrite: bool = False,
 ) -> None:
     data_file = Path(out_dir, "data.jsonl")
@@ -41,14 +43,21 @@ def download_data(
         logger.info(f"Data already exists at {data_file}, skipping download")
         return
 
-    logger.info(
-        f"Downloading data to {data_file} from {endpoint} "
-        f"with parameters {params or {}} and SPARQL:\n{sparql}"
-    )
+    if result_file is not None:
+        logger.info(f"Loading data to {data_file} from file {result_file}")
+        bindings = stream_json_file(result_file)
+    else:
+        assert endpoint is not None, (
+            "Endpoint must be provided if no result file is given"
+        )
+        logger.info(
+            f"Downloading data to {data_file} from {endpoint} "
+            f"with parameters {params or {}} and SPARQL:\n{sparql}"
+        )
+        bindings = stream_json(endpoint, sparql, params)
 
-    stream = stream_json(endpoint, sparql, params)
     dump_jsonl(
-        prepare_json_items(stream, prefixes, logger, add_id_as_label),
+        prepare_items(bindings, prefixes, add_id_as_label, logger),
         data_file.as_posix(),
     )
 
@@ -71,16 +80,19 @@ def build_data_and_mapping(
 def get_data(
     kg: str,
     endpoint: str | None = None,
-    entity_query: str | None = None,
-    property_query: str | None = None,
+    entity_sparql: str | None = None,
+    property_sparql: str | None = None,
     query_params: dict[str, str] | None = None,
-    overwrite: bool = False,
     add_id_as_label: str | None = None,
+    entity_file: str | None = None,
+    property_file: str | None = None,
     log_level: str | int | None = None,
+    overwrite: bool = False,
 ) -> None:
     logger = get_logger("GRASP DATA", log_level)
 
-    if endpoint is None:
+    needs_endpoint = entity_file is None or property_file is None
+    if endpoint is None and needs_endpoint:
         endpoint = get_endpoint(kg)
         logger.info(
             f"Using endpoint {endpoint} for {kg} because "
@@ -88,63 +100,63 @@ def get_data(
         )
 
     prefixes = get_common_sparql_prefixes()
-    prefixes.update(load_kg_prefixes(kg))
+    kg_prefixes, _ = load_kg_info(kg)
+    prefixes, _, _ = merge_prefixes(prefixes, kg_prefixes, logger)
 
     logger.info(f"Using prefixes:\n{json.dumps(prefixes, indent=2)}")
 
     kg_dir = get_index_dir(kg)
 
     # entities
-    ent_dir = os.path.join(kg_dir, "entities")
-    os.makedirs(ent_dir, exist_ok=True)
-    ent_sparql = entity_query or load_entity_index_sparql()
+    entity_dir = os.path.join(kg_dir, "entities")
+    os.makedirs(entity_dir, exist_ok=True)
+    if entity_sparql is None:
+        entity_sparql = load_index_sparql(entity_dir, logger)
+    if entity_sparql is None:
+        entity_sparql = load_entity_index_sparql()
+
     download_data(
-        ent_dir,
-        endpoint,
-        ent_sparql,
+        entity_dir,
+        entity_sparql,
         logger,
         prefixes,
+        endpoint,
         query_params,
         add_id_as_label,
+        entity_file,
         overwrite,
     )
-    dump_text(ent_sparql, os.path.join(ent_dir, "index.sparql"))
-    build_data_and_mapping(ent_dir, logger, overwrite)
+    dump_text(entity_sparql, os.path.join(entity_dir, "index.sparql"))
+    build_data_and_mapping(entity_dir, logger, overwrite)
 
     # properties
-    prop_dir = os.path.join(kg_dir, "properties")
-    os.makedirs(prop_dir, exist_ok=True)
-    prop_sparql = property_query or load_property_index_sparql()
+    property_dir = os.path.join(kg_dir, "properties")
+    os.makedirs(property_dir, exist_ok=True)
+    if property_sparql is None:
+        property_sparql = load_index_sparql(property_dir, logger)
+    if property_sparql is None:
+        property_sparql = load_property_index_sparql()
+
     download_data(
-        prop_dir,
-        endpoint,
-        prop_sparql,
+        property_dir,
+        property_sparql,
         logger,
         prefixes,
+        endpoint,
         query_params,
         add_id_as_label="always",  # for properties we also want to search via id
+        result_file=property_file,
         overwrite=overwrite,
     )
-    dump_text(prop_sparql, os.path.join(prop_dir, "index.sparql"))
-    build_data_and_mapping(prop_dir, logger, overwrite)
-
-
-class Stream:
-    def __init__(self, response: requests.Response) -> None:
-        self.stream = response.iter_content(chunk_size=None)
-
-    def read(self, n: int) -> bytes:
-        if n == 0:
-            return b""
-
-        return next(self.stream, b"")
+    dump_text(property_sparql, os.path.join(property_dir, "index.sparql"))
+    build_data_and_mapping(property_dir, logger, overwrite)
 
 
 def stream_json(
     endpoint: str,
     sparql: str,
     query_params: dict[str, str] | None = None,
-) -> Stream:
+) -> Iterator[dict]:
     try:
         headers = {
             "Accept": "application/sparql-results+json",
@@ -160,10 +172,24 @@ def stream_json(
             stream=True,
         )
         response.raise_for_status()
-        return Stream(response)  # type: ignore
-
     except Exception as e:
         raise ValueError(f"Failed to stream SPARQL results as JSON: {e}") from e
+
+    class _StreamReader:
+        def __init__(self, response: requests.Response) -> None:
+            self.stream = response.iter_content(chunk_size=None)
+
+        def read(self, n: int) -> bytes:
+            if n == 0:
+                return b""
+            return next(self.stream, b"")
+
+    yield from ijson.items(_StreamReader(response), "results.bindings.item")
+
+
+def stream_json_file(path: str) -> Iterator[dict]:
+    with open(path, "r") as f:
+        yield from ijson.items(f, "results.bindings.item")
 
 
 def split_iri(iri: str) -> tuple[str, str]:
@@ -177,7 +203,7 @@ def split_iri(iri: str) -> tuple[str, str]:
     if last == -1:
         return "", iri
     else:
-        return iri[:last], iri[last + 1:]
+        return iri[:last], iri[last + 1 :]
 
 
 def camel_case_split(s: str) -> str:
@@ -203,7 +229,7 @@ def get_object_name_from_id(obj_id: str, prefixes: dict[str, str]) -> str:
         _, obj_name = split_iri(obj_id)
     else:
         _, long = pfx
-        obj_name = obj_id[len(long):]
+        obj_name = obj_id[len(long) :]
 
     # url decode the object name
     return unquote_plus(obj_name)
@@ -232,41 +258,48 @@ def split_at_punctuation(s: str) -> Iterator[str]:
         yield s[start:]
 
 
-def prepare_json_items(
-    stream: Stream,
-    prefixes: dict[str, str],
-    logger: Logger,
-    add_id_as_label: None | str = None,
-) -> Iterator[dict]:
-    # iteratore over bindings with ijson
-    bindings = ijson.items(stream, "results.bindings.item")
+def parse_binding(binding: dict) -> tuple[str, tuple[str, str] | None, list[str]]:
+    assert binding["id"]["type"] == "uri", "Expected id to be a URI"
+    id = binding["id"]["value"]
+    value = None
+    if "value" in binding:
+        value = (binding["value"]["value"], binding["value"]["type"])
 
+    tag_binding = binding.get("tag", binding.get("tags", None))
+    if tag_binding is not None:
+        assert tag_binding["type"] == "literal", "Expected tags to be a literal"
+        tags = tag_binding["value"].split(",")
+    else:
+        tags = []
+
+    return id, value, tags
+
+
+def prepare_items(
+    bindings: Iterator[dict],
+    prefixes: dict[str, str],
+    add_id_as_label: None | str = None,
+    logger: Logger | None = None,
+) -> Iterator[dict]:
     # collect all labels for an id (which are consecutive in the stream)
     last_id = None
     fields = []
     for num, binding in enumerate(bindings, start=1):
-        if num % 1_000_000 == 0:
+        id, value, tags = parse_binding(binding)
+
+        if logger and num % 1_000_000 == 0:
             logger.info(f"Processed {num:,} bindings so far")
 
-        logger.debug(f"Processing binding #{num:,}:\n{json.dumps(binding, indent=2)}")
-
-        id = binding["id"]["value"]
-        value = binding["value"]["value"] if "value" in binding else ""
-
-        tag_binding = binding.get("tag", binding.get("tags", None))
-        if tag_binding is not None:
-            tags = tag_binding["value"].split(",")
-        else:
-            tags = []
-
-        # use plain IRI as identifier
+        if logger:
+            logger.debug(
+                f"Processing binding #{num:,}: id={id}, value={value}, tags={tags}"
+            )
 
         if last_id is not None and id != last_id:
             # yield previous item
             if add_id_as_label == "always" or (
                 add_id_as_label == "empty" and not fields
             ):
-                # add label from id
                 fields.append(
                     {
                         "type": "text",
@@ -283,16 +316,20 @@ def prepare_json_items(
             fields = []
 
         last_id = id
-        if value:
-            fields.append({"type": "text", "value": value, "tags": tags})
+        if value is None:
+            continue
+
+        val, typ = value
+        if typ == "uri":
+            val = get_value_from_id(val, prefixes)
+
+        fields.append({"type": "text", "value": val, "tags": tags})
 
     if last_id is None:
-        # only happens if there are no bindings
         return
 
     # dont forget final item
     if add_id_as_label == "always" or (add_id_as_label == "empty" and not fields):
-        # add label from id
         fields.append(
             {
                 "type": "text",

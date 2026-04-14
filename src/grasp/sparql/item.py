@@ -131,7 +131,7 @@ def _get_item(
                 identifier=binding.identifier(),
                 short_identifier=binding.identifier(),
                 label=binding.value,
-                infos=[info] if info else None,
+                info=[info] if info else None,
             ),
             obj_type=ObjType.LITERAL,
             variant=None,
@@ -152,16 +152,18 @@ def _get_item(
 
     # check whether the iri is a valid entity or property
     for obj_type in obj_types:
-        norm = manager.normalize(iri, obj_type)
+        norm = manager.normalize(iri, obj_type.index_name)
         if norm is None:
             continue
 
         identifier, variant = norm
-        if not manager.check_identifier(identifier, obj_type):
+        if not manager.check_identifier(identifier, obj_type.index_name):
             continue
 
-        infos = manager.get_infos_for_identifiers_of_type([identifier], obj_type)
-        alternative = manager.build_alternative_with_infos(
+        infos = manager.get_info_for_identifiers_from_index(
+            [identifier], obj_type.index_name
+        )
+        alternative = manager.build_alternative_with_info(
             identifier,
             infos.get(identifier, {}),
             variants=[variant] if variant else None,
@@ -181,7 +183,7 @@ def _get_item(
         # try to get infos from live endpoint
         infos = {}
         for obj_type in obj_types:
-            norm = manager.normalize(iri, obj_type)
+            norm = manager.normalize(iri, obj_type.index_name)
             if norm is None:
                 continue
 
@@ -189,8 +191,8 @@ def _get_item(
             if obj_type_variant:
                 variant = obj_type_variant
 
-            obj_type_infos = manager.get_infos_for_identifiers_of_type(
-                [identifier], obj_type
+            obj_type_infos = manager.get_info_for_identifiers_from_index(
+                [identifier], obj_type.index_name
             )
             # merge infos across types
             for key, value in obj_type_infos.get(identifier, {}).items():
@@ -204,9 +206,9 @@ def _get_item(
         infos = None
 
     return Item(
-        alternative=manager.build_alternative_with_infos(
+        alternative=manager.build_alternative_with_info(
             identifier=iri,
-            infos=infos,
+            info=infos,
             variants=[variant] if variant else None,
         ),
         obj_type=item_obj_type,

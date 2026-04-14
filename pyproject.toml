@@ -1,6 +1,6 @@
 [project]
 name = "grasp-rdf"
-version = "0.5.1"
+version = "0.6.2"
 description = "GRASP: Generic Reasoning and SPARQL generation across knowledge graphs"
 authors = [{ name = "Sebastian Walter", email = "swalter@cs.uni-freiburg.de" }]
 readme = "README.md"
@@ -23,10 +23,9 @@ dependencies = [
   # utils
   "requests>=2.32.0",
   "tqdm>=4.65.0",
-  "validators>=0.34.0",
   "scipy>=1.15.0",
   "universal-ml-utils>=0.1.5",
-  "grammar-utils>=0.1.5",
+  "grammar-utils>=0.1.6",
   "search-rdf>=0.5.2",
   # server
   "fastapi>=0.115.0",

@@ -9,14 +9,17 @@ from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
 from grasp.configs import GraspConfig
-from grasp.functions import (
-    call_function,
-    kg_functions,
-)
+from grasp.functions import call_function, kg_functions
 from grasp.manager import KgManager, format_kgs, load_kg_manager
-from grasp.manager.utils import EmbeddingModel, describe_index_type
-from grasp.model import Message, Response, call_model
-from grasp.tasks import get_task, rules as general_rules
+from grasp.manager.utils import (
+    EmbeddingModel,
+    describe_index_type,
+    get_common_sparql_prefixes,
+)
+from grasp.model import Message, ModelFn, Response, call_model
+from grasp.tasks import get_task
+from grasp.tasks import rules as general_rules
+from grasp.tasks.base import GraspTask
 from grasp.tasks.examples import ExampleIndex
 from grasp.tasks.feedback import format_feedback, generate_feedback
 from grasp.tasks.sparql_qa.examples import find_examples
@@ -31,53 +34,61 @@ from grasp.utils import (
 
 
 def system_instructions(
-    t,
-    config: GraspConfig,
+    task: GraspTask,
     managers: list[KgManager],
     kg_notes: dict[str, list[str]],
     notes: list[str],
 ) -> str:
     index_types = set()
-    prefixes = {}
     for manager in managers:
-        prefixes.update(manager.prefixes)
-        if manager.entity_index is not None:
-            index_types.add(manager.entity_index.index_type)
-        if manager.property_index is not None:
-            index_types.add(manager.property_index.index_type)
-
-        for sub in manager.indices.values():
-            index_types.add(sub.index.index_type)
+        for idx in manager.indices.values():
+            if idx.index is not None:
+                index_types.add(idx.index.index_type)
 
     index_infos = []
     for index_type in sorted(index_types):
         desc = describe_index_type(index_type)
         index_infos.append(f'"{index_type}": {desc}')
 
-    instructions = f"""\
-{t.system_information()}
+    instructions = task.system_information()
+
+    if index_infos:
+        instructions += f"""
+
+Types of knowledge graph indices:
+{format_list(index_infos)}"""
+
+    if managers:
+        instructions += f"""
 
 Available knowledge graphs:
-{format_kgs(managers, kg_notes)}
-
-Index types used:
-{format_list(index_infos)}
-
-"""
+{format_kgs(managers, kg_notes)}"""
 
     if notes:
-        instructions += f"""\
+        instructions += f"""
+
 General notes across knowledge graphs:
-{format_notes(notes)}
+{format_notes(notes)}"""
 
-"""
+    common_prefixes = get_common_sparql_prefixes()
+    if common_prefixes:
+        instructions += f"""
 
-    instructions += f"""\
-SPARQL prefixes for use in function calls:
-{format_prefixes(prefixes)}
+Common SPARQL prefixes:
+{format_prefixes(common_prefixes)}"""
+
+    if common_prefixes or any(manager.kg_prefixes for manager in managers):
+        instructions += """
+
+All SPARQL prefixes above can be used implicitly in SPARQL queries \
+and function calls."""
+
+    rules = general_rules() + task.rules()
+    if rules:
+        instructions += f"""
 
 Additional rules to follow:
-{format_list(general_rules() + t.rules())}"""
+{format_list(rules)}"""
 
     return instructions
 
@@ -94,7 +105,6 @@ def setup(config: GraspConfig) -> tuple[list[KgManager], dict[str, EmbeddingMode
 
 
 def load_notes(config: GraspConfig) -> tuple[list[str], dict[str, list[str]]]:
-    # load notes
     if config.notes_file is None:
         general_notes = []
     else:
@@ -103,7 +113,6 @@ def load_notes(config: GraspConfig) -> tuple[list[str], dict[str, list[str]]]:
     kg_notes = {}
     for kg in config.knowledge_graphs:
         if kg.notes_file is None:
-            kg_notes[kg.kg] = []
             continue
 
         kg_notes[kg.kg] = load_json(kg.notes_file)
@@ -112,7 +121,7 @@ def load_notes(config: GraspConfig) -> tuple[list[str], dict[str, list[str]]]:
 
 
 def generate(
-    task: str,
+    task_name: str,
     input: Any,
     config: GraspConfig,
     managers: list[KgManager],
@@ -123,34 +132,45 @@ def generate(
     past_known: set[str] | None = None,
     logger: Logger = get_logger("GRASP"),
     yield_output: bool = False,
+    custom_model: ModelFn | None = None,
 ) -> Generator[dict, None, dict]:
-    if task != "sparql-qa" and task != "general-qa":
+    if task_name != "sparql-qa" and task_name != "general-qa":
         # disable examples for tasks other than sparql-qa and general-qa
         # to avoid errors due to missing implementations
         config = deepcopy(config)
         config.force_examples = None
-        logger.debug(f"Disabling examples for {task} task")
-    if task == "cea":
+        logger.debug(f"Disabling examples for {task_name} task")
+    if task_name == "general-qa":
+        config = deepcopy(config)
+        config.tool_choice = "auto"
+        logger.debug("Setting tool choice to auto for general-qa task")
+    if task_name == "cea":
         config = deepcopy(config)
         config.know_before_use = True
-        logger.debug("Enabling know-before-use for CEA task")
+        logger.debug("Enabling know-before-use for cea task")
 
-    t = get_task(task, managers, config)
+    task = get_task(task_name, managers, config)
 
-    # setup functions
-    fns = kg_functions(managers, config.fn_set)
-    fns.extend(t.function_definitions())
+    input = task.setup(input)
 
-    input = t.setup(input)
+    # setup functions (after setup so tasks can configure based on input)
+    fns = kg_functions(managers, config.fn_set, config.list_k)
+    fns.extend(task.function_definitions())
     yield {"type": "input", "input": input}
 
-    if notes is None:
-        notes = []
-    if kg_notes is None:
-        kg_notes = {}
+    feedback_notes = notes
+    feedback_kg_notes = kg_notes
+    if config.notes_only_for_feedback:
+        notes = None
+        kg_notes = None
 
     # setup messages
-    system_instruction = system_instructions(t, config, managers, kg_notes, notes)
+    system_instruction = system_instructions(
+        task,
+        managers,
+        kg_notes or {},
+        notes or [],
+    )
     yield {
         "type": "system",
         "config": config.model_dump(),
@@ -235,7 +255,7 @@ def generate(
     retries = 0
     while len(messages) - num_messages < config.max_steps:
         try:
-            response = call_model(messages, fns, config)
+            response = call_model(messages, fns, config, custom_model=custom_model)
         except Timeout:
             error = {
                 "content": "LLM API timed out",
@@ -288,10 +308,11 @@ def generate(
                     tool_call.name,
                     tool_call.args,
                     known,
-                    t,
+                    task,
                     example_indices,
                 )
             except Exception as e:
+                tool_call.error = str(e)
                 result = f"Call to function {tool_call.name} returned an error:\n{e}"
 
                 # log full tracback for debugging
@@ -309,7 +330,7 @@ def generate(
                 "result": tool_call.result,
             }
 
-            if t.done(tool_call.name):
+            if task.done(tool_call.name):
                 # we are done
                 should_stop = True
 
@@ -331,7 +352,7 @@ def generate(
             break
 
         # get latest output
-        output = t.output(messages)
+        output = task.output(messages)
         if output is None:
             break
 
@@ -339,9 +360,9 @@ def generate(
         try:
             inputs = [message.content for message in messages if message.role == "user"]
             feedback = generate_feedback(
-                t,
-                kg_notes,
-                notes,
+                task,
+                feedback_kg_notes or kg_notes or {},
+                feedback_notes or notes or [],
                 inputs,  # type: ignore
                 output,
                 logger,
@@ -373,7 +394,7 @@ def generate(
         # reset loop detection
         last_resp_hash = None
 
-    output = t.output(messages)
+    output = task.output(messages)
 
     out_msg = Message(
         role="output",
@@ -386,7 +407,7 @@ def generate(
     end = time.perf_counter()
     output = {
         "type": "output",
-        "task": task,
+        "task": task_name,
         "output": output,
         "elapsed": end - start,
         "error": error,

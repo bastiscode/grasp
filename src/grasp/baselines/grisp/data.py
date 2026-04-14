@@ -54,7 +54,7 @@ class IRI(BaseModel):
 
         identifier = manager.denormalize(
             item.alternative.identifier,
-            item.obj_type,
+            item.obj_type.index_name,
             item.variant,
         )
         assert identifier is not None, (
@@ -180,7 +180,7 @@ class Skeleton:
         assert not self.done, "All NL IRIs have already been replaced"
         identifier = manager.denormalize(
             selection.alternative.identifier,
-            selection.obj_type,
+            selection.obj_type.index_name,
             selection.variant,
         )
         assert identifier is not None, "Failed to denormalize identifier"
@@ -588,8 +588,8 @@ def prepare_selection(
 
     target_option: int | None = None
     for i, alt in enumerate(alternatives):
-        if drop_infos and alt.infos:
-            alt.infos.clear()
+        if drop_infos and alt.info:
+            alt.info.clear()
 
         if alt != target_alt:
             continue
@@ -785,10 +785,7 @@ def main(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
     logger = get_logger("GRISP DATA", args.log_level)
 
-    manager = load_kg_manager(
-        KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint),
-        skip_caches=True,
-    )
+    manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
     manager.set_info_retrieval(enable=False)
 
     if os.path.exists(args.output_file) and not args.overwrite:
@@ -808,10 +805,7 @@ def main(args: argparse.Namespace) -> None:
         sample = SparqlQaSample(**sample)
 
         try:
-            sparql = manager.fix_prefixes(
-                sample.sparql,
-                remove_known=True,
-            )
+            sparql = manager.fix_prefixes(sample.sparql, remove_known=True)
             sparql = manager.prettify(sparql)
             sparql, items = extract_sparql_items(sparql, manager)
 

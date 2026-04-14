@@ -198,10 +198,6 @@ grasp evaluate judge -h
 grasp examples data/benchmark/wikidata/qald10/train.jsonl \
   data/benchmark/wikidata/qald10/train-example-index
 
-# Cache entity and property information for a knowledge graph (speeds up
-# runtime by pre-fetching info SPARQL query results):
-grasp cache wikidata
-
 # Merge data from multiple knowledge graphs into a single combined KG.
 # The first KG is the primary one; entities/properties from subsequent KGs
 # are added to it. For example used to combine language-specific indices
@@ -406,29 +402,36 @@ including it in your config file (see above).
 There are two more optional steps you can perform to customize the behavior
 of GRASP related to your knowledge graph.
 
-**Prefixes**
+**KG info (prefixes and description)**
 
-First, you can customize the prefixes that GRASP uses for a
-knowledge graph at build time and runtime.
-For that, create a file `$GRASP_INDEX_DIR/<kg_name>/prefixes.json`
+First, you can provide metadata about a knowledge graph via an
+`info.json` file. This file can contain a description of the knowledge graph
+(shown to the model in the system prompt) and prefix mappings used at build
+time and runtime.
+Create a file `$GRASP_INDEX_DIR/<kg_name>/info.json`
 in the following format (example for Wikidata):
 
 ```jsonc
 {
-  "wd": "<http://www.wikidata.org/entity/",
-  "wdt": "<http://www.wikidata.org/prop/direct/",
-  // other prefixes ...
+  "description": "A free, collaborative, multilingual knowledge base maintained by the Wikimedia Foundation.",
+  "prefixes": {
+    "wd": "http://www.wikidata.org/entity/",
+    "wdt": "http://www.wikidata.org/prop/direct/",
+    // other prefixes ...
+  }
 }
 ```
 
-During build time, the prefixes are used for the fallback label generation
-if an entity/property has neither a label nor an alias. During runtime, the
-prefixes are used to shorten IRIs in function call results, and allows GRASP
-to use prefixed instead of full IRIs in function call arguments.
+Both fields are optional. The description is shown to the model alongside the
+knowledge graph name and endpoint. The prefixes are used during build time for
+fallback label generation if an entity/property has neither a label nor an
+alias. During runtime, the prefixes are used to shorten IRIs in function call
+results, and allow GRASP to use prefixed instead of full IRIs in function call
+arguments.
 
 > Note: For QLever endpoints, we automatically retrieve prefixes via the API at
 > `https://qlever.cs.uni-freiburg.de/api/prefixes/<kg_name>`, so you do not
-> need to create a `prefixes.json` file in that case
+> need to create an `info.json` file just for prefixes in that case
 
 **Info SPARQL queries**
 

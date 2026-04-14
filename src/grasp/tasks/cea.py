@@ -190,7 +190,7 @@ class AnnotationState:
                 short_identifier=annot.entity,
                 label=annot.label,
                 aliases=annot.aliases,
-                infos=annot.infos,
+                info=annot.infos,
             )
             entities[annot.identifier] = alternative
 
@@ -319,11 +319,13 @@ def prepare_annotation(manager: KgManager, entity: str) -> Annotation:
 
     identifier = binding.identifier()
 
-    norm = manager.normalize(identifier, ObjType.ENTITY)
+    norm = manager.normalize(identifier, ObjType.ENTITY.index_name)
     if norm is not None:
         identifier, _ = norm
 
-    infos = manager.get_infos_for_identifiers_of_type([identifier], ObjType.ENTITY)
+    infos = manager.get_info_for_identifiers_from_index(
+        [identifier], ObjType.ENTITY.index_name
+    )
     info = infos.get(identifier, {})
 
     label = info.get("label")
@@ -483,7 +485,7 @@ The system was provided the following notes across all knowledge graphs:
 {format_notes(notes)}
 
 The system was provided the following rules to follow:
-{format_list(rules())}
+{format_list(rules()) if rules() else "None"}
 
 Provide your feedback with the give_feedback function."""
 
@@ -524,7 +526,13 @@ class CeaTask(GraspTask, FeedbackTask):
         example_indices: dict | None,
     ) -> str:
         return call_function(
-            self.config, self.managers, fn_name, fn_args, known, self.state, example_indices
+            self.config,
+            self.managers,
+            fn_name,
+            fn_args,
+            known,
+            self.state,
+            example_indices,
         )
 
     def done(self, fn_name: str) -> bool:

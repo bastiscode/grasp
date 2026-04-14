@@ -267,6 +267,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                     past_messages,
                     past_known,
                     logger,
+                    yield_output=True,
                 )
 
                 output = None

@@ -8,41 +8,35 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   {
     VALUES ?id { {IDS} }
     ?id rdfs:label ?value
-    FILTER(LANG(?value) = "en")
     BIND("label" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id skos:altLabel ?value
-    FILTER(LANG(?value) = "en")
     BIND("alias" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:comment ?value
-    FILTER(LANG(?value) = "en")
-    BIND("other" AS ?type)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:domain/rdfs:label ?domain
-    FILTER(LANG(?domain) = "en")
     BIND(CONCAT("has domain ", ?domain) AS ?value)
-    BIND("other" AS ?type)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:range/rdfs:label ?range
-    FILTER(LANG(?range) = "en")
     BIND(CONCAT("has range ", ?range) AS ?value)
-    BIND("other" AS ?type)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdf:type/rdfs:label ?typ
-    FILTER(LANG(?typ) = "en")
     BIND(CONCAT("is a ", ?typ) AS ?value)
-    BIND("other" AS ?type)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:subPropertyOf/rdfs:label ?superproperty
-    FILTER(LANG(?superproperty) = "en")
     BIND(CONCAT("is subproperty of ", ?superproperty) AS ?value)
-    BIND("other" AS ?type)
+    BIND("info" AS ?type)
   }
-} ORDER BY ?id ?type ?value
+}
+ORDER BY ?id ?type ?value

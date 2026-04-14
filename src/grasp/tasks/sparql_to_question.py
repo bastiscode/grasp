@@ -4,13 +4,6 @@ from grasp.configs import GraspConfig
 from grasp.functions import ExecutionResult
 from grasp.manager import KgManager
 from grasp.model import Message, Response
-from grasp.sparql.utils import (
-    find,
-    find_all,
-    parse_string,
-    parse_to_string_with_whitespace,
-    remove_node,
-)
 from grasp.tasks.base import GraspTask
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import format_list
@@ -66,87 +59,48 @@ def rules() -> list[str]:
     return [
         "You can use the cancel function at any time to stop the task without producing an output "
         "(e.g. if the SPARQL query is invalid or does not make sense).",
+        "If there is only one knowledge graph available, assume the SPARQL query is meant for that "
+        "particular knowledge graph and do not mention it explicitly in the generated questions.",
+        # "If a given SPARQL query times out, it does not necessarily mean it should be altered "
+        # "to finish within the time limit, especially if it would require significant changes to do so.",
     ]
 
 
 def system_information(config: GraspConfig) -> str:
-    task_kwargs = config.task_kwargs.get("wikidata-query-logs", {})
+    task_kwargs = config.task_kwargs.get("sparql-to-question", {})
     max_questions = task_kwargs.get("max_questions", 3)
+    level_of_detail = task_kwargs.get(
+        "level_of_detail",
+        "high level and concise, assume a non-expert user",
+    )
+    phrasing = task_kwargs.get(
+        "phrasing",
+        "mixed (e.g., keyword-like, interrogative, prosaic, bullet points, etc.)",
+    )
     return f"""\
-You are a Wikidata expert trying to find possible user questions for \
-anonymized SPARQL queries sent to the Wikidata Query Service. \
-Your task is to fix and clean the given SPARQL query, \
-and generate possible natural language questions for it.
+You are a SPARQL expert trying to find possible user questions for \
+a given SPARQL query. Your task is to fix and clean the given SPARQL query \
+if needed, and generate possible natural language questions for it.
+
+Make sure that generated questions respect the following requirements:
+  Maximum number of questions: {max_questions}
+  Level of detail: {level_of_detail}
+  Phrasing: {phrasing}
 
 You should take a step-by-step approach to achieve this:
 1. Analyze the given SPARQL query, its used entities and properties, and \
 execution result. Think about what the user wanted to achieve with this query. \
-If this is not clear from the provided information alone, search and query Wikidata \
-to gain more context about the SPARQL query.
-2. Clean the SPARQL query. This e.g. includes removing superfluous variables or other \
-unnecessary parts, finding better variable names, or replacing anonymized string \
-literals with sensible values.
-3. Formulate your final SPARQL query and execute it over Wikidata to verify its correctness. \
-It should not be too different from the original anonymous query in terms of \
+If this is not clear from the provided information alone, search and query available \
+knowledge graphs to gain more context about the SPARQL query.
+2. Clean the SPARQL query if needed. For example, remove superfluous variables or \
+other unnecessary parts, find better variable names, etc.
+3. Formulate your final SPARQL query and execute it to verify its correctness. \
+It should not be too different from the original query in terms of \
 intent and its execution result, but you are allowed to deviate if it would make \
 the query more natural, precise, etc.
-4. For the final SPARQL query, generate between 1 and {max_questions} natural \
-language questions that accurately capture its intent. Ensure diversity in \
-both phrasing (e.g., keyword-like, question-form, or request-style) and detail \
-(e.g., referencing result columns, filters, or other query components).
+4. For the final SPARQL query, generate natural language questions that accurately \
+capture its intent. Make sure they follow the requirements mentioned above.
 5. Provide your final output by calling the answer function."""
-
-
-def remove_service(manager: KgManager, sparql: str) -> str:
-    parse, _ = parse_string(sparql, manager.sparql_parser)
-
-    for service in find_all(parse, "ServiceGraphPattern"):
-        var_or_iri = service["children"][2]
-
-        iri = find(var_or_iri, "IRIREF")
-        if iri is not None and iri["value"] == "<http://wikiba.se/ontology#label>":
-            remove_node(service)
-            continue
-
-        pname = find(var_or_iri, "PNAME_LN")
-        if pname is not None and pname["value"] == "wikibase:label":
-            remove_node(service)
-            continue
-
-    return parse_to_string_with_whitespace(parse, sparql.encode())
-
-
-def remove_unused_variables(manager: KgManager, sparql: str) -> str:
-    parse, _ = parse_string(sparql, manager.sparql_parser)
-
-    clause = find(parse, "SelectClause")
-    if clause is None:
-        return sparql
-
-    used = set()
-    for var in find_all(parse, "Var", skip={"SelectClause"}):
-        used.add(var["children"][0]["value"])
-
-    for var in find_all(clause, "SelectVar"):
-        children = var["children"]
-        if len(children) != 1:
-            continue
-
-        val = children[0]["children"][0]["value"]
-        # keep Label variables from service clauses
-        if val not in used and not val.endswith("Label"):
-            remove_node(var)
-
-    return parse_to_string_with_whitespace(parse, sparql.encode())
-
-
-def clean_sparql(sparql: str, managers: list[KgManager]) -> str:
-    assert len(managers) == 1, "Only one kg manager expected"
-    manager = managers[0]
-    sparql = remove_service(manager, sparql)
-    sparql = remove_unused_variables(manager, sparql)
-    sparql = manager.prettify(sparql)
-    return sparql
 
 
 def prepare_sparql(
@@ -176,23 +130,6 @@ def prepare_sparql(
             pass
 
     return result, format_sparql_result(manager, result, selections)
-
-
-def input_and_state(
-    sparql: str,
-    managers: list[KgManager],
-    max_rows: int,
-    max_columns: int,
-) -> tuple[str, None]:
-    sparql = clean_sparql(sparql, managers)
-    _, formatted = prepare_sparql(
-        sparql,
-        managers,
-        max_rows,
-        max_columns,
-        remove_known=True,
-    )
-    return formatted, None
 
 
 def output(
@@ -237,8 +174,8 @@ def output(
         return None
 
 
-class WdqlTask(GraspTask):
-    name = "wikidata-query-logs"
+class SparqlToQuestionTask(GraspTask):
+    name = "sparql-to-question"
 
     def system_information(self) -> str:
         return system_information(self.config)
@@ -267,13 +204,14 @@ class WdqlTask(GraspTask):
 
     def setup(self, input: Any) -> str:
         assert isinstance(input, str), (
-            "Input for wikidata-query-logs must be a string (SPARQL query)"
+            f"Input for {self.name} must be a string (SPARQL query)"
         )
-        formatted, _ = input_and_state(
+        _, formatted = prepare_sparql(
             input,
             self.managers,
             self.config.result_max_rows,
             self.config.result_max_columns,
+            remove_known=True,
         )
         return formatted
 

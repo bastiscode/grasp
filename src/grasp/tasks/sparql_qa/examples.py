@@ -266,8 +266,8 @@ def find_examples(
         fn_args = {"kg": kg, "question": question}
         content = "Let's start by looking at some similar examples."
 
-    response_id = uuid4().hex
-    tool_call_id = uuid4().hex
+    response_id = f"msg_{uuid4().hex}"
+    tool_call_id = f"tool_{uuid4().hex}"
     return Message(
         role="assistant",
         content=Response(

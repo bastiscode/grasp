@@ -2,15 +2,15 @@ import json
 import time
 import uuid
 from copy import deepcopy
-from importlib import resources
 from typing import Any, Iterator
-from urllib.parse import quote_plus, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 
 import requests
-from grammar_utils.parse import LR1Parser
+from grammar_utils.parse import LR1Parser  # type: ignore
 from requests.exceptions import JSONDecodeError
 
 from grasp.sparql.types import AskResult, Binding, Position, SelectResult
+from grasp.utils import read_resource
 
 # default request timeout
 # 6 seconds for establishing a connection, 30 seconds for processing query
@@ -35,8 +35,8 @@ class SPARQLException(Exception):
 
 
 def load_sparql_grammar() -> tuple[str, str]:
-    sparql_grammar = resources.read_text("grasp.sparql.grammar", "sparql.y")
-    sparql_lexer = resources.read_text("grasp.sparql.grammar", "sparql.l")
+    sparql_grammar = read_resource("grasp.sparql.grammar", "sparql.y")
+    sparql_lexer = read_resource("grasp.sparql.grammar", "sparql.l")
     return sparql_grammar, sparql_lexer
 
 
@@ -46,8 +46,8 @@ def load_sparql_parser() -> LR1Parser:
 
 
 def load_iri_and_literal_grammar() -> tuple[str, str]:
-    il_grammar = resources.read_text("grasp.sparql.grammar", "iri_literal.y")
-    il_lexer = resources.read_text("grasp.sparql.grammar", "iri_literal.l")
+    il_grammar = read_resource("grasp.sparql.grammar", "iri_literal.y")
+    il_lexer = read_resource("grasp.sparql.grammar", "iri_literal.l")
     return il_grammar, il_lexer
 
 
@@ -71,14 +71,13 @@ def format_literal(s: str) -> str:
         s = s.strip('"')
     elif s.startswith("'") and s.endswith("'"):
         s = s.strip("'")
-
-    return s.encode().decode("unicode_escape")
+    return s
 
 
 def parse_into_binding(
     input: str,
     parser: LR1Parser,
-    prefixes: dict[str, str],
+    prefixes: dict[str, str] | None = None,
 ) -> Binding | None:
     try:
         parse, _ = parse_string(
@@ -92,7 +91,6 @@ def parse_into_binding(
 
     match parse["name"]:
         case "IRIREF":
-            # already an IRI
             return Binding(
                 typ="uri",
                 value=input[1:-1],
@@ -100,7 +98,7 @@ def parse_into_binding(
 
         case "PNAME_LN" | "PNAME_NS":
             pfx, name = input.split(":", 1)
-            if pfx not in prefixes:
+            if prefixes is None or pfx not in prefixes:
                 return None
 
             uri = prefixes[pfx] + name
@@ -168,7 +166,7 @@ def parse_into_binding(
                     datatype = datatype["value"][1:-1]
                 else:
                     pfx, name = datatype["value"].split(":", 1)
-                    if pfx not in prefixes:
+                    if prefixes is None or pfx not in prefixes:
                         return None
 
                     datatype = prefixes[pfx] + name
@@ -200,6 +198,28 @@ def parse_to_string(parse: dict) -> str:
             return ""
 
     return _flatten(parse)
+
+
+def parse_to_string_with_whitespace(parse: dict, encoded: bytes) -> str:
+    # rebuild string from parse tree, preserving original whitespace
+    # between terminals using byte_span from the encoded input
+    parts = []
+    pos = 0
+    for terminal in find_terminals(parse):
+        byte_span = terminal.get("byte_span")
+        if byte_span is not None:
+            start, end = byte_span
+            # copy original bytes (whitespace) between previous and this terminal
+            parts.append(encoded[pos:start].decode(errors="replace"))
+            pos = end
+        elif parts:
+            # newly created terminal without byte_span, add a space separator
+            parts.append(" ")
+        parts.append(terminal["value"])
+    # copy any remaining bytes after the last terminal
+    if pos < len(encoded):
+        parts.append(encoded[pos:].decode(errors="replace"))
+    return "".join(parts)
 
 
 def parse_string(
@@ -267,6 +287,34 @@ def find_terminals(parse: dict) -> Iterator[dict]:
             yield from find_terminals(child)
 
 
+def span(parse: dict) -> tuple[int, int] | None:
+    min = max = None
+    for terminal in find_terminals(parse):
+        span = terminal.get("byte_span")
+        if span is None:
+            continue
+
+        if min is None or span[0] < min:
+            min = span[0]
+        if max is None or span[1] > max:
+            max = span[1]
+
+    if min is not None and max is not None:
+        return min, max
+    else:
+        return None
+
+
+def remove_node(node: dict) -> None:
+    # remove a node from the parse tree while preserving its byte span,
+    # so that parse_to_string_with_whitespace skips the original bytes
+    s = span(node)
+    node.pop("children", None)
+    if s is not None:
+        node["value"] = ""
+        node["byte_span"] = s
+
+
 def normalize(sparql: str, parser: LR1Parser, is_prefix: bool = False) -> str:
     # normalize SPARQL by changing variable names to ?v1, ?v2, ...
     parse, rest = parse_string(
@@ -291,37 +339,11 @@ def normalize(sparql: str, parser: LR1Parser, is_prefix: bool = False) -> str:
     return parse_to_string(parse) + rest
 
 
-def has_iri(sparql: str, parser: LR1Parser) -> bool:
-    parse, _ = parse_string(
-        sparql,
-        parser,
-        skip_empty=True,
-        collapse_single=True,
-    )
-
-    return (
-        find(
-            parse,
-            {"IRIREF", "PNAME_NS", "PNAME_LN"},
-            skip={"BaseDecl", "PrefixDecl"},
-        )
-        is not None
-    )
-
-
 def autocomplete_prefix(
     prefix: str,
     parser: LR1Parser,
     limit: int | None = None,
 ) -> tuple[str, str, Position]:
-    """
-    Autocomplete the SPARQL prefix by running
-    it against the SPARQL grammar parser.
-    Assumes the prefix is somewhere in a triple block.
-    Optionally add a LIMIT clause to the query.
-    Returns the full SPARQL query and the current position
-    in the query triple block (subject, property, object).
-    """
     # autocomplete by adding 1 to 3 variables to the query,
     # completing and then parsing it to find the current position
     # in the query triple block
@@ -502,17 +524,13 @@ def ask_to_select(
 
 def fix_prefixes(
     sparql: str,
-    parser: LR1Parser,
+    sparql_parser: LR1Parser,
+    iri_parser: LR1Parser,
     prefixes: dict[str, str],
-    is_prefix: bool = False,
     remove_known: bool = False,
     sort: bool = False,
 ) -> str:
-    parse, rest = parse_string(
-        sparql + " " * is_prefix,
-        parser,
-        is_prefix=is_prefix,
-    )
+    parse, rest = parse_string(sparql, sparql_parser)
 
     reverse_prefixes = {long: short for short, long in prefixes.items()}
 
@@ -528,7 +546,7 @@ def fix_prefixes(
 
     base_decl = find(parse, "BaseDecl", last=True)
     if base_decl:
-        base_uri = base_decl["children"][1]["value"]
+        base_uri = base_decl["children"][1]["value"][1:-1]
     else:
         base_uri = None
 
@@ -538,8 +556,10 @@ def fix_prefixes(
     for iri in find_all(parse, "IRIREF", skip=skip):
         formatted = format_iri(
             iri["value"],
+            iri_parser,
             prefixes,
             base_uri=base_uri,
+            wrap=True,
         )
         if is_iri(formatted):
             continue
@@ -551,13 +571,12 @@ def fix_prefixes(
 
     for pfx in find_all(parse, {"PNAME_NS", "PNAME_LN"}, skip=skip):
         short, val = pfx["value"].split(":", 1)
+
         long = exist.get(short, "")
-
         if reverse_prefixes.get(long, short) != short:
-            # replace existing short forms with our own short form
             short = reverse_prefixes[long]
-            pfx["value"] = f"{short}:{val}"
 
+        pfx["value"] = f"{short}:{val}"
         seen.add(short)
 
     updated_prologue = []
@@ -585,13 +604,20 @@ def fix_prefixes(
     if sort:
         updated_prologue.sort(key=lambda pfx: pfx["children"][1]["value"])
 
+    # build prologue string with newline-separated prefix declarations
+    prologue_str = "\n".join(parse_to_string(decl) for decl in updated_prologue)
+
+    # remove original prologue from tree so it's not included in body reconstruction
+    encoded = sparql.encode()
     prologue = find(parse, "Prologue")
     if prologue:
-        prologue["children"] = updated_prologue
-    else:
-        parse = {"name": "Prologue", "children": updated_prologue}
+        remove_node(prologue)
 
-    return (parse_to_string(parse) + rest).strip()
+    # rebuild body preserving original whitespace
+    body = parse_to_string_with_whitespace(parse, encoded)
+
+    result = prologue_str.strip() + "\n" + body.strip()
+    return (result + rest).strip()
 
 
 def prettify(
@@ -681,25 +707,6 @@ def prettify(
     return (s.strip() + " " + rest).strip()
 
 
-def set_limit(sparql: str, parser: LR1Parser, limit: int) -> str:
-    parse, _ = parse_string(sparql, parser)
-    limit_clause = find(parse, "LimitClause", skip={"SubSelect"})
-    if limit_clause is None:
-        return sparql
-
-    limit_clause["children"] = [
-        {
-            "name": "LIMIT",
-            "value": "LIMIT",
-        },
-        {
-            "name": "INTEGER",
-            "value": str(limit),
-        },
-    ]
-    return parse_to_string(parse)
-
-
 class SPARQLExecuteException(SPARQLException):
     def __init__(
         self,
@@ -749,8 +756,8 @@ def execute(
     sparql: str,
     endpoint: str,
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
-    max_retries: int = 0,
     read_timeout: float | None = READ_TIMEOUT,
+    max_retries: int = 0,
     **kwargs: Any,
 ) -> SelectResult | AskResult:
     max_retries = max(0, max_retries)
@@ -759,6 +766,7 @@ def execute(
             response = requests.post(
                 endpoint,
                 headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
                     "Accept": "application/sparql-results+json",
                     "User-Agent": "grasp-rdf",
                 },
@@ -788,9 +796,19 @@ def execute(
             if i < max_retries:
                 continue
 
+            # format timeout
+            if request_timeout is None:
+                timeout_fmt = ""
+            elif isinstance(request_timeout, tuple):
+                conn_tm, query_tm = request_timeout
+                timeout_fmt = (
+                    f" (connection_timeout={conn_tm}s, query_timeout={query_tm}s)"
+                )
+            else:
+                timeout_fmt = f" (timeout={request_timeout}s)"
+
             raise SPARQLExecuteException(
-                f"SPARQL query timed out after {request_timeout} seconds",
-                sparql,
+                f"SPARQL query timed out{timeout_fmt}", sparql
             ) from e
 
         except requests.RequestException as e:
@@ -851,32 +869,58 @@ def wrap_iri(iri: str) -> str:
     return f"<{iri}>"
 
 
+def has_scheme(iri: str) -> bool:
+    return "://" in iri
+
+
 def format_iri(
     iri: str,
+    parser: LR1Parser,
     prefixes: dict[str, str],
     base_uri: str | None = None,
+    wrap: bool = False,
 ) -> str:
-    # strip angle brackets if present (e.g. from SPARQL parse tree IRIREF nodes)
-    wrapped = is_iri(iri)
-    if wrapped:
-        iri = iri[1:-1]
+    try:
+        parse, _ = parse_string(
+            # need to wrap for parser
+            wrap_iri(iri) if not is_iri(iri) else iri,
+            parser,
+            skip_empty=True,
+            collapse_single=True,
+        )
+    except Exception:
+        return iri
 
-    if "://" not in iri:
-        return wrap_iri(iri) if wrapped else iri
+    if parse["name"] != "IRIREF":
+        # no iri, return as is
+        return iri
+
+    iri = parse["value"][1:-1]  # strip angle brackets
+    if not has_scheme(iri):
+        if base_uri is None:
+            # return as-is if no base URI is given
+            return wrap_iri(iri) if wrap else iri
+
+        base_uri = base_uri if not is_iri(base_uri) else base_uri[1:-1]
+        # resolve relative IRI against base URI
+        iri = base_uri + iri
 
     longest = find_longest_prefix(iri, prefixes)
     if longest is None:
-        return wrap_iri(iri) if wrapped else iri
+        return wrap_iri(iri) if wrap else iri
 
     short, long = longest
-    val = iri[len(long):]
+    val = iri[len(long) :]
 
-    # check if no bad characters are in the short form
-    # by url encoding it and checking if it is still the same
-    if quote_plus(val) == val:
-        return short + ":" + val
-    else:
-        return wrap_iri(iri) if wrapped else iri
+    short_iri = short + ":" + val
+
+    try:
+        # try to parse prefixed IRI to check if it is valid, if not return full IRI
+        # e.g., special characters are not as well supported in prefixed IRIs as in full IRIs
+        parse_string(short_iri, parser)
+        return short_iri
+    except Exception:
+        return wrap_iri(iri) if wrap else iri
 
 
 def load_qlever_prefixes(endpoint: str) -> dict[str, str]:
@@ -907,16 +951,16 @@ def load_qlever_prefixes(endpoint: str) -> dict[str, str]:
 
 
 def load_entity_index_sparql() -> str:
-    return resources.read_text("grasp.sparql.queries", "entity.index.sparql").strip()
+    return read_resource("grasp.sparql.queries", "entity.index.sparql")
 
 
 def load_property_index_sparql() -> str:
-    return resources.read_text("grasp.sparql.queries", "property.index.sparql").strip()
+    return read_resource("grasp.sparql.queries", "property.index.sparql")
 
 
 def load_entity_info_sparql() -> str:
-    return resources.read_text("grasp.sparql.queries", "entity.info.sparql").strip()
+    return read_resource("grasp.sparql.queries", "entity.info.sparql")
 
 
 def load_property_info_sparql() -> str:
-    return resources.read_text("grasp.sparql.queries", "property.info.sparql").strip()
+    return read_resource("grasp.sparql.queries", "property.info.sparql")

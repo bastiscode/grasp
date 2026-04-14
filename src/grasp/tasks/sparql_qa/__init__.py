@@ -66,8 +66,9 @@ def functions(managers: list[KgManager], config: GraspConfig) -> list[dict]:
         {
             "name": "answer",
             "description": """\
-Provide your final SPARQL query and answer to the user question based on the \
-query results. This function will stop the generation process.""",
+Provide your final SPARQL query and a concise answer to the user question \
+based on the query results. Only include the direct answer, no reasoning \
+or step summaries. This function will stop the generation process.""",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -358,6 +359,8 @@ def output(
     managers: list[KgManager],
     max_rows: int,
     max_cols: int,
+    request_timeout: tuple[float, float],
+    read_timeout: float,
 ) -> dict | None:
     answer, cancel = get_answer_or_cancel(messages)
     if answer is None and cancel is None:
@@ -399,6 +402,8 @@ def output(
             managers,
             max_rows,
             max_cols,
+            request_timeout=request_timeout,
+            read_timeout=read_timeout,
         )
         manager, _ = find_manager(managers, output["kg"])
 
@@ -422,14 +427,14 @@ def feedback_system_message(
 You are a question answering assistant providing feedback on the \
 output of a SPARQL-based question answering system for a given user question.
 
-The system has access to the following knowledge graphs:
+The following knowledge graphs are available:
 {format_kgs(managers, kg_notes)}
 
-The system was provided the following notes across all knowledge graphs:
+The following general notes are available:
 {format_notes(notes)}
 
-The system was provided the following rules to follow:
-{format_list(rules())}
+The following task specific rules should be followed:
+{format_list(rules()) if rules() else "None"}
 
 There are two possible cases:
 
@@ -442,9 +447,7 @@ it uses, and its execution result.
 2) The system failed to find an answer
 You are given the system's explanation for why it failed to find an answer. \
 Optionally, you are provided with the system's best attempt at a SPARQL query \
-so far including the same additional information as in case 1.
-
-Provide your feedback with the give_feedback function."""
+so far including the same additional information as in case 1."""
 
 
 def feedback_instructions(questions: list[str], output: dict) -> str:
@@ -502,7 +505,12 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         example_indices: dict | None,
     ) -> str:
         return call_function(
-            self.config, self.managers, fn_name, fn_args, known, example_indices=example_indices
+            self.config,
+            self.managers,
+            fn_name,
+            fn_args,
+            known,
+            example_indices=example_indices,
         )
 
     def done(self, fn_name: str) -> bool:
@@ -514,6 +522,8 @@ class SparqlQaTask(GraspTask, FeedbackTask):
             self.managers,
             self.config.result_max_rows,
             self.config.result_max_columns,
+            self.config.sparql_request_timeout,
+            self.config.sparql_read_timeout,
         )
 
     @property

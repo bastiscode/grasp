@@ -1,12 +1,12 @@
 import os
 import random
-from copy import deepcopy
 from logging import Logger
 
 import yaml
 from tqdm import tqdm, trange
 from universal_ml_utils.io import dump_json, load_jsonl
 from universal_ml_utils.logging import get_logger
+from universal_ml_utils.ops import consume_generator
 
 from grasp.configs import (
     GraspConfig,
@@ -51,6 +51,7 @@ def take_notes_from_samples(
     notes, kg_notes = load_notes(config)
 
     sample_cls = get_task(task, managers, config).sample_cls()
+    assert sample_cls is not None, f"Task {task} does not support samples"
 
     assert config.seed is not None, "Seed must be set for adaptation"
 
@@ -82,14 +83,16 @@ def take_notes_from_samples(
         for kg, sample in tqdm(samples, desc="Running GRASP on samples", leave=False):
             manager, _ = find_manager(managers, kg)
 
-            *_, output = generate(
-                task,
-                sample.input(),
-                config,
-                [manager],
-                kg_notes,
-                notes,
-                logger=agent_logger,
+            output = consume_generator(
+                generate(
+                    task,
+                    sample.input(),
+                    config,
+                    [manager],
+                    kg_notes,
+                    notes,
+                    logger=agent_logger,
+                )
             )
             outputs.append(output)
 
@@ -224,9 +227,9 @@ def take_notes_from_exploration(
 
 def rules() -> list[str]:
     return [
-        "Avoid to take notes on things that are already handled well by the agent.",
+        "Do not take notes on things that are already handled well by the agent.",
         "As you hit the limits on the number of notes and their length, \
-gradually generalize your notes, discard unnecessary details, and move \
+gradually merge and generalize your notes, discard unnecessary details, and move \
 notes that can be useful across knowledge graphs to the general section.",
     ]
 
@@ -236,23 +239,23 @@ def system_instructions(max_notes: int, max_note_length: int) -> str:
 You are a note-taking assistant. Your task is to \
 inspect the traces of a knowledge graph agent performing a certain task, and to \
 take notes about the agent's outputs as well as the used knowledge \
-graphs and functions. Before calling a note-taking function, \
-provide reasoning for what you are doing and why. Stop the note-taking process \
-by calling the stop function once you are done.
+graphs and functions.
 
-Your notes should help the agent to better understand and \
-navigate the task and knowledge graphs. For a specific knowledge \
-graph, they should generalize across samples, rather than being specific to \
-a single sample or output. You can also take general notes that might be \
-useful across knowledge graphs or for the task in general.
+Your notes should help the agent to better understand and navigate the task \
+and knowledge graphs in the future. You are limited to a maximum of {max_notes} notes \
+per knowledge graph, plus {max_notes} general notes for insights that apply \
+across knowledge graphs or to the task in general. Each note is limited to a maximum of \
+{max_note_length} characters to ensure it is concise and to the point.
 
-You are only allowed {max_notes} notes at max per knowledge graph and for the \
-general notes, such that you are forced to prioritize and to keep them as widely \
-applicable as possible. Notes are limited to {max_note_length} characters to \
-ensure they are concise and to the point.
+The notes should generalize to new unseen task inputs, rather than being specific to \
+the task traces and outputs at hand.
 
-Examples of potentially useful types of notes include:
-- overall structure, domain converage, and schema of the knowledge graphs
+Before calling a note-taking function, provide reasoning for what you are doing and why. \
+Before stopping, make sure to check all notes (not only the ones touched in this iteration) \
+for the above mentioned criteria and clean them if needed.
+
+Examples of potentially useful types of notes to include:
+- overall structure, domain coverage, and schema of the knowledge graphs
 - peculiarities of the knowledge graphs
 - strategies when encountering certain types of questions or errors
 - tips for when and how to use certain functions
@@ -274,6 +277,11 @@ def prepare_ground_truth(
             managers,
             config.result_max_rows,
             config.result_max_columns,
+            request_timeout=(
+                config.sparql_connection_timeout,
+                config.sparql_query_timeout,
+            ),
+            read_timeout=config.sparql_read_timeout,
         )
         manager, _ = find_manager(managers, kg)
         return format_sparql_result(manager, result, selections)
@@ -302,6 +310,16 @@ def prepare_ground_truths(
         gt = prepare_ground_truth(sample, kg, managers, config)
         ground_truths.append(gt)
     return ground_truths
+
+
+def format_kg_notes(kg_notes: dict[str, list[str]]) -> str:
+    if not kg_notes:
+        return "None"
+
+    return format_list(
+        f'"{kg}":\n{format_notes(notes, indent=2, enumerated=True)}'
+        for kg, notes in kg_notes.items()
+    )
 
 
 def note_taking_instructions(
@@ -335,10 +353,6 @@ Agent trace:
         formatted.append(content)
 
     fmt = "\n\n".join(formatted)
-    kg_specific_notes = format_list(
-        f"{kg}:\n{format_notes(kg_specific_notes, indent=2, enumerated=True)}"
-        for kg, kg_specific_notes in sorted(kg_notes.items())
-    )
 
     return f"""\
 Add to, delete from, or update the following notes (which might \
@@ -346,7 +360,7 @@ be the same notes provided to the agent) based on the given agent traces \
 below.
 
 Knowledge graph specific notes:
-{kg_specific_notes}
+{format_kg_notes(kg_notes)}
 
 General notes across knowledge graphs:
 {format_notes(notes, enumerated=True)}
@@ -381,20 +395,14 @@ def take_notes(
 
     num_messages = len(messages)
 
-    # copy config to avoid modifying the original
-    config = deepcopy(config)
-    config.model = config.note_taking_model or config.model
-    config.model_endpoint = config.note_taking_model_endpoint or config.model_endpoint
-    config.temperature = config.note_taking_temperature or config.temperature
-    config.top_p = config.note_taking_top_p or config.top_p
-    config.reasoning_effort = (
-        config.note_taking_reasoning_effort or config.reasoning_effort
-    )
-    config.api = config.note_taking_api or config.api
+    # if a note taking model is configured, use it as a full
+    # replacement for the model config; otherwise fall back to
+    # the parent grasp config
+    nt_config = config.note_taking_model or config
 
-    while len(messages) - num_messages < config.note_taking_max_steps:
+    while len(messages) - num_messages < config.max_steps:
         try:
-            response = call_model(messages, functions, config)
+            response = call_model(messages, functions, nt_config)
         except Exception as e:
             logger.error(f"LLM API returned error during note taking: {e}")
             return

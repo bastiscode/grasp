@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from litellm import (
@@ -26,6 +26,7 @@ class ToolCall(BaseModel):
     name: str
     args: dict[str, Any]
     result: str | None = None
+    error: str | None = None
 
 
 class Reasoning(BaseModel):
@@ -52,6 +53,10 @@ class Response(BaseModel):
     reasoning: Reasoning | None = None
     tool_calls: list[ToolCall]
     usage: dict | None = None
+    prompt_token_ids: list[int] | None = None
+    token_ids: list[int] | None = None
+    token_logprobs: list[float] | None = None
+    token_texts: list[str] | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -116,12 +121,39 @@ class Response(BaseModel):
                 )
             )
 
+        # Extract logprobs from choice.logprobs.content (standard OpenAI format)
+        token_logprobs = None
+        token_texts = None
+        logprobs = getattr(choice, "logprobs", None)
+        if logprobs and getattr(logprobs, "content", None):
+            token_logprobs = [entry.logprob for entry in logprobs.content]
+            token_texts = [entry.token for entry in logprobs.content]
+
+        # Extract token_ids and prompt_token_ids from provider_specific_fields (vLLM extension)
+        token_ids = None
+        prompt_token_ids = None
+        if (
+            hasattr(choice, "provider_specific_fields")
+            and choice.provider_specific_fields
+        ):
+            token_ids = choice.provider_specific_fields.get("token_ids")
+            prompt_token_ids = choice.provider_specific_fields.get("prompt_token_ids")
+        # Also check response-level attributes
+        if token_ids is None and hasattr(response, "token_ids"):
+            token_ids = response.token_ids  # type: ignore
+        if prompt_token_ids is None and hasattr(response, "prompt_token_ids"):
+            prompt_token_ids = response.prompt_token_ids  # type: ignore
+
         return Response(
             id=id,
             message=message,
             reasoning=reasoning,
             tool_calls=tool_calls,
             usage=response.usage.model_dump(exclude_defaults=True),  # type: ignore
+            prompt_token_ids=prompt_token_ids,
+            token_ids=token_ids,
+            token_logprobs=token_logprobs,
+            token_texts=token_texts,
         )
 
     @staticmethod
@@ -195,6 +227,9 @@ class Response(BaseModel):
 class Message(BaseModel):
     role: str
     content: str | Response
+
+
+ModelFn = Callable[[list[Message], list[dict], ModelConfig], Response]
 
 
 def completions_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
@@ -323,20 +358,30 @@ def call_model(
     messages: list[Message],
     functions: list[dict],
     config: ModelConfig,
-    num_retries: int = 2,
+    custom_model: ModelFn | None = None,
 ) -> Response:
+    if custom_model is not None:
+        return custom_model(messages, functions, config)
+
     if config.api is None:
         api = "responses" if config.model.startswith("openai") else "completions"
     else:
         api = config.api
 
     if api == "completions":
+        # Auto-enable logprobs when return_token_ids is requested
+        request_logprobs = (
+            config.model_kwargs.get("return_token_ids", False)
+            if config.model_kwargs
+            else False
+        )
+
         # use old chat completions API
         completions_resp: ModelResponse = completion(
             model=config.model,
             messages=completions_api_messages(messages),
             tools=[{"type": "function", "function": fn} for fn in functions],
-            tool_choice="auto",
+            tool_choice=config.tool_choice,
             parallel_tool_calls=config.parallel_tool_calls,
             # decoding parameters
             temperature=config.temperature,
@@ -348,9 +393,11 @@ def call_model(
             timeout=config.completion_timeout,
             seed=config.seed,
             extra_body=config.model_kwargs,
+            # logprobs (auto-enabled with return_token_ids for vLLM)
+            logprobs=True if request_logprobs else None,
             # drop unsupported parameters
             drop_params=True,
-            num_retries=num_retries,
+            num_retries=config.num_retries,
         )
         return Response.from_completions_api(completions_resp)
 
@@ -361,7 +408,7 @@ def call_model(
             input=responses_api_messages(messages),  # type: ignore
             include=["reasoning.encrypted_content"],
             tools=[{"type": "function", **fn} for fn in functions],  # type: ignore
-            tool_choice="auto",
+            tool_choice=config.tool_choice,  # type: ignore
             parallel_tool_calls=config.parallel_tool_calls,
             # decoding parameters
             temperature=config.temperature,
@@ -380,7 +427,7 @@ def call_model(
             # drop unsupported parameters
             drop_params=True,
             store=False,
-            num_retries=num_retries,
+            num_retries=config.num_retries,
         )
         return Response.from_responses_api(responses_resp)
 

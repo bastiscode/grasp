@@ -17,6 +17,11 @@ top_p: env(TOP_P:1.0)
 reasoning_effort: env(REASONING_EFFORT:null)
 reasoning_summary: env(REASONING_SUMMARY:null)
 api: env(API:null)
+tool_choice: env(TOOL_CHOICE:auto)
+
+sparql_connection_timeout: env(SPARQL_CONNECTION_TIMEOUT:6.0)
+sparql_query_timeout: env(SPARQL_QUERY_TIMEOUT:30.0)
+sparql_read_timeout: env(SPARQL_READ_TIMEOUT:10.0)
 
 list_k: env(LIST_K:10)
 search_top_k: env(SEARCH_TOP_K:10)

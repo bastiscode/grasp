@@ -1,0 +1,142 @@
+from grasp.functions import (
+    find_manager,
+    format_verification_error,
+    update_known_from_rows,
+    verify_iri_or_literal,
+)
+from grasp.manager import KgManager
+from grasp.sparql.types import Position, SelectResult
+from grasp.utils import FunctionCallException
+
+
+def find_frequent_function_definition(kgs: list[str], k: int) -> dict:
+    return {
+        "name": "find_frequent",
+        "description": f"""\
+List common IRIs or literals at a given position (subject, property, \
+or object) in the knowledge graph for the given constraints. \
+Results are ordered by descending by frequency, and at most {k} \
+results are returned per page (use pagination to see more results).
+
+For example, to find the most common types used in Wikidata:
+find_frequent(kg="wikidata", position="object", property="rdf:type")
+
+Or to find the most frequently used properties in Wikidata:
+find_frequent(kg="wikidata", position="property")""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "kg": {
+                    "type": "string",
+                    "enum": kgs,
+                    "description": "The knowledge graph to query",
+                },
+                "position": {
+                    "type": "string",
+                    "enum": ["subject", "property", "object"],
+                    "description": "The position to find common values for",
+                },
+                "subject": {
+                    "type": ["string", "null"],
+                    "description": "IRI constraint for subject position (null for unconstrained)",
+                },
+                "property": {
+                    "type": ["string", "null"],
+                    "description": "IRI constraint for property position (null for unconstrained)",
+                },
+                "object": {
+                    "type": ["string", "null"],
+                    "description": "IRI or literal constraint for object position (null for unconstrained)",
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "Page number (1-indexed) for paginating results (default should be 1)",
+                },
+            },
+            "required": [
+                "kg",
+                "position",
+                "subject",
+                "property",
+                "object",
+                "page",
+            ],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    }
+
+
+def find_frequent(
+    managers: list[KgManager],
+    kg: str,
+    position: str,
+    subj: str | None,
+    prop: str | None,
+    obj: str | None,
+    page: int,
+    k: int,
+    known: set[str],
+    request_timeout: float | tuple[float, float] | None = None,
+    read_timeout: float | None = None,
+) -> str:
+    if page < 1:
+        raise FunctionCallException("Page number must be at least 1")
+
+    manager, _ = find_manager(managers, kg)
+
+    constraints = {"subject": subj, "property": prop, "object": obj}
+
+    if constraints.get(position) is not None:
+        raise FunctionCallException(
+            f'Cannot find common values at the "{position}" position '
+            f"while also constraining it."
+        )
+
+    pos_values = []
+    for pos, const in zip(Position, [subj, prop, obj]):
+        if const is None:
+            pos_values.append(f"?{pos.value[0]}")
+            continue
+
+        ver_const = verify_iri_or_literal(const, pos, manager)
+        if ver_const is None:
+            raise FunctionCallException(format_verification_error(const, pos))
+
+        pos_values.append(ver_const)
+
+    target_var = f"?{position[0]}"
+
+    triple_pattern = " ".join(pos_values)
+    sparql = f"""\
+SELECT {target_var} (COUNT(*) AS ?freq) WHERE {{
+    {triple_pattern} .
+}} GROUP BY {target_var}
+ORDER BY DESC(?freq) {target_var}
+LIMIT {page * k}"""
+
+    try:
+        result = manager.execute_sparql(sparql, request_timeout, read_timeout)
+    except Exception as e:
+        raise FunctionCallException(f"Failed to list common {position} values:\n{e}")
+
+    assert isinstance(result, SelectResult)
+
+    # apply pagination
+    start = (page - 1) * k
+    end = page * k
+    result.data = result.data[start:end]
+
+    # update known
+    update_known_from_rows(known, result.rows(), manager.get_normalizer("entities"))
+    update_known_from_rows(known, result.rows(), manager.get_normalizer("properties"))
+
+    return manager.format_sparql_result(
+        result,
+        show_top_rows=k,
+        show_bottom_rows=0,
+        show_left_columns=2,
+        show_right_columns=0,
+        column_names=[position, "frequency"],
+        clip_literals=False,
+    )

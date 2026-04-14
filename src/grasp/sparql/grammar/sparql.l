@@ -158,3 +158,6 @@ ANON '[' {WS}* ']'
 
 // comments (comment in to allow and ignore)
 ; '#' [^\x0D\x0A]*
+
+// placeholders (comment in to allow and ignore)
+; '{' [a-zA-Z0-9_\-]+ '}'

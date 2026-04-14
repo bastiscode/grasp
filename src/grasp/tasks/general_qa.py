@@ -1,5 +1,3 @@
-from typing import Any
-
 from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.model import Message, Response
@@ -104,7 +102,12 @@ class GeneralQaTask(SparqlQaTask):
         example_indices: dict | None,
     ) -> str:
         return _module_call_function(
-            self.config, self.managers, fn_name, fn_args, known, example_indices=example_indices
+            self.config,
+            self.managers,
+            fn_name,
+            fn_args,
+            known,
+            example_indices=example_indices,
         )
 
     def done(self, fn_name: str) -> bool:

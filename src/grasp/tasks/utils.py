@@ -11,6 +11,7 @@ from grasp.functions import (
 from grasp.manager import KgManager
 from grasp.sparql.item import selections_from_sparql
 from grasp.sparql.types import Selection
+from grasp.sparql.utils import READ_TIMEOUT, REQUEST_TIMEOUT
 
 
 class Sample(BaseModel):
@@ -30,6 +31,8 @@ def prepare_sparql_result(
     max_rows: int,
     max_columns: int,
     known: set[str] | None = None,
+    request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
+    read_timeout: float | None = READ_TIMEOUT,
 ) -> tuple[ExecutionResult, list[Selection]]:
     manager, _ = find_manager(managers, kg)
     selections = []
@@ -42,6 +45,8 @@ def prepare_sparql_result(
             max_rows,
             max_columns,
             known,
+            request_timeout=request_timeout,
+            read_timeout=read_timeout,
         )
     except Exception as e:
         return ExecutionResult(

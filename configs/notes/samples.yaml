@@ -40,11 +40,15 @@ samples_per_round: env(SAMPLES_PER_ROUND:4)
 samples_per_file: env(SAMPLES_PER_FILE:null)
 ignore_ground_truth: env(IGNORE_GROUND_TRUTH:false)
 
-# custom note taking model and decoding parameters
-note_taking_model: env(NOTE_TAKING_MODEL:openai/gpt-5-mini)
-note_taking_model_endpoint: env(NOTE_TAKING_MODEL_ENDPOINT:null)
-note_taking_temperature: env(NOTE_TAKING_TEMPERATURE:1.0)
-note_taking_top_p: env(NOTE_TAKING_TOP_P:1.0)
-note_taking_reasoning_effort: env(NOTE_TAKING_REASONING_EFFORT:null)
-note_taking_reasoning_summary: env(NOTE_TAKING_REASONING_SUMMARY:null)
-note_taking_api: env(NOTE_TAKING_API:null)
+# optional model config for the note taking step;
+# if set, fully replaces the main model config above for
+# note taking (parent fields are NOT inherited, so list every
+# field you need)
+# note_taking_model:
+#   model: env(NOTE_TAKING_MODEL:openai/gpt-5-mini)
+#   model_endpoint: env(NOTE_TAKING_MODEL_ENDPOINT:null)
+#   temperature: env(NOTE_TAKING_TEMPERATURE:1.0)
+#   top_p: env(NOTE_TAKING_TOP_P:1.0)
+#   reasoning_effort: env(NOTE_TAKING_REASONING_EFFORT:null)
+#   reasoning_summary: env(NOTE_TAKING_REASONING_SUMMARY:null)
+#   api: env(NOTE_TAKING_API:null)

@@ -13,32 +13,10 @@ from streamlit_autorefresh import st_autorefresh
 from universal_ml_utils.io import load_json, load_jsonl
 
 from grasp.model import Message
-from grasp.sparql.utils import load_sparql_parser, prettify
 from grasp.utils import is_invalid_evaluation, is_invalid_output
 
 # Set page configuration
-st.set_page_config(
-    page_title="SPARQL QA Evaluation",
-    page_icon="📊",
-    layout="wide",
-)
-
-# Initialize SPARQL parser
-sparql_parser = load_sparql_parser()
-
-
-def prettify_sparql(sparql_query: str) -> str:
-    """Prettify a SPARQL query using the parser."""
-    if not sparql_query or not sparql_query.strip():
-        return ""
-    try:
-        return prettify(sparql_query, sparql_parser)
-    except Exception as e:
-        st.warning(f"Failed to prettify SPARQL query: {e}")
-        return sparql_query
-
-
-# Helper functions
+st.set_page_config(page_title="SPARQL QA Evaluation", page_icon="📊", layout="wide")
 
 
 def parse_model_name(filename):
@@ -365,115 +343,6 @@ def load_and_process_data(
         )
 
     return ground_truth, model_outputs, model_eval_data, metrics
-
-
-def generate_latex_table(df, rankings, sorted_kgs, kg_benchmarks, metric_key):
-    """Generate a LaTeX table from the DataFrame with appropriate formatting."""
-    # Start with the LaTeX table environment
-    latex = "\\begin{table}[htbp]\n\\centering\n\\small\n"
-    latex += (
-        "\\caption{Model performance comparison by "
-        + metric_key.replace("avg_", "")
-        + "}\n"
-    )
-    # Don't include the package in the table - it should be in the preamble
-    latex += "\\begin{tabular}{l"  # First column for model names
-
-    # Add a column for each KG-benchmark pair - only for the benchmarks that are actually in the table
-    for kg in sorted_kgs:
-        if kg in kg_benchmarks:  # Only include KGs that are in the filtered benchmark
-            for _ in kg_benchmarks[kg]:
-                latex += "c"  # centered columns for each benchmark
-
-    latex += "}\n\\toprule\n"
-
-    # Create a two-level header with KGs spanning multiple columns
-    # First row: Model + KG names with their spans
-    latex += "\\multirow{2}{*}{Model}"
-
-    for kg in sorted_kgs:
-        if kg in kg_benchmarks:  # Only include KGs that are in the filtered benchmark
-            benchmarks = kg_benchmarks[kg]
-            if benchmarks:  # Only add if there are benchmarks
-                span = len(benchmarks)
-                # Add KG name spanning multiple columns
-                latex += f" & \\multicolumn{{{span}}}{{c}}{{{kg}}}"
-
-    latex += " \\\\\n"
-
-    # Second row: Benchmark names
-    latex += " "  # Empty cell for Model column
-
-    for kg in sorted_kgs:
-        if kg in kg_benchmarks:  # Only include KGs that are in the filtered benchmark
-            for benchmark in sorted(kg_benchmarks[kg]):
-                latex += f" & {benchmark}"
-
-    latex += " \\\\\n"
-
-    # Add horizontal rule
-    latex += "\\midrule\n"
-
-    # Process each row (model)
-    for i, row_idx in enumerate(df.index):
-        model_name = df.iloc[i, 0]  # Get model name from first column
-
-        # Escape underscores and other special characters in the model name for LaTeX
-        model_name_escaped = (
-            model_name.replace("_", "\\_").replace("%", "\\%").replace("&", "\\&")
-        )
-
-        # Start the row with the model name
-        row = model_name_escaped
-
-        # Add each value, with formatting based on rank
-        col_index = 1  # Skip the first column which is the model name
-
-        for kg in sorted_kgs:
-            if (
-                kg in kg_benchmarks
-            ):  # Only include KGs that are in the filtered benchmark
-                for benchmark in sorted(kg_benchmarks[kg]):
-                    if col_index < len(df.columns):
-                        cell_value = df.iloc[i, col_index]
-                        col_index += 1
-
-                        # Format based on ranking
-                        if cell_value == "—":
-                            # Missing data
-                            row += " & —"
-                        else:
-                            # Get rank if available
-                            is_best = False
-                            is_second = False
-
-                            # Check if this cell is styled as best or second best
-                            # We need to check the ranking data structure
-                            if (kg, benchmark) in rankings:
-                                model_rankings = rankings[(kg, benchmark)]
-                                # Find this model in the rankings - use the original model name
-                                if model_name in model_rankings:
-                                    rank = model_rankings[model_name]
-                                    is_best = rank == 0
-                                    is_second = rank == 1
-
-                            # Format with bold for best, italic for second best
-                            if is_best:
-                                row += f" & \\textbf{{{cell_value}}}"
-                            elif is_second:
-                                row += f" & \\textit{{{cell_value}}}"
-                            else:
-                                row += f" & {cell_value}"
-
-        row += " \\\\"
-        latex += row + "\n"
-
-    # Finish the table
-    latex += "\\bottomrule\n\\end{tabular}\n"
-    latex += "\\label{tab:model_comparison}\n"
-    latex += "\\end{table}"
-
-    return latex
 
 
 def setup_model_selection(available_models, selected_models_dict=None):
@@ -813,7 +682,7 @@ def show_predictions_view(available_data):
         # Display ground truth if available
         if gt_example:
             st.subheader("Ground Truth SPARQL")
-            st.code(prettify_sparql(gt_example.get("sparql", "")), language="sparql")
+            st.code(gt_example.get("sparql", ""), language="sparql")
 
         # Display model output
         st.subheader("Model Output")
@@ -826,7 +695,7 @@ def show_predictions_view(available_data):
         else:
             sparql_query = output.get("sparql", "No SPARQL query generated or found")
 
-        st.code(prettify_sparql(sparql_query), language="sparql")
+        st.code(sparql_query, language="sparql")
 
         # Display evaluation if available
         if selected_id in evaluations:
@@ -1523,10 +1392,7 @@ def show_ranking_view(ranking_data):
         ground_truth_sparql = ground_truth_entry.get("sparql")
         if ground_truth_sparql:
             with st.expander("Ground Truth SPARQL"):
-                st.code(
-                    prettify_sparql(ground_truth_sparql),
-                    language="sparql",
-                )
+                st.code(ground_truth_sparql, language="sparql")
 
     st.markdown("**Judge Verdict**")
     if not evaluation_entry:
@@ -1591,9 +1457,8 @@ def show_ranking_view(ranking_data):
                     rendered_any = False
                     sparql_query = output_payload.get("sparql")
                     if sparql_query:
-                        prettified = prettify_sparql(sparql_query)
                         st.markdown("**SPARQL**")
-                        st.code(prettified or sparql_query, language="sparql")
+                        st.code(sparql_query, language="sparql")
                         rendered_any = True
 
                     result_data = output_payload.get("result")
@@ -2148,23 +2013,6 @@ def show_comprehensive_view(available_data):
         st.metric("Knowledge Graphs", total_kgs)
     with col3:
         st.metric("Benchmarks", total_benchmarks)
-
-    # Create the LaTeX code
-    latex_code = generate_latex_table(
-        df, rankings, sorted_kgs, kg_benchmarks, metric_key
-    )
-
-    # Display in an expander with minimal UI
-    with st.expander("LaTeX Code", expanded=False):
-        st.code(latex_code, language="latex")
-
-        # Add download button
-        st.download_button(
-            label="Download LaTeX",
-            data=latex_code,
-            file_name=f"table_{metric_key}.tex",
-            mime="text/plain",
-        )
 
 
 # Main app

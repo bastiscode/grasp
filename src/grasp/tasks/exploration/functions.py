@@ -1,5 +1,5 @@
 from grasp.manager import KgManager
-from grasp.utils import FunctionCallException, format_enumerate
+from grasp.utils import FunctionCallException, format_notes
 
 
 def note_functions(managers: list[KgManager]) -> list[dict]:
@@ -112,9 +112,7 @@ def check_note(note: str, max_note_length: int) -> None:
 
 
 def show_notes(notes: list[str]) -> str:
-    if not notes:
-        return "No notes available"
-    return format_enumerate(notes)
+    return format_notes(notes, enumerated=True)
 
 
 def add_note(notes: list[str], note: str, max_notes: int, max_note_length: int) -> str:
@@ -170,6 +168,8 @@ def call_function(
     if kg is None:
         notes_to_use = notes
     else:
+        if kg not in kg_notes:
+            kg_notes[kg] = []
         notes_to_use = kg_notes[kg]
 
     if fn_name == "add_note":

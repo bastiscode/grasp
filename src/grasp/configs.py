@@ -33,10 +33,12 @@ class ModelConfig(BaseModel):
     reasoning_summary: str | None = None
     api: str | None = None
     parallel_tool_calls: bool = False
+    tool_choice: str = "auto"
 
     # completion parameters
     max_completion_tokens: int = 8192  # 8k, leaves enough space for reasoning models
     completion_timeout: float = 120.0
+    num_retries: int = 2
 
 
 class GraspConfig(ModelConfig):
@@ -52,6 +54,11 @@ class GraspConfig(ModelConfig):
     # optional task specific parameters
     # map[task_name, map[param_name, param_value]]
     task_kwargs: dict[str, dict[str, Any]] = {}
+
+    # sparql query timeouts
+    sparql_connection_timeout: float = 6.0
+    sparql_query_timeout: float = 30.0
+    sparql_read_timeout: float = 10.0
 
     # kg function parameters
     search_top_k: int = 10
@@ -76,6 +83,11 @@ class GraspConfig(ModelConfig):
     # enable feedback loop
     feedback: bool = False
     max_feedbacks: int = 2
+    notes_only_for_feedback: bool = False
+
+    @property
+    def sparql_request_timeout(self) -> tuple[float, float]:
+        return self.sparql_connection_timeout, self.sparql_query_timeout
 
 
 class ServerConfig(GraspConfig):
@@ -98,18 +110,10 @@ class NotesConfig(GraspConfig):
 
 
 class NoteTakingConfig(NotesConfig):
-    # add note taking model configuration
-    # note taking model can be different from the main GRASP model
-    note_taking_model: str | None = None
-    note_taking_model_endpoint: str | None = None
-    note_taking_max_steps: int = 50
-
-    # and have different decoding parameters
-    note_taking_temperature: float | None = None
-    note_taking_top_p: float | None = None
-    note_taking_reasoning_effort: str | None = None
-    note_taking_reasoning_summary: str | None = None
-    note_taking_api: str | None = None
+    # optional model config for the note taking step;
+    # if set, fully replaces the parent GraspConfig's model config
+    # for note taking (parent fields are not inherited)
+    note_taking_model: ModelConfig | None = None
 
 
 class NotesFromSamplesInput(BaseModel):

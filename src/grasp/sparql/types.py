@@ -20,6 +20,14 @@ class ObjType(StrEnum):
     def __str__(self) -> str:
         return self.value
 
+    @property
+    def index_name(self) -> str:
+        if self == ObjType.ENTITY:
+            return "entities"
+        elif self == ObjType.PROPERTY:
+            return "properties"
+        raise ValueError(f"ObjType {self.value} has no associated index")
+
 
 class Position(StrEnum):
     SUBJECT = "subject"
@@ -183,7 +191,7 @@ class Alternative:
         label: str | None = None,
         variants: list[str] | None = None,
         aliases: list[str] | None = None,
-        infos: list[str] | None = None,
+        info: list[str] | None = None,
         matched_label: str | None = None,
     ) -> None:
         self.identifier = identifier
@@ -191,7 +199,7 @@ class Alternative:
         self.label = label
         self.aliases = aliases
         self.variants = variants
-        self.infos = infos
+        self.info = info
         self.matched_label = matched_label
 
     def __hash__(self) -> int:
@@ -223,7 +231,7 @@ class Alternative:
         self,
         max_aliases: int = 5,
         show_matched_label: bool = True,
-        add_infos: bool = True,
+        add_info: bool = True,
         include_variants: list[str] | None = None,
     ) -> str:
         s = self.get_label() or self.get_identifier()
@@ -249,7 +257,7 @@ class Alternative:
             s += ", ".join(parts)
             s += ")"
 
-        if add_infos and self.aliases and max_aliases > 0:
+        if add_info and self.aliases and max_aliases > 0:
             s += ", "
             if self.has_label():
                 s += "also "
@@ -259,11 +267,8 @@ class Alternative:
             if len(self.aliases) > max_aliases:
                 s += ", etc."
 
-        if add_infos and self.infos:
-            s += ":\n" + format_list(
-                (clip(info) for info in self.infos),
-                indent=2,
-            )
+        if add_info and self.info:
+            s += ":\n" + format_list((clip(info) for info in self.info), indent=2)
 
         return s
 

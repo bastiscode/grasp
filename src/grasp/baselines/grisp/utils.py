@@ -1,7 +1,6 @@
 import glob
 import os
 import random
-from importlib import resources
 from typing import Callable, Iterator
 
 from grammar_utils.parse import LR1Parser
@@ -9,10 +8,12 @@ from torch.utils.data import Sampler
 from transformers import PreTrainedTokenizerBase
 from universal_ml_utils.io import load_json
 
+from grasp.utils import read_resource
+
 
 def load_sparql_grammar() -> tuple[str, str]:
-    sparql_grammar = resources.read_text("grasp.baselines.grisp.grammar", "sparql.y")
-    sparql_lexer = resources.read_text("grasp.baselines.grisp.grammar", "sparql.l")
+    sparql_grammar = read_resource("grasp.baselines.grisp.grammar", "sparql.y")
+    sparql_lexer = read_resource("grasp.baselines.grisp.grammar", "sparql.l")
     return sparql_grammar, sparql_lexer
 
 

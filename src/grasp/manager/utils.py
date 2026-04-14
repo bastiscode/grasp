@@ -15,12 +15,10 @@ from search_rdf.model import (
 )
 from universal_ml_utils.configuration import load_config
 from universal_ml_utils.io import dump_json, load_json, load_text
-from universal_ml_utils.logging import get_logger
 
-from grasp.manager.cache import Cache
 from grasp.manager.normalizer import Normalizer, WikidataPropertyNormalizer
 from grasp.sparql.types import ObjType
-from grasp.sparql.utils import find_longest_prefix, get_endpoint, load_qlever_prefixes
+from grasp.sparql.utils import find_longest_prefix
 from grasp.utils import get_index_dir
 
 SearchIndex = KeywordIndex | EmbeddingIndex | FuzzyIndex
@@ -31,8 +29,9 @@ EmbeddingModel = HuggingFaceImageModel | OpenClipModel | SentenceTransformerMode
 class Index:
     description: str
     index: SearchIndex
+    data: Data
     info_sparql: str | None = None
-    cache: Cache | None = None
+    normalizer: Normalizer | None = None
 
 
 def load_data(index_dir: str) -> Data:
@@ -44,14 +43,18 @@ def load_data(index_dir: str) -> Data:
     return data
 
 
-def load_index(index_dir: str, index_type: str) -> SearchIndex | None:
-    logger = get_logger("KG INDEX LOADING")
+def try_load_search_index(
+    index_dir: str,
+    index_type: str,
+    logger: logging.Logger | None = None,
+) -> SearchIndex | None:
     start = time.perf_counter()
 
     try:
         data = load_data(index_dir)
     except Exception as e:
-        logger.warning(f"Failed to load data from {index_dir}: {e}")
+        if logger is not None:
+            logger.warning(f"Failed to load data from {index_dir}: {e}")
         return None
 
     index_dir = os.path.join(index_dir, index_type)
@@ -70,24 +73,33 @@ def load_index(index_dir: str, index_type: str) -> SearchIndex | None:
     try:
         index = index_cls.load(**load_kwargs)
     except Exception as e:
-        logger.warning(f"Failed to load {index_type} index from {index_dir}: {e}")
+        if logger is not None:
+            logger.warning(f"Failed to load {index_type} index from {index_dir}: {e}")
         return None
 
     end = time.perf_counter()
 
-    logger.debug(f"Loading {index_type} index from {index_dir} took {end - start:.2f}s")
+    if logger is not None:
+        logger.debug(
+            f"Loading {index_type} index from {index_dir} took {end - start:.2f}s"
+        )
 
     return index
 
 
-def load_entity_index(kg: str, index_type: str) -> SearchIndex | None:
-    index_dir = os.path.join(get_index_dir(kg), "entities")
-    return load_index(index_dir, index_type)
+def load_index_sparql(
+    index_dir: str,
+    logger: logging.Logger | None = None,
+) -> str | None:
+    index_sparql_path = os.path.join(index_dir, "index.sparql")
+    if os.path.exists(index_sparql_path):
+        if logger is not None:
+            logger.debug(f"Loaded index.sparql from {index_dir}")
+        return load_text(index_sparql_path)
 
-
-def load_property_index(kg: str, index_type: str) -> SearchIndex | None:
-    index_dir = os.path.join(get_index_dir(kg), "properties")
-    return load_index(index_dir, index_type)
+    if logger is not None:
+        logger.debug(f"No index.sparql found at {index_dir}")
+    return None
 
 
 def load_info_sparql(
@@ -105,35 +117,33 @@ def load_info_sparql(
     return None
 
 
-def load_info_cache(
+def load_index_description(
     index_dir: str,
     logger: logging.Logger | None = None,
-) -> Cache | None:
-    cache_dir = os.path.join(index_dir, "info.cache", "db")
-    if not os.path.exists(cache_dir):
-        if logger is not None:
-            logger.debug(f"No info cache found at {cache_dir}")
+) -> str | None:
+    info_path = os.path.join(index_dir, "info.json")
+    if not os.path.exists(info_path):
         return None
 
-    try:
-        start = time.perf_counter()
-        cache = Cache.load(cache_dir)
-        end = time.perf_counter()
-        if logger is not None:
-            logger.debug(f"Loaded cache from {cache_dir} in {end - start:.2f}s")
-        return cache
-    except Exception as e:
-        if logger is not None:
-            logger.warning(f"Failed to load cache from {cache_dir}: {e}")
-        return None
+    info = load_json(info_path)
+    desc = info.get("description")
+    if desc and logger is not None:
+        logger.debug(f"Loaded index description from {info_path}")
+    return desc
 
 
-def load_other_indices(kg: str, indices: list[str]) -> dict[str, Index]:
-    logger = get_logger("KG OTHER INDICES LOADING")
+def load_other_indices(
+    kg: str,
+    indices: list[str],
+    logger: logging.Logger | None = None,
+) -> dict[str, Index]:
     base_index_dir = get_index_dir(kg)
     config_path = os.path.join(base_index_dir, "indices.yaml")
     if not os.path.exists(config_path):
-        logger.debug(f"No indices.yaml found at {config_path}, skipping other indices")
+        if logger is not None:
+            logger.debug(
+                f"No indices.yaml found at {config_path}, skipping other indices"
+            )
         return {}
 
     config = load_config(config_path)
@@ -142,12 +152,13 @@ def load_other_indices(kg: str, indices: list[str]) -> dict[str, Index]:
     for cfg in config["indices"]:
         name = cfg["name"]
         if name not in indices:
-            logger.debug(
-                f"Skipping index {name} as it's not in the specified indices list"
-            )
+            if logger is not None:
+                logger.debug(
+                    f"Skipping index {name} as it's not in the specified indices list"
+                )
             continue
 
-        desc = cfg.get("description", "No description provided")
+        desc = cfg.get("description", "No description available")
 
         sub_index_dir = os.path.join(base_index_dir, name)
 
@@ -156,14 +167,12 @@ def load_other_indices(kg: str, indices: list[str]) -> dict[str, Index]:
         if cfg["type"].startswith("embedding"):
             cfg["type"] = "embedding"
 
-        index = load_index(sub_index_dir, cfg["type"])
+        index = try_load_search_index(sub_index_dir, cfg["type"], logger)
         if index is None:
             continue
 
         info_sparql = load_info_sparql(sub_index_dir, logger)
-        info_cache = load_info_cache(sub_index_dir, logger)
-
-        others[name] = Index(desc, index, info_sparql, info_cache)
+        others[name] = Index(desc, index, index.data(), info_sparql)
 
     return others
 
@@ -210,59 +219,94 @@ def load_kg_normalizers(kg: str) -> tuple[Normalizer, Normalizer]:
     return ent_normalizer, prop_normalizer
 
 
-def load_kg_prefixes(kg: str, endpoint: str | None = None) -> dict[str, str]:
+def load_kg_info(
+    kg: str,
+    logger: logging.Logger | None = None,
+) -> tuple[dict[str, str], str | None]:
     kg_index_dir = get_index_dir(kg)
+    info_file = os.path.join(kg_index_dir, "info.json")
     prefix_file = os.path.join(kg_index_dir, "prefixes.json")
-    if os.path.exists(prefix_file):
-        prefixes = load_json(prefix_file)
-        # compatibility: strip leading < from old-format prefix files
-        prefixes = {k: v.lstrip("<") for k, v in prefixes.items()}
+
+    # load info.json if it exists, fall back to empty
+    if os.path.exists(info_file):
+        info = load_json(info_file)
     else:
-        try:
-            prefixes = load_qlever_prefixes(endpoint or get_endpoint(kg))
-            # save for future use
-            dump_json(prefixes, prefix_file, indent=2)
-        except Exception:
-            prefixes = {}
+        info = {}
 
-    common_prefixes = get_common_sparql_prefixes()
-    values = set(prefixes.values())
+    description = info.get("description")
+    prefixes = info.get("prefixes", {})
 
-    # add common prefixes that might not be covered by the
-    # specified prefixes
-    for short, long in common_prefixes.items():
-        if short in prefixes or long in values:
+    # if no prefixes in info.json, try prefixes.json (legacy)
+    if not prefixes and os.path.exists(prefix_file):
+        prefixes = load_json(prefix_file)
+
+    # save prefixes back to info.json for future use
+    if prefixes and not info.get("prefixes"):
+        info["prefixes"] = prefixes
+        dump_json(info, info_file, indent=2)
+
+    # compatibility with IRIs: strip leading < and trailing >
+    prefixes = {k: v.lstrip("<").rstrip(">") for k, v in prefixes.items()}
+
+    # remove prefixes that conflict with or duplicate common prefixes
+    _, _, kg_prefixes = merge_prefixes(
+        get_common_sparql_prefixes(),
+        prefixes,
+        logger,
+    )
+
+    return kg_prefixes, description
+
+
+def merge_prefixes(
+    first: dict[str, str],
+    second: dict[str, str],
+    logger: logging.Logger | None = None,
+    do_raise: bool = False,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    # merge second into first, returning (merged, first_only, second_only)
+    # conflicts from second are dropped with warning or error
+    reverse_first = {v: k for k, v in first.items()}
+
+    first_only = {}
+    second_only = {}
+    merged = dict(first)
+
+    for short, long in second.items():
+        if short in first:
+            if long != first[short]:
+                # name clash with different IRI
+                msg = (
+                    f'Prefix "{short}" already defined as {first[short]}, '
+                    f"cannot redefine as {long}"
+                )
+                if do_raise:
+                    raise RuntimeError(msg)
+                if logger is not None:
+                    logger.warning(msg)
+            # either way, skip (duplicate or conflict)
             continue
 
-        prefixes[short] = long
+        if long in reverse_first:
+            # IRI already covered by a different short name
+            msg = (
+                f"{long} is already covered by prefix "
+                f'"{reverse_first[long]}", skipping "{short}"'
+            )
+            if do_raise:
+                raise RuntimeError(msg)
+            if logger is not None:
+                logger.warning(msg)
+            continue
 
-    return prefixes
+        merged[short] = long
+        second_only[short] = long
 
+    for short, long in first.items():
+        if short not in second:
+            first_only[short] = long
 
-def load_kg_info_sparqls(kg: str) -> tuple[str | None, str | None]:
-    logger = get_logger("KG INFO SPARQL LOADING")
-    kg_index_dir = get_index_dir(kg)
-    ent_info = load_info_sparql(os.path.join(kg_index_dir, "entities"), logger)
-    prop_info = load_info_sparql(os.path.join(kg_index_dir, "properties"), logger)
-    return ent_info, prop_info
-
-
-def load_kg_info_caches(kg: str) -> tuple[Cache | None, Cache | None]:
-    logger = get_logger("KG INFO CACHE LOADING")
-    kg_index_dir = get_index_dir(kg)
-    ent_cache = load_info_cache(os.path.join(kg_index_dir, "entities"), logger)
-    prop_cache = load_info_cache(os.path.join(kg_index_dir, "properties"), logger)
-    return ent_cache, prop_cache
-
-
-def load_kg_indices(
-    kg: str,
-    entities_type: str,
-    properties_type: str,
-) -> tuple[SearchIndex | None, SearchIndex | None]:
-    ent_index = load_entity_index(kg, entities_type)
-    prop_index = load_property_index(kg, properties_type)
-    return ent_index, prop_index
+    return merged, first_only, second_only
 
 
 def get_common_sparql_prefixes() -> dict[str, str]:
@@ -275,6 +319,7 @@ def get_common_sparql_prefixes() -> dict[str, str]:
         "skos": "http://www.w3.org/2004/02/skos/core#",
         "dct": "http://purl.org/dc/terms/",
         "dc": "http://purl.org/dc/elements/1.1/",
+        "qb": "http://purl.org/linked-data/cube#",
         "prov": "http://www.w3.org/ns/prov#",
         "schema": "http://schema.org/",
         "geo": "http://www.opengis.net/ont/geosparql#",
@@ -284,7 +329,6 @@ def get_common_sparql_prefixes() -> dict[str, str]:
         "bd": "http://www.bigdata.com/rdf#",
         "hint": "http://www.bigdata.com/queryHints#",
         "wikibase": "http://wikiba.se/ontology#",
-        "qb": "http://purl.org/linked-data/cube#",
         "void": "http://rdfs.org/ns/void#",
     }
 

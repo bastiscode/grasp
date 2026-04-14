@@ -10,13 +10,14 @@ from universal_ml_utils.io import dump_json, load_json, load_jsonl
 from universal_ml_utils.logging import get_logger
 
 from grasp.configs import ModelConfig
-from grasp.manager.utils import load_kg_prefixes
+from grasp.manager.utils import get_common_sparql_prefixes, load_kg_info, merge_prefixes
 from grasp.model import Message, call_model
 from grasp.sparql.metrics import f1_score
 from grasp.sparql.types import AskResult, SelectResult
 from grasp.sparql.utils import (
     execute,
     get_endpoint,
+    load_iri_and_literal_parser,
     load_sparql_parser,
 )
 from grasp.sparql.utils import (
@@ -99,18 +100,27 @@ def evaluate_f1(
     if endpoint is None:
         endpoint = get_endpoint(kg)
 
-    parser = load_sparql_parser()
-    prefixes = load_kg_prefixes(kg, endpoint)
+    sparql_parser = load_sparql_parser()
+    iri_literal_parser = load_iri_and_literal_parser()
 
-    def fix(sparql: str) -> str | None:
+    prefixes = get_common_sparql_prefixes()
+    kg_prefixes, _ = load_kg_info(kg)
+    prefixes, _, _ = merge_prefixes(prefixes, kg_prefixes, logger)
+
+    def fix(sparql: str) -> str:
         if not fix_prefixes:
             return sparql
 
         try:
-            return fix_sparql_prefixes(sparql, parser, prefixes)
+            return fix_sparql_prefixes(
+                sparql,
+                sparql_parser,
+                iri_literal_parser,
+                prefixes,
+            )
         except Exception as e:
             logger.warning(f"Error fixing prefixes:\n{e}\n\nSPARQL:\n{sparql}")
-            return None
+            return sparql
 
     evaluation_file = get_evaluation_file(prediction_file)
     predictions, evaluations = load_predictions_and_evaluations(
@@ -146,7 +156,7 @@ def evaluate_f1(
             if not retry_failed or not is_invalid_evaluation(evaluation):
                 continue
 
-        sparql = fix(inputs[id].sparql) or inputs[id].sparql
+        sparql = inputs[id].sparql
         target_result, target_err = get_result_or_error(sparql, endpoint, timeout)
         evaluations[id] = {
             "target": {
@@ -167,7 +177,7 @@ def evaluate_f1(
         pred_result = None
 
         if output is not None and output["sparql"] is not None:
-            sparql = fix(output["sparql"]) or output["sparql"]
+            sparql = fix(output["sparql"])
             pred_result, pred_err = get_result_or_error(sparql, endpoint, timeout)
 
         if pred_result is not None:
@@ -301,6 +311,13 @@ def evaluate_with_judge(
     log_level: str | int | None = None,
 ):
     logger = get_logger("GRASP EVALUATION", log_level)
+
+    tool_choice = judge_config.tool_choice
+    if tool_choice != "required":
+        judge_config.tool_choice = "required"
+        logger.warning(
+            f"Setting tool choice to 'required' for judge evaluation, overriding '{tool_choice}'"
+        )
 
     def group_predictions(predictions: list) -> dict:
         grouped: dict = {}
@@ -444,3 +461,6 @@ def evaluate_with_judge(
         ratio = summary["ratio"]
         count = summary["count"]
         logger.info(f"{pred_file}: {ratio:.2%} ({count})")
+
+    # reset tool choice to original
+    judge_config.tool_choice = tool_choice

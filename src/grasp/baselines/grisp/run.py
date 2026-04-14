@@ -400,10 +400,8 @@ def find_alternatives(
         position = Position.PROPERTY
 
     if position == Position.PROPERTY:
-        index_name = "property"
         obj_type = ObjType.PROPERTY
     else:
-        index_name = "entity"
         obj_type = ObjType.ENTITY
 
     identifier_map = None
@@ -414,11 +412,12 @@ def find_alternatives(
                 f"with autocompletion SPARQL:\n{autocomp_sparql}"
             )
             identifier_map = manager.get_candidate_ids(
-                index_name,
+                obj_type.index_name,
                 autocomp_sparql,
                 MAX_IRIS,
-                # 6 seconds to execute query
-                (3.5, 6.0),
+                # 6 seconds to execute query, 3 to read result
+                request_timeout=(3.5, 6.0),
+                read_timeout=3.0,
             )
 
             logger.debug(
@@ -433,7 +432,7 @@ def find_alternatives(
         f"Searching with query '{query}' from natural-language IRI in fitting IRIs"
     )
     alternatives = manager.search_index(
-        index_name,
+        obj_type.index_name,
         query,
         cfg.selection_top_k,
         identifier_map,
@@ -482,9 +481,8 @@ def select_iris_left_to_right(
                 logger.debug(f"Checking result of final SPARQL query:\n{sparql}")
                 result = manager.execute_sparql(
                     skeleton.materialize(),
-                    # 6 seconds to execute query
+                    # 6 seconds to execute query, 3 to read result
                     request_timeout=(3.5, 6.0),
-                    # 3 seconds to read result at max
                     read_timeout=3.0,
                 )
                 logger.debug(f"Result:\n{manager.format_sparql_result(result)}")
@@ -639,10 +637,9 @@ def select_iris_left_to_right(
             "variant": variant,
         }
 
-    # convert back to sparql, fix prefixes, and prettify
+    # convert back to sparql and fix prefixes
     sparql = skeleton.materialize()
-    sparql = manager.fix_prefixes(sparql)
-    return manager.prettify(sparql)
+    return manager.fix_prefixes(sparql)
 
 
 def generate(
@@ -723,6 +720,9 @@ def generate(
             [manager],
             max_rows=10,
             max_columns=10,
+            # same as for autocompletion and check
+            request_timeout=(3.5, 6.0),
+            read_timeout=3.0,
         )
         out["sparql"] = result.sparql
         out["selections"] = manager.format_selections(selections)

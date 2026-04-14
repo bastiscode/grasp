@@ -3,15 +3,16 @@ import json
 import os
 import random
 import sys
-
-from termcolor import colored
+from importlib import metadata
 
 from search_rdf.model import SentenceTransformerModel
+from termcolor import colored
 from tqdm import tqdm
 from universal_ml_utils.configuration import load_config
 from universal_ml_utils.io import (
     dump_json,
     dump_jsonl,
+    dump_text,
     load_jsonl,
     load_text,
 )
@@ -19,7 +20,6 @@ from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import consume_generator, extract_field
 
 from grasp.build import build_indices, get_data
-from grasp.build.cache import build_caches
 from grasp.build.data import merge_kgs
 from grasp.configs import (
     GraspConfig,
@@ -31,6 +31,7 @@ from grasp.configs import (
 )
 from grasp.core import generate, load_notes, setup
 from grasp.evaluate import evaluate_f1, evaluate_with_judge
+from grasp.functions import find_manager
 from grasp.notes import (
     take_notes_from_exploration,
     take_notes_from_outputs,
@@ -42,6 +43,7 @@ from grasp.tasks.examples import load_example_indices, task_to_index
 from grasp.utils import (
     format_trace,
     get_available_knowledge_graphs,
+    get_index_dir,
     is_invalid_output,
     parse_parameters,
 )
@@ -370,6 +372,20 @@ def parse_args() -> argparse.Namespace:
         choices=["always", "empty"],
         help="When to add a label fallback based on entity/property IDs",
     )
+    data_parser.add_argument(
+        "--entity-file",
+        type=str,
+        default=None,
+        help="Path to file with entity SPARQL results in JSON format "
+        "(skip live query for entities)",
+    )
+    data_parser.add_argument(
+        "--property-file",
+        type=str,
+        default=None,
+        help="Path to file with property SPARQL results in JSON format "
+        "(skip live query for properties)",
+    )
     add_overwrite_arg(data_parser)
 
     # merge multiple knowledge graphs
@@ -443,39 +459,6 @@ def parse_args() -> argparse.Namespace:
     )
     add_overwrite_arg(index_parser)
 
-    # cache infos for knowledge graph
-    cache_parser = subparsers.add_parser(
-        "cache",
-        help="Cache entity and property information for a knowledge graph",
-    )
-    cache_parser.add_argument(
-        "kg",
-        type=str,
-        choices=available_kgs,
-        help="Knowledge graph to cache infos for",
-    )
-    cache_parser.add_argument(
-        "-b",
-        "--batch-size",
-        type=int,
-        default=512,
-        help="Number of items to process in each batch.",
-    )
-    cache_parser.add_argument(
-        "-e",
-        "--endpoint",
-        type=str,
-        default=None,
-        help="SPARQL endpoint to use for querying the knowledge graph.",
-    )
-    cache_parser.add_argument(
-        "--limit",
-        type=int,
-        default=1_000_000,
-        help="Only cache the top N items",
-    )
-    add_overwrite_arg(cache_parser)
-
     # build example index
     example_parser = subparsers.add_parser(
         "examples",
@@ -506,6 +489,32 @@ def parse_args() -> argparse.Namespace:
     add_task_arg(example_parser)
     add_overwrite_arg(example_parser)
 
+    # auto-setup a knowledge graph
+    auto_setup_parser = subparsers.add_parser(
+        "auto-setup",
+        help="Automatically configure a knowledge graph by exploring its SPARQL endpoint",
+    )
+    add_config_arg(auto_setup_parser)
+    auto_setup_parser.add_argument(
+        "-kg",
+        "--knowledge-graph",
+        type=str,
+        default=None,
+        help="Knowledge graph to configure (required if config has multiple KGs)",
+    )
+    auto_setup_parser.add_argument(
+        "--info-notes",
+        type=str,
+        default=None,
+        help="User notes for the info phase (prefixes and description)",
+    )
+    auto_setup_parser.add_argument(
+        "--index-notes",
+        type=str,
+        default=None,
+        help="User notes for the index phases (entity and property index/info SPARQLs)",
+    )
+
     # visualize trace from GRASP output
     show_parser = subparsers.add_parser(
         "show",
@@ -517,6 +526,11 @@ def parse_args() -> argparse.Namespace:
         help="Skip system, config, and functions messages",
     )
 
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {metadata.version('grasp-rdf')}",
+    )
     parser.add_argument(
         "--log-level",
         type=str,
@@ -685,9 +699,11 @@ def get_grasp_data(args: argparse.Namespace) -> None:
         args.entity_sparql,
         args.property_sparql,
         query_params,
-        args.overwrite,
         args.add_id_as_label,
+        args.entity_file,
+        args.property_file,
         args.log_level,
+        args.overwrite,
     )
 
 
@@ -767,6 +783,105 @@ def show_grasp(args: argparse.Namespace) -> None:
         print(format_trace(output, skip_system=args.skip_system))
 
 
+def auto_setup_grasp(args: argparse.Namespace) -> None:
+    logger = get_logger("GRASP AUTO-SETUP", args.log_level)
+    config = GraspConfig(**load_config(args.config))
+
+    if not config.know_before_use:
+        logger.warning(
+            "`know_before_use` is not enabled in the config, but it is required "
+            "for auto-setup. Enabling it and continuing."
+        )
+        config.know_before_use = True
+
+    # load KG manager, gracefully handling missing indices
+    managers, _ = setup(config)
+    if not managers:
+        logger.error("No KG managers available for auto-setup")
+        return
+    elif len(managers) == 1:
+        manager = managers[0]
+    else:
+        assert args.knowledge_graph is not None, (
+            "Knowledge graph must be specified for auto-setup when config has more than one"
+        )
+        manager, _ = find_manager(managers, args.knowledge_graph)
+
+    notes, kg_notes = load_notes(config)
+    kg_dir = get_index_dir(manager.kg)
+
+    # run phases sequentially: info first (so prefixes are available),
+    # then entity index, then property index
+    phases = [
+        {"phase": "info", "notes": args.info_notes},
+        {"phase": "index", "name": "entities", "notes": args.index_notes},
+        {"phase": "index", "name": "properties", "notes": args.index_notes},
+    ]
+
+    def backup(file: str) -> None:
+        # copy the file to file.prev to enable the user to restore it if
+        # auto-setup fails
+        if os.path.exists(file):
+            backup_file = file + ".prev"
+            os.replace(file, backup_file)
+            logger.info(f"Backed up existing file {file} to {backup_file}")
+
+    for phase_input in phases:
+        phase = phase_input["phase"]
+        if phase == "index":
+            phase += f" ({phase_input['name']})"
+
+        logger.info(
+            f"Starting auto-setup {phase} phase for knowledge graph {manager.kg}"
+        )
+
+        result = consume_generator(
+            generate(
+                "auto-setup",
+                phase_input,
+                config,
+                [manager],
+                kg_notes,
+                notes,
+                logger=logger,
+            )
+        )
+
+        output = result.get("output")
+        if output is None:
+            logger.error(f"Auto-setup {phase} phase did not produce output")
+            continue
+
+        # save outputs to disk
+        if phase == "info":
+            path = os.path.join(kg_dir, "info.json")
+            backup(path)
+            dump_json(
+                {"description": output["description"], "prefixes": output["prefixes"]},
+                path,
+                indent=2,
+            )
+            logger.info(f"Saved prefixes and description to {path}")
+            continue
+
+        name = phase_input["name"]
+        for typ in ["index", "info"]:
+            sparql = output.get(typ)
+            if sparql is None:
+                continue
+
+            path = os.path.join(kg_dir, name, f"{typ}.sparql")
+            backup(path)
+            dump_text(sparql, path)
+            logger.info(f"Saved {name} {typ} SPARQL to {path}")
+
+        if output.get("description") is not None:
+            path = os.path.join(kg_dir, name, "info.json")
+            backup(path)
+            dump_json({"description": output["description"]}, path, indent=2)
+            logger.info(f"Saved {name} description to {path}")
+
+
 def main():
     args = parse_args()
     if args.all_loggers:
@@ -796,16 +911,6 @@ def main():
             embedding_dim=args.emb_dim,
         )
 
-    elif args.command == "cache":
-        build_caches(
-            args.kg,
-            args.endpoint,
-            args.limit,
-            args.batch_size,
-            args.overwrite,
-            args.log_level,
-        )
-
     elif args.command == "notes":
         take_grasp_notes(args)
 
@@ -817,6 +922,9 @@ def main():
 
     elif args.command == "evaluate":
         evaluate_grasp(args)
+
+    elif args.command == "auto-setup":
+        auto_setup_grasp(args)
 
     elif args.command == "show":
         show_grasp(args)

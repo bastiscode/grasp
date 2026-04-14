@@ -16,12 +16,10 @@ SELECT DISTINCT ?id ?value ?tags WHERE {
     # Get label, mark as main field
     ?id rdfs:label ?value
     BIND("main" AS ?tags)
+    FILTER(LANG(?value) = "en")
   } UNION {
     # Get aliases
     ?id skos:altLabel ?value
+    FILTER(LANG(?value) = "en")
   }
-
-  # English only as default
-  FILTER(LANG(?value) = "en")
-}
-ORDER BY DESC(?score) ?id DESC(?tags)
+} ORDER BY DESC(?score) ?id DESC(?tags)

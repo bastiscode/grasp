@@ -8,41 +8,41 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   {
     VALUES ?id { {IDS} }
     ?id rdfs:label ?value
+    FILTER(LANG(?value) = "en")
     BIND("label" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id skos:altLabel ?value
+    FILTER(LANG(?value) = "en")
     BIND("alias" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:comment ?value
-    BIND("info" AS ?type)
+    FILTER(LANG(?value) = "en")
+    BIND("other" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:domain/rdfs:label ?domain
     FILTER(LANG(?domain) = "en")
-    BIND(STRLANG(CONCAT("has domain ", ?domain), "en") AS ?value)
-    BIND("info" AS ?type)
+    BIND(CONCAT("has domain ", ?domain) AS ?value)
+    BIND("other" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:range/rdfs:label ?range
     FILTER(LANG(?range) = "en")
-    BIND(STRLANG(CONCAT("has range ", ?range), "en") AS ?value)
-    BIND("info" AS ?type)
+    BIND(CONCAT("has range ", ?range) AS ?value)
+    BIND("other" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdf:type/rdfs:label ?typ
     FILTER(LANG(?typ) = "en")
-    BIND(STRLANG(CONCAT("is a ", ?typ), "en") AS ?value)
-    BIND("info" AS ?type)
+    BIND(CONCAT("is a ", ?typ) AS ?value)
+    BIND("other" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:subClassOf/rdfs:label ?superclass
     FILTER(LANG(?superclass) = "en")
-    BIND(STRLANG(CONCAT("is subclass of ", ?superclass), "en") AS ?value)
-    BIND("info" AS ?type)
+    BIND(CONCAT("is subclass of ", ?superclass) AS ?value)
+    BIND("other" AS ?type)
   }
-
-  FILTER(LANG(?value) = "en")
-}
-ORDER BY ?id ?type ?value
+} ORDER BY ?id ?type ?value
