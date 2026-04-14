@@ -1,5 +1,6 @@
 import argparse
 
+from tqdm import tqdm
 from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger
 
@@ -18,13 +19,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "file",
         type=str,
-        help="Path to the JSONL file, whose 'sparql' field will be fixed in-place.",
+        help="Path to the JSONL file, whose 'sparql' field will be fixed in-place",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging",
     )
     return parser.parse_args()
 
 
 def fix(args: argparse.Namespace) -> None:
-    logger = get_logger("FIX PREFIXES")
+    logger = get_logger("FIX PREFIXES", "INFO")
     data = load_jsonl(args.file)
     prefixes = get_common_sparql_prefixes()
     kg_prefixes, _ = load_kg_info("wikidata")
@@ -34,15 +40,26 @@ def fix(args: argparse.Namespace) -> None:
     iri_parser = load_iri_and_literal_parser()
 
     changed = 0
-    for item in data:
+    failed = 0
+    for item in tqdm(data, desc="Fixing prefixes in SPARQL queries"):
         try:
-            sparql = fix_prefixes(item["sparql"], sparql_parser, iri_parser, prefixes)
-            changed += int(sparql != item["sparql"])
+            sparql = fix_prefixes(
+                item["sparql"],
+                sparql_parser,
+                iri_parser,
+                prefixes,
+                sort=True,
+            ).strip()
+            changed += int(sparql != item["sparql"].strip())
+            if changed and args.verbose:
+                logger.info(f"Original SPARQL:\n{item['sparql']}")
+                logger.info(f"Fixed SPARQL:\n{sparql}")
             item["sparql"] = sparql
         except Exception:
-            pass
+            failed += 1
 
     logger.info(f"Fixed prefixes in {changed:,} SPARQL queries.")
+    logger.info(f"Failed to fix prefixes in {failed:,} SPARQL queries.")
     dump_jsonl(data, args.file)
 
 
