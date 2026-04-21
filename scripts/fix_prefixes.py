@@ -32,9 +32,13 @@ def parse_args() -> argparse.Namespace:
 def fix(args: argparse.Namespace) -> None:
     logger = get_logger("FIX PREFIXES", "INFO")
     data = load_jsonl(args.file)
-    prefixes = get_common_sparql_prefixes()
-    kg_prefixes, _ = load_kg_info("wikidata")
-    prefixes, *_ = merge_prefixes(prefixes, kg_prefixes, logger)
+
+    info = load_kg_info("wikidata")
+    prefixes, *_ = merge_prefixes(
+        get_common_sparql_prefixes(),
+        info.prefixes or {},
+        logger,
+    )
 
     sparql_parser = load_sparql_parser()
     iri_parser = load_iri_and_literal_parser()
