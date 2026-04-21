@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Iterable
 
+from grammar_utils.parse import LR1Parser  # type: ignore
 from search_rdf import EmbeddingIndex
 from universal_ml_utils.ops import partition_by
 
@@ -97,13 +98,7 @@ execute(kg="wikidata", sparql="SELECT ?job WHERE { wd:Q937 wdt:P106 ?job }")""",
                 "additionalProperties": False,
             },
             "strict": True,
-        }
-    ]
-
-    if fn_set == "base":
-        return fns
-
-    fns.append(
+        },
         {
             "name": "list",
             "description": f"""\
@@ -159,7 +154,10 @@ list(kg="wikidata", property="wdt:P19")""",
             },
             "strict": True,
         },
-    )
+    ]
+
+    if fn_set == "base":
+        return fns
 
     has_entity_index = "entities" in known_indices
     has_property_index = "properties" in known_indices
@@ -340,23 +338,25 @@ search_object_of_property(kg="wikidata", property="wdt:P106", query="football")"
             search_filter_props["query_type"] = query_type_prop
             search_filter_required.append("query_type")
 
+        search_filter_name = (
+            "search" if fn_set == "search_filter" else "search_with_filter"
+        )
         fns.append(
             {
-                "name": "search_with_filter",
-                "description": """\
+                "name": search_filter_name,
+                "description": f"""\
 Search for knowledge graph items in a context-sensitive way by specifying a filter \
 SPARQL query together with a search query. The SPARQL query must be a SELECT query \
 returning a single column of IRIs. The search is then restricted to knowledge graph items \
 matching those IRIs in the specified index. The SPARQL query can be null, in which case \
 a search over the full index is performed.
 
-For example, to search for Albert Einstein at the subject position in \
-Wikidata, do the following:
-search_with_filter(kg="wikidata", index="entities", query="albert einstein")
+For example, to search for Albert Einstein in Wikidata, do the following:
+{search_filter_name}(kg="wikidata", index="entities", query="albert einstein")
 
 Or to search for properties of Albert Einstein related to his birth in \
 Wikidata, do the following:
-search_with_filter(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p WHERE { wd:Q937 ?p ?o }", query="birth")""",
+{search_filter_name}(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p WHERE {{ wd:Q937 ?p ?o }}", query="birth")""",
                 "parameters": {
                     "type": "object",
                     "properties": search_filter_props,
@@ -367,7 +367,7 @@ search_with_filter(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p
             }
         )
 
-    if fn_set in ["search_constraints", "all"] and index_names:
+    if fn_set == "search_constraints" and index_names:
         search_constraints_props = {
             "kg": {
                 "type": "string",
@@ -421,21 +421,24 @@ search_with_filter(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p
             search_constraints_props["query_type"] = query_type_prop
             search_constraints_required.append("query_type")
 
+        search_constraints_name = (
+            "search" if fn_set == "search_constraints" else "search_with_constraints"
+        )
         fns.append(
             {
-                "name": "search_with_constraints",
-                "description": """\
+                "name": search_constraints_name,
+                "description": f"""\
 Search for knowledge graph items at a particular position (subject, property, or object) \
 with optional constraints. If constraints are provided, they are used to limit the search \
 space accordingly.
 
 For example, to search for the subject Albert Einstein in Wikidata, do the following:
-search_with_constraints(kg="wikidata", index="entities", position="subject", query="albert einstein")
+{search_constraints_name}(kg="wikidata", index="entities", position="subject", query="albert einstein")
 
 Or to search for properties of Albert Einstein related to his birth in Wikidata, \
 do the following:
-search_with_constraints(kg="wikidata", index="properties", position="property", query="birth", \
-constraints={"subject": "wd:Q937"})""",
+{search_constraints_name}(kg="wikidata", index="properties", position="property", query="birth", \
+constraints={{"subject": "wd:Q937"}})""",
                 "parameters": {
                     "type": "object",
                     "properties": search_constraints_props,
@@ -548,7 +551,9 @@ def call_function(
             config.sparql_read_timeout,
         )
 
-    elif fn_name == "search_with_constraints":
+    elif fn_name == "search_with_constraints" or (
+        fn_name == "search" and config.fn_set == "search_constraints"
+    ):
         return search_with_constraints(
             managers,
             fn_args["kg"],
@@ -563,7 +568,9 @@ def call_function(
             config.sparql_read_timeout,
         )
 
-    elif fn_name == "search_with_filter":
+    elif fn_name == "search_with_filter" or (
+        fn_name == "search" and config.fn_set == "search_filter"
+    ):
         return search_with_filter(
             managers,
             fn_args["kg"],
@@ -676,7 +683,8 @@ def check_known(manager: KgManager, sparql: str, known: set[str]):
 The following knowledge graph items are used in the SPARQL query \
 without being known from previous function call results. \
 This does not mean they are invalid, but you should verify \
-that they indeed exist in the knowledge graphs before trying again:
+that they indeed exist (e.g., via listing example triples) \
+in the knowledge graphs before trying again:
 {format_list(not_seen)}""")
 
 
@@ -845,37 +853,24 @@ def execute_sparql(
     return ExecutionResult(sparql, formatted, result)
 
 
-def verify_iri_or_literal(
+def parse_iri_or_literal(
     input: str,
-    position: Position,
-    manager: KgManager,
-) -> str | None:
+    parser: LR1Parser,
+    prefixes: dict[str, str] | None = None,
+) -> Binding | None:
     # parse and resolve percent encoding in IRIs
-    binding = parse_into_binding(input, manager.iri_literal_parser, manager.prefixes)
+    binding = parse_into_binding(input, parser, prefixes)
 
     if binding is None and has_scheme(input):
         # fallback for full IRIs given without angle brackets
-        binding = parse_into_binding(
-            wrap_iri(input),
-            manager.iri_literal_parser,
-            manager.prefixes,
-        )
-
-    if binding is None and position == Position.OBJECT:
-        # fallback for string literals because they are typically given without quotes
-        # but the parser expects them to be quoted
-        binding = parse_into_binding(
-            f'"{input}"',
-            manager.iri_literal_parser,
-            manager.prefixes,
-        )
+        binding = parse_into_binding(wrap_iri(input), parser, prefixes)
 
     if binding is None:
-        return None
-    elif binding.typ == "literal":
-        return binding.identifier()
-    else:
-        return wrap_iri(binding.identifier())
+        # fallback for string literals because they are typically given without quotes
+        # but the parser expects them to be quoted
+        binding = parse_into_binding(f'"{input}"', parser, prefixes)
+
+    return binding
 
 
 def format_verification_error(value: str, position: Position) -> str:
@@ -914,12 +909,16 @@ def list_triples(
             triple.append(f"?{pos.value[0]}")
             continue
 
-        ver_const = verify_iri_or_literal(const, pos, manager)
-        if ver_const is None:
+        ver_const = parse_iri_or_literal(
+            const,
+            manager.iri_literal_parser,
+            manager.prefixes,
+        )
+        if ver_const is None or (pos != Position.OBJECT and ver_const.typ != "uri"):
             raise FunctionCallException(format_verification_error(const, pos))
 
-        bindings.append(f"BIND({ver_const} AS ?{pos.value[0]})")
-        triple.append(ver_const)
+        bindings.append(f"BIND({ver_const.sparql()} AS ?{pos.value[0]})")
+        triple.append(ver_const.sparql())
 
     triple = " ".join(triple)
     bindings = "\n".join(bindings)
@@ -1091,11 +1090,15 @@ object should be constrained at once."
                 pos_values[pos] = "?search"
                 continue
 
-            ver_const = verify_iri_or_literal(const, pos, manager)
-            if ver_const is None:
+            ver_const = parse_iri_or_literal(
+                const,
+                manager.iri_literal_parser,
+                manager.prefixes,
+            )
+            if ver_const is None or (pos != Position.OBJECT and ver_const.typ != "uri"):
                 raise FunctionCallException(format_verification_error(const, pos))
 
-            pos_values[pos] = ver_const
+            pos_values[pos] = ver_const.sparql()
 
         select_var = f"?{position[0]}"
 

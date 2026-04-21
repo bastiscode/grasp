@@ -1,7 +1,7 @@
 import argparse
 import json
 
-from grasp.sparql.utils import get_endpoint, load_qlever_prefixes
+from grasp.sparql.utils import get_qlever_endpoint, load_qlever_prefixes
 
 
 def parse_args() -> argparse.Namespace:
@@ -13,7 +13,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def get(args: argparse.Namespace):
-    endpoint = get_endpoint(args.name)
+    endpoint = get_qlever_endpoint(args.name)
     prefixes = load_qlever_prefixes(endpoint)
     print(json.dumps(prefixes, indent=2))
 

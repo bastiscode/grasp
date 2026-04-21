@@ -37,7 +37,7 @@ class FunctionCallException(Exception):
     pass
 
 
-def format_prefixes(prefixes: dict[str, str], indent: int = 0) -> str:
+def format_prefixes(prefixes: dict[str, str] | None = None, indent: int = 0) -> str:
     if not prefixes:
         return "None"
 
@@ -47,7 +47,11 @@ def format_prefixes(prefixes: dict[str, str], indent: int = 0) -> str:
     )
 
 
-def format_notes(notes: list[str], indent: int = 0, enumerated: bool = False) -> str:
+def format_notes(
+    notes: list[str] | None = None,
+    indent: int = 0,
+    enumerated: bool = False,
+) -> str:
     if not notes:
         return "None"
     elif enumerated:
@@ -61,12 +65,30 @@ def format_list(items: Iterable[str], indent: int = 0) -> str:
     return "\n".join(f"{indent_str}- {item}" for item in items)
 
 
-def format_enumerate(items: Iterable[str], indent: int = 0) -> str:
+def format_enumerate(
+    items: Iterable[str],
+    indent: int = 0,
+    start: int = 0,
+) -> str:
     indent_str = " " * indent
-    return "\n".join(f"{indent_str}{i + 1}. {item}" for i, item in enumerate(items))
+    return "\n".join(
+        f"{indent_str}{i + 1}. {item}" for i, item in enumerate(items, start=start)
+    )
 
 
-def format_model(model: BaseModel | None) -> str:
+def format_kg_notes(
+    kg_notes: dict[str, list[str]] | None = None,
+    enumerated: bool = False,
+) -> str:
+    if not kg_notes:
+        return "None"
+    return format_list(
+        f'"{kg}":\n{format_notes(notes, indent=2, enumerated=enumerated)}'
+        for kg, notes in kg_notes.items()
+    )
+
+
+def format_model(model: BaseModel | None = None) -> str:
     if model is None:
         return "None"
     return model.model_dump_json(indent=2)
@@ -79,13 +101,9 @@ def format_error(reason: str, content: str) -> str:
 
 def format_message(message: Message) -> str:
     if isinstance(message.content, str):
-        header = colored(f"{message.role.upper()}", "magenta")
-        content = (
-            json.dumps(message.content, indent=2)
-            if isinstance(message.content, dict)
-            else message.content
-        )
-        return f"{header}\n{content}"
+        name = message.name or message.role
+        header = colored(f"{name.upper()}", "magenta")
+        return f"{header}\n{message.content}"
     else:
         return format_response(message.content)
 
@@ -110,7 +128,10 @@ def format_response(response: Response) -> str:
         if response.has_reasoning_content:
             content += "Content:\n"
 
-        content += f"{response.message}\n\n"
+        if isinstance(response.message, str):
+            content += f"{response.message}\n\n"
+        else:
+            content += f"{response.message.content}\n\n"
 
     for tool_call in response.tool_calls:
         content += format_tool_call(tool_call) + "\n\n"
@@ -260,7 +281,7 @@ def is_invalid_output(
     return False
 
 
-def parse_parameters(headers: list[str]) -> dict[str, str]:
+def parse_key_value_pairs(headers: list[str]) -> dict[str, str]:
     # each parameter is formatted as key:value
     header_dict = {}
     for header in headers:

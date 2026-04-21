@@ -1,11 +1,10 @@
-from copy import deepcopy
 from logging import Logger
 from typing import Any
 
 import litellm
 from universal_ml_utils.logging import get_logger
 
-from grasp.model import Message, call_model
+from grasp.model import Message, Model
 from grasp.tasks.base import FeedbackTask, GraspTask
 from grasp.utils import format_message, format_response
 
@@ -52,6 +51,7 @@ and provide suggestions for improving the output if applicable.""",
 
 
 def generate_feedback(
+    model: Model,
     task: GraspTask,
     kg_notes: dict[str, list[str]],
     notes: list[str],
@@ -63,20 +63,14 @@ def generate_feedback(
         return None
 
     messages: list[Message] = [
-        Message(
-            role="system",
-            content=task.feedback_system_message(kg_notes, notes),
-        ),
-        Message(
-            role="user",
-            content=task.feedback_instructions(inputs, output),
-        ),
+        Message.system(content=task.feedback_system_message(kg_notes, notes)),
+        Message.user(content=task.feedback_instructions(inputs, output)),
     ]
 
     for msg in messages:
         logger.debug(format_message(msg))
 
-    config = deepcopy(task.config)
+    config = task.config.model_copy(deep=True)
     tool_choice = config.tool_choice
     if tool_choice != "required":
         config.tool_choice = "required"
@@ -85,7 +79,7 @@ def generate_feedback(
         )
 
     try:
-        response = call_model(messages, functions(), config)
+        response = model(messages, functions(), config)
     except litellm.exceptions.Timeout:
         logger.error("LLM API timed out during feedback generation")
         return None

@@ -80,7 +80,7 @@ class ExampleIndex:
             logger.info(f"Index directory {output_dir} already exists, skipping build")
             return
 
-        start = time.perf_counter()
+        start = time.monotonic()
         logger.info(
             f"Building example index at {output_dir} from {len(samples):,} samples"
         )
@@ -113,7 +113,7 @@ class ExampleIndex:
 
         EmbeddingIndex.build(data, embedding_path, index_dir)
 
-        end = time.perf_counter()
+        end = time.monotonic()
         logger.info(f"Example index built in {end - start:.2f} seconds")
 
 

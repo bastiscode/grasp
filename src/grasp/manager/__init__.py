@@ -16,7 +16,7 @@ from grasp.configs import KgConfig
 from grasp.manager.normalizer import Normalizer, WikidataPropertyNormalizer
 from grasp.manager.utils import (
     EmbeddingModel,
-    Index,
+    KgIndex,
     SearchIndex,
     format_index_meta,
     get_common_sparql_prefixes,
@@ -50,7 +50,7 @@ from grasp.sparql.utils import (
     find_longest_prefix,
     fix_prefixes,
     format_iri,
-    get_endpoint,
+    get_qlever_endpoint,
     load_iri_and_literal_parser,
     load_sparql_parser,
     prettify,
@@ -70,10 +70,12 @@ class KgManager:
     def __init__(
         self,
         kg: str,
+        indices: dict[str, KgIndex] | None = None,
         prefixes: dict[str, str] | None = None,
-        indices: dict[str, Index] | None = None,
         endpoint: str | None = None,
         description: str | None = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
     ):
         self.kg = kg
 
@@ -89,9 +91,11 @@ class KgManager:
         )
 
         self.disable_info_retrieval = False
-        self.endpoint = endpoint or get_endpoint(self.kg)
+        self.endpoint = endpoint or get_qlever_endpoint(self.kg)
         self.indices = indices or {}
         self.description = description
+        self.headers = headers or {}
+        self.params = params or {}
 
         self.embedding_models: dict[str, EmbeddingModel] = {}
 
@@ -140,6 +144,8 @@ class KgManager:
             request_timeout,
             read_timeout,
             max_retries,
+            self.headers,
+            params=self.params,
         )
 
     def format_sparql_result(
@@ -313,7 +319,7 @@ class KgManager:
             sort,
         )
 
-    def get(self, name: str) -> Index:
+    def get(self, name: str) -> KgIndex:
         if name not in self.indices:
             raise ValueError(f"Index '{name}' not found")
         return self.indices[name]
@@ -324,7 +330,7 @@ class KgManager:
     def get_data(self, name: str) -> Data:
         return self.get(name).data
 
-    def try_get(self, name: str) -> Index | None:
+    def try_get(self, name: str) -> KgIndex | None:
         return self.indices.get(name)
 
     def get_normalizer(self, name: str) -> Normalizer:
@@ -684,7 +690,7 @@ class KgManager:
         index_name: str,
     ) -> dict[str, dict]:
         info_sparql = self.get_info_sparql(index_name)
-        data = self.get_data(index_name)
+        data = self.try_get_data(index_name)
         return self.get_info_for_identifiers(identifiers, info_sparql, data)
 
     def get_info_for_identifiers(
@@ -758,7 +764,7 @@ def try_load_index(
     index_name: str,
     index_type: str,
     logger: logging.Logger | None = None,
-) -> Index | None:
+) -> KgIndex | None:
     index_dir = os.path.join(get_index_dir(kg), index_name)
 
     index = try_load_search_index(index_dir, index_type, logger)
@@ -773,7 +779,7 @@ def try_load_index(
     else:
         normalizer = None
 
-    return Index(
+    return KgIndex(
         description=description
         or DEFAULT_DESCRIPTIONS.get(index_name, "No description available"),
         index=index,
@@ -783,24 +789,18 @@ def try_load_index(
     )
 
 
-def load_kg_manager(
-    cfg: KgConfig,
-    skip_indices: bool = False,
-) -> KgManager:
+def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     logger = get_logger(f"{cfg.kg.upper()} KG MANAGER LOADER")
 
-    prefixes, description = load_kg_info(cfg.kg, logger)
-    indices: dict[str, Index] = {}
+    info = load_kg_info(cfg.kg, logger)
+    if cfg.info is not None:
+        info = info.model_copy(update=cfg.info.model_dump(exclude_unset=True))
+
+    indices: dict[str, KgIndex] = {}
 
     if skip_indices:
         logger.info("Skipping loading of indices")
-        return KgManager(
-            cfg.kg,
-            prefixes,
-            indices,
-            cfg.endpoint,
-            description,
-        )
+        return KgManager(cfg.kg, indices, **info.model_dump())
 
     ent_index = try_load_index(
         cfg.kg,
@@ -831,13 +831,7 @@ def load_kg_manager(
 
         indices[name] = index
 
-    return KgManager(
-        cfg.kg,
-        prefixes,
-        indices,
-        cfg.endpoint,
-        description,
-    )
+    return KgManager(cfg.kg, indices, **info.model_dump())
 
 
 def format_kgs(managers: list[KgManager], notes: dict[str, list[str]]) -> str:

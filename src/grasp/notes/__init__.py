@@ -1,4 +1,5 @@
 import os
+import time
 import random
 from logging import Logger
 
@@ -11,22 +12,27 @@ from universal_ml_utils.ops import consume_generator
 from grasp.configs import (
     GraspConfig,
     NotesConfig,
+    NotesFromExplorationConfig,
     NotesFromOutputsConfig,
     NotesFromSamplesConfig,
     NoteTakingConfig,
 )
-from grasp.core import call_model, generate, load_notes, setup
+from grasp.core import generate, load_notes, setup
 from grasp.functions import find_manager
 from grasp.manager import KgManager
-from grasp.model import Message
-from grasp.notes.utils import consume_iterator, format_output, link
+from grasp.model import Message, get_model
+from grasp.notes.utils import format_output, link
 from grasp.tasks import get_task
 from grasp.tasks.cea import AnnotationState, CeaSample, prepare_annotation
-from grasp.tasks.exploration import ExplorationState
-from grasp.tasks.exploration.functions import call_function, note_functions
+from grasp.tasks.exploration import (
+    FunctionalExplorationState,
+    StructuralExplorationState,
+)
+from grasp.tasks.exploration.functions import call_function, note_function_definitions
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.tasks.utils import Sample, format_sparql_result, prepare_sparql_result
 from grasp.utils import (
+    format_kg_notes,
     format_list,
     format_message,
     format_notes,
@@ -101,7 +107,7 @@ def take_notes_from_samples(
         else:
             ground_truths = prepare_ground_truths(samples, managers, config)
 
-        take_notes(
+        output = take_notes(
             outputs,
             managers,
             kg_notes,
@@ -110,6 +116,13 @@ def take_notes_from_samples(
             logger,
             ground_truths,
         )
+
+        output["task"] = task
+        output["samples"] = [
+            {"kg": kg, "sample": sample.model_dump()} for kg, sample in samples
+        ]
+        output["traces"] = outputs
+        dump_json(output, os.path.join(out_dir, f"output.{task}.round_{r}.json"))
 
         for kg, kg_specific_notes in kg_notes.items():
             out_file = os.path.join(out_dir, f"notes.{task}.{kg}.round_{r}.json")
@@ -163,7 +176,7 @@ def take_notes_from_outputs(
             min(config.outputs_per_round, len(all_outputs)),
         )
 
-        take_notes(
+        output = take_notes(
             outputs,
             managers,
             kg_notes,
@@ -171,6 +184,10 @@ def take_notes_from_outputs(
             config,
             logger,
         )
+
+        output["task"] = task
+        output["traces"] = outputs
+        dump_json(output, os.path.join(out_dir, f"output.{task}.round_{r}.json"))
 
         for kg, kg_specific_notes in kg_notes.items():
             out_file = os.path.join(out_dir, f"notes.{task}.{kg}.round_{r}.json")
@@ -200,12 +217,20 @@ def take_notes_from_exploration(
     with open(os.path.join(out_dir, "config.yaml"), "w") as f:
         yaml.dump(config.model_dump(), f)
 
-    state = ExplorationState(notes=notes, kg_notes=kg_notes)
+    assert isinstance(config, NotesFromExplorationConfig)
+    if config.mode == "functional":
+        task_name = "exploration_functional"
+        state = FunctionalExplorationState(notes=notes, kg_notes=kg_notes)
+    elif config.mode == "structural":
+        task_name = "exploration_structural"
+        state = StructuralExplorationState(notes=notes, kg_notes=kg_notes)
+    else:
+        raise ValueError(f"Unknown exploration mode: {config.mode}")
 
     for r in trange(config.num_rounds, desc="Taking notes from exploration"):
-        consume_iterator(
+        output = consume_generator(
             generate(
-                "exploration",
+                task_name,
                 state,
                 config,
                 managers,
@@ -214,6 +239,8 @@ def take_notes_from_exploration(
                 logger=agent_logger,
             )
         )
+
+        dump_json(output, os.path.join(out_dir, f"output.exploration.round_{r}.json"))
 
         for kg, kg_specific_notes in state.kg_notes.items():
             out_file = os.path.join(out_dir, f"notes.exploration.{kg}.round_{r}.json")
@@ -312,16 +339,6 @@ def prepare_ground_truths(
     return ground_truths
 
 
-def format_kg_notes(kg_notes: dict[str, list[str]]) -> str:
-    if not kg_notes:
-        return "None"
-
-    return format_list(
-        f'"{kg}":\n{format_notes(notes, indent=2, enumerated=True)}'
-        for kg, notes in kg_notes.items()
-    )
-
-
 def note_taking_instructions(
     kg_notes: dict[str, list[str]],
     notes: list[str],
@@ -360,7 +377,7 @@ be the same notes provided to the agent) based on the given agent traces \
 below.
 
 Knowledge graph specific notes:
-{format_kg_notes(kg_notes)}
+{format_kg_notes(kg_notes, enumerated=True)}
 
 General notes across knowledge graphs:
 {format_notes(notes, enumerated=True)}
@@ -376,7 +393,7 @@ def take_notes(
     config: NoteTakingConfig,
     logger: Logger,
     ground_truths: list[str] | None = None,
-) -> None:
+) -> dict:
     messages = [
         Message(
             role="system",
@@ -391,7 +408,7 @@ def take_notes(
     for msg in messages:
         logger.debug(format_message(msg))
 
-    functions = note_functions(managers)
+    functions = note_function_definitions(managers)
 
     num_messages = len(messages)
 
@@ -399,17 +416,24 @@ def take_notes(
     # replacement for the model config; otherwise fall back to
     # the parent grasp config
     nt_config = config.note_taking_model or config
+    model = get_model(nt_config)
+    start = time.monotonic()
+    error = None
 
     while len(messages) - num_messages < config.max_steps:
         try:
-            response = call_model(messages, functions, nt_config)
+            response = model(messages, functions)
         except Exception as e:
-            logger.error(f"LLM API returned error during note taking: {e}")
-            return
+            msg = f"Error while calling LLM API during note taking: {e}"
+            logger.error(msg)
+            error = {"content": msg, "reason": "api_error"}
+            break
 
         if response.is_empty:
-            logger.error("LLM API returned empty response during note taking")
-            return
+            msg = "LLM API returned empty response during note taking"
+            logger.error(msg)
+            error = {"content": msg, "reason": "empty_response"}
+            break
 
         messages.append(Message(role="assistant", content=response))
 
@@ -428,8 +452,20 @@ def take_notes(
 
             tool_call.result = result
 
-            if tool_call.name == "stop":
-                return
-
         # only log now once tool call results are set
         logger.debug(format_response(response))
+
+        if any(tool_call.name == "stop" for tool_call in response.tool_calls):
+            break
+
+    end = time.monotonic()
+    # build and return output
+    return {
+        "type": "output",
+        "output": {
+            "formatted": "Note taking completed",
+        },
+        "messages": [msg.model_dump() for msg in messages],
+        "elapsed": end - start,
+        "error": error,
+    }

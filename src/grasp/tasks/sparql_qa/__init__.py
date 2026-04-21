@@ -8,6 +8,7 @@ from grasp.configs import GraspConfig
 from grasp.functions import find_manager
 from grasp.manager import KgManager, format_kgs
 from grasp.model import Message, ToolCall
+from grasp.model.base import ResponseMessage
 from grasp.tasks.base import FeedbackTask, GraspTask
 from grasp.tasks.sparql_qa.examples import (
     SparqlQaExampleIndex,
@@ -19,7 +20,7 @@ from grasp.tasks.sparql_qa.examples import (
 from grasp.tasks.sparql_qa.examples import (
     functions as example_functions,
 )
-from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
+from grasp.tasks.utils import prepare_sparql_result
 from grasp.utils import format_list, format_notes
 
 
@@ -190,7 +191,7 @@ class CancelCallModel(BaseModel):
     arguments: CancelModel
 
 
-def get_raw_tool_call_from_message(message: str) -> str | None:
+def get_raw_tool_call_from_message(message: str | ResponseMessage) -> str | None:
     # sometimes the model fails to call the answer function, but
     # provides the output in one of the following formats:
     # 1) within <tool_call>...</tool_call> tags:
@@ -198,6 +199,9 @@ def get_raw_tool_call_from_message(message: str) -> str | None:
     #    {"name": "answer", "arguments": "{...}"}
     # 2) as JSON in ```json...``` code block:
     #    do as in 1)
+
+    if isinstance(message, ResponseMessage):
+        message = message.content
 
     # check for tool_call tags
     tool_call_match = re.search(
@@ -219,7 +223,7 @@ def get_raw_tool_call_from_message(message: str) -> str | None:
         return tool_call_match.group(1).strip()
 
 
-def get_answer_from_message(message: str | None) -> ToolCall | None:
+def get_answer_from_message(message: str | ResponseMessage | None) -> ToolCall | None:
     if message is None:
         return None
 
@@ -244,7 +248,7 @@ def get_answer_from_message(message: str | None) -> ToolCall | None:
         return None
 
 
-def get_cancel_from_message(message: str | None) -> ToolCall | None:
+def get_cancel_from_message(message: str | ResponseMessage | None) -> ToolCall | None:
     if message is None:
         return None
 
@@ -269,9 +273,11 @@ def get_cancel_from_message(message: str | None) -> ToolCall | None:
         return None
 
 
-def get_sparql_from_message(message: str | None) -> ToolCall | None:
+def get_sparql_from_message(message: str | ResponseMessage | None) -> ToolCall | None:
     if message is None:
         return None
+    elif isinstance(message, ResponseMessage):
+        message = message.content
 
     # Check for SPARQL code blocks
     sparql_match = re.search(
@@ -293,7 +299,7 @@ def get_sparql_from_message(message: str | None) -> ToolCall | None:
 def get_answer_or_cancel(
     messages: list[Message],
 ) -> tuple[ToolCall | None, ToolCall | None]:
-    last_message: str | None = None
+    last_message: str | ResponseMessage | None = None
     last_answer: ToolCall | None = None
     last_cancel: ToolCall | None = None
     last_execute: ToolCall | None = None
@@ -354,6 +360,44 @@ def get_answer_or_cancel(
     return last_answer, last_cancel  # type: ignore
 
 
+def prepare_formatted_output(
+    sparql: str,
+    kg: str | None,
+    managers: list[KgManager],
+    max_rows: int = 10,
+    max_cols: int = 10,
+    request_timeout: float | tuple[float, float] = (6.0, 30.0),
+    read_timeout: float = 10.0,
+) -> dict:
+    if kg is None:
+        kg = managers[0].kg
+
+    result, selections = prepare_sparql_result(
+        sparql,
+        kg,
+        managers,
+        max_rows,
+        max_cols,
+        request_timeout=request_timeout,
+        read_timeout=read_timeout,
+    )
+    manager, _ = find_manager(managers, kg)
+
+    formatted = f"SPARQL query over {kg}:\n```sparql\n{result.sparql}\n```"
+    if selections:
+        formatted += f"\n\n{manager.format_selections(selections)}"
+
+    formatted += f"\n\nExecution result:\n{result.formatted}"
+
+    return {
+        "sparql": result.sparql,
+        "selections": manager.format_selections(selections),
+        "result": result.formatted,
+        "endpoint": manager.endpoint,
+        "formatted": formatted,
+    }
+
+
 def output(
     messages: list[Message],
     managers: list[KgManager],
@@ -379,42 +423,36 @@ def output(
         output["answer"] = answer.args["answer"].strip()
         output["sparql"] = answer.args["sparql"]
         output["kg"] = answer.args["kg"]
-        output["formatted"] = output["answer"]
+        formatted = output["answer"]
 
     else:
         assert cancel is not None
         output["type"] = "cancel"
         output["explanation"] = cancel.args["explanation"].strip()
-        output["formatted"] = output["explanation"]
 
         best_attempt = cancel.args.get("best_attempt")
         if best_attempt:
             output["sparql"] = best_attempt.get("sparql")
             output["kg"] = best_attempt.get("kg")
 
-    if output["sparql"] is not None:
-        if output["kg"] is None:
-            output["kg"] = managers[0].kg
+        formatted = output["explanation"]
 
-        result, selections = prepare_sparql_result(
-            output["sparql"],
-            output["kg"],
-            managers,
-            max_rows,
-            max_cols,
-            request_timeout=request_timeout,
-            read_timeout=read_timeout,
-        )
-        manager, _ = find_manager(managers, output["kg"])
+    if output["sparql"] is None:
+        output["formatted"] = formatted
+        return output
 
-        output["sparql"] = result.sparql
-        output["selections"] = manager.format_selections(selections)
-        output["result"] = result.formatted
-        output["endpoint"] = manager.endpoint
-
-        output["formatted"] += "\n\n"
-        output["formatted"] += format_sparql_result(manager, result, selections)
-
+    formatted_output = prepare_formatted_output(
+        output["sparql"],
+        output["kg"],
+        managers,
+        max_rows,
+        max_cols,
+        request_timeout,
+        read_timeout,
+    )
+    # prepend answer or explanation to formatted output
+    formatted_output["formatted"] = formatted + "\n\n" + formatted_output["formatted"]
+    output.update(formatted_output)
     return output
 
 

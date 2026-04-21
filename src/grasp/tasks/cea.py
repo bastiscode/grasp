@@ -289,24 +289,10 @@ This function overwrites any previous annotation of the cell.""",
         {
             "name": "show_annotations",
             "description": "Show the current annotations for the table.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
         },
         {
             "name": "stop",
             "description": "Finalize your annotations and stop the annotation process.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
         },
     ]
     return fns
@@ -360,7 +346,8 @@ def annotate(
                 f"The entity {entity} cannot be used for annotation "
                 "without being known from previous function call results. "
                 "This does not mean it is invalid, but you should verify "
-                "that it indeed exists in the knowledge graphs first."
+                "that it indeed exists (e.g., by listing example triples) "
+                "in the knowledge graphs first."
             )
 
         current = state.annotate(row, column, annotation)

@@ -1,24 +1,25 @@
-model: env(MODEL:openai/gpt-5-mini)
+model: env(MODEL:gpt-5.4-mini)
+model_provider: env(MODEL_PROVIDER:openai/responses)
 model_endpoint: env(MODEL_ENDPOINT:null)
+model_api_key: env(OPENAI_API_KEY)
+model_kwargs:
+  reasoning:
+    effort: env(REASONING_EFFORT:null)
+    summary: env(REASONING_SUMMARY:null)
+
+tool_choice: env(TOOL_CHOICE:auto)
 
 seed: env(SEED:22)
 
-fn_set: env(FN_SET:all)
 feedback: env(FEEDBACK:false)
 know_before_use: env(KNOW_BEFORE_USE:false)
 notes_file: env(NOTES_FILE:null)
-
-temperature: env(TEMPERATURE:1.0)
-top_p: env(TOP_P:1.0)
-reasoning_effort: env(REASONING_EFFORT:null)
-reasoning_summary: env(REASONING_SUMMARY:null)
-api: env(API:null)
-tool_choice: env(TOOL_CHOICE:auto)
 
 sparql_connection_timeout: env(SPARQL_CONNECTION_TIMEOUT:6.0)
 sparql_query_timeout: env(SPARQL_QUERY_TIMEOUT:30.0)
 sparql_read_timeout: env(SPARQL_READ_TIMEOUT:10.0)
 
+fn_set: env(FN_SET:all)
 list_k: env(LIST_K:10)
 search_top_k: env(SEARCH_TOP_K:10)
 result_max_rows: env(RESULT_MAX_ROWS:10)
@@ -30,9 +31,10 @@ num_examples: env(NUM_EXAMPLES:3)
 
 knowledge_graphs:
   - kg: env(KG:wikidata)
-    endpoint: env(KG_ENDPOINT:null)
     example_index: env(KG_EXAMPLES:null)
     entities_type: env(ENTITIES_TYPE:fuzzy)
     properties_type: env(PROPERTIES_TYPE:embedding)
     notes_file: env(KG_NOTES_FILE:null)
     indices: env(KG_INDICES:[])
+    info:
+      endpoint: env(KG_ENDPOINT:null)

@@ -1,7 +1,8 @@
 <script>
-  import { createEventDispatcher, onMount, tick } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import SelectionBar from './SelectionBar.svelte';
   import { parseCsvTable } from '../utils/csv.js';
+  import { transcribeEndpoint } from '../constants.js';
 
   export let value = '';
   export let disabled = false;
@@ -15,7 +16,7 @@
   export let errorMessage = '';
   export let onReload = null;
   export let initialCeaPayload = null;
-
+  export let sttEnabled = false;
   const dispatch = createEventDispatcher();
 
   const MAX_FILE_SIZE_BYTES = 1024 * 1024;
@@ -46,6 +47,14 @@
   let ceaPreviousFileName = '';
   let ceaPreviousSelectedRows = [];
   let appliedInitialCeaRef = null;
+
+  let isRecording = false;
+  let isTranscribing = false;
+  let sttError = '';
+  let mediaRecorder = null;
+  let recordingStream = null;
+  let audioChunks = [];
+  let recordingMimeType = '';
 
   const INACTIVITY_MESSAGE_PREFIX = 'connection closed due to inactivity';
 
@@ -81,7 +90,16 @@
       !disabled &&
       connected &&
       !isRunning &&
-      !isCancelling;
+      !isCancelling &&
+      !isRecording &&
+      !isTranscribing;
+  $: canRecord = sttEnabled &&
+    !isCeaTask &&
+    !disabled &&
+    !isRunning &&
+    !isCancelling &&
+    !isTranscribing;
+  $: showMicControls = sttEnabled && !isCeaTask;
   $: canCancel = connected && isRunning && !isCancelling && !disabled;
   $: showCancel = isRunning || isCancelling;
   $: showClear = hasHistory && !isRunning && !isCancelling;
@@ -262,6 +280,174 @@
       onReload();
     }
   }
+
+  function pickRecordingMimeType() {
+    if (typeof MediaRecorder === 'undefined') return '';
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+      'audio/ogg'
+    ];
+    for (const type of candidates) {
+      if (MediaRecorder.isTypeSupported?.(type)) return type;
+    }
+    return '';
+  }
+
+  function releaseRecordingStream() {
+    if (recordingStream) {
+      for (const track of recordingStream.getTracks()) {
+        track.stop();
+      }
+      recordingStream = null;
+    }
+    mediaRecorder = null;
+    audioChunks = [];
+  }
+
+  async function startRecording() {
+    if (!canRecord || isRecording) return;
+    sttError = '';
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      sttError = 'Microphone access is not supported in this browser.';
+      return;
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      sttError = 'Audio recording is not supported in this browser.';
+      return;
+    }
+
+    try {
+      recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      console.warn('Microphone access denied', error);
+      sttError = 'Microphone access was denied.';
+      return;
+    }
+
+    recordingMimeType = pickRecordingMimeType();
+    try {
+      mediaRecorder = recordingMimeType
+        ? new MediaRecorder(recordingStream, { mimeType: recordingMimeType })
+        : new MediaRecorder(recordingStream);
+    } catch (error) {
+      console.warn('Failed to start recorder', error);
+      sttError = 'Failed to start recording.';
+      releaseRecordingStream();
+      return;
+    }
+
+    audioChunks = [];
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+    mediaRecorder.start();
+    isRecording = true;
+  }
+
+  function cancelRecording() {
+    if (!isRecording) return;
+    try {
+      mediaRecorder?.stop();
+    } catch (error) {
+      console.warn('Failed to stop recorder', error);
+    }
+    isRecording = false;
+    releaseRecordingStream();
+    focusInput();
+  }
+
+  async function stopAndTranscribe() {
+    if (!isRecording || !mediaRecorder) return;
+    const recorder = mediaRecorder;
+    const mime = recordingMimeType || recorder.mimeType || 'audio/webm';
+
+    const stopped = new Promise((resolve) => {
+      recorder.addEventListener('stop', () => resolve(), { once: true });
+    });
+
+    try {
+      recorder.stop();
+    } catch (error) {
+      console.warn('Failed to stop recorder', error);
+      isRecording = false;
+      releaseRecordingStream();
+      sttError = 'Failed to stop recording.';
+      return;
+    }
+
+    await stopped;
+    isRecording = false;
+
+    const chunks = audioChunks;
+    releaseRecordingStream();
+
+    if (!chunks.length) {
+      sttError = 'No audio was captured.';
+      return;
+    }
+
+    const blob = new Blob(chunks, { type: mime });
+    if (!blob.size) {
+      sttError = 'No audio was captured.';
+      return;
+    }
+
+    isTranscribing = true;
+    sttError = '';
+
+    const extension = mime.includes('mp4')
+      ? 'm4a'
+      : mime.includes('ogg')
+        ? 'ogg'
+        : 'webm';
+
+    const form = new FormData();
+    form.append('file', blob, `recording.${extension}`);
+
+    try {
+      const response = await fetch(transcribeEndpoint(), {
+        method: 'POST',
+        body: form
+      });
+      if (!response.ok) {
+        const message = response.status === 429
+          ? 'Too many requests. Please try again later.'
+          : 'Transcription failed.';
+        throw new Error(message);
+      }
+      const data = await response.json();
+      const text = typeof data?.text === 'string' ? data.text.trim() : '';
+      if (text) {
+        const current = typeof value === 'string' ? value : '';
+        value = current && !/\s$/.test(current) ? `${current} ${text}` : `${current}${text}`;
+        await tick();
+        autoResize();
+      }
+    } catch (error) {
+      console.warn('Transcription failed', error);
+      sttError = error?.message || 'Transcription failed.';
+    } finally {
+      isTranscribing = false;
+      focusInput();
+    }
+  }
+
+  onDestroy(() => {
+    if (isRecording) {
+      try {
+        mediaRecorder?.stop();
+      } catch (error) {
+        // ignore
+      }
+    }
+    releaseRecordingStream();
+  });
 
   function openFileDialog() {
     if (disableFileInput) return;
@@ -831,17 +1017,7 @@
         </div>
       {:else if showActions}
         <div class="composer__input-actions">
-          <button
-            type="button"
-            class="icon-button icon-button--primary"
-            on:click={submit}
-            disabled={!canSubmit}
-            aria-label="Run"
-            title="Run"
-          >
-            <span class="paperplane-icon" aria-hidden="true">➤</span>
-          </button>
-          {#if showCancel}
+      {#if showCancel}
             <button
               type="button"
               class="icon-button icon-button--danger"
@@ -857,6 +1033,53 @@
                 <span class="cancel-icon" aria-hidden="true">✖</span>
               {/if}
             </button>
+          {:else}
+            {#if showMicControls}
+              <button
+                type="button"
+                class="icon-button icon-button--mic"
+                class:icon-button--mic-busy={isTranscribing}
+                class:icon-button--mic-recording={isRecording}
+                on:click={isRecording ? stopAndTranscribe : startRecording}
+                disabled={!canRecord && !isRecording}
+                aria-label={isRecording ? 'Stop and transcribe' : isTranscribing ? 'Transcribing…' : 'Record question'}
+                title={sttError || (isRecording ? 'Stop and transcribe' : isTranscribing ? 'Transcribing…' : 'Record question')}
+              >
+                {#if isTranscribing}
+                  <span class="transcribe-spinner" aria-hidden="true"></span>
+                {:else}
+                  <svg class="soundwave-icon" class:soundwave-icon--active={isRecording} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <line class="soundwave-bar soundwave-bar--1" x1="4" y1="8" x2="4" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <line class="soundwave-bar soundwave-bar--2" x1="8" y1="5" x2="8" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <line class="soundwave-bar soundwave-bar--3" x1="12" y1="2" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <line class="soundwave-bar soundwave-bar--4" x1="16" y1="5" x2="16" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <line class="soundwave-bar soundwave-bar--5" x1="20" y1="8" x2="20" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                {/if}
+              </button>
+            {/if}
+            {#if isRecording}
+              <button
+                type="button"
+                class="icon-button icon-button--danger"
+                on:click={cancelRecording}
+                aria-label="Discard recording"
+                title="Discard recording"
+              >
+                <span class="cancel-icon" aria-hidden="true">✖</span>
+              </button>
+            {:else}
+              <button
+                type="button"
+                class="icon-button icon-button--primary"
+                on:click={submit}
+                disabled={!canSubmit}
+                aria-label="Run"
+                title="Run"
+              >
+                <span class="paperplane-icon" aria-hidden="true">➤</span>
+              </button>
+            {/if}
           {/if}
           {#if showClear}
             <button
@@ -873,6 +1096,9 @@
         </div>
       {/if}
     </div>
+    {#if sttError}
+      <p class="composer__error" role="alert">{sttError}</p>
+    {/if}
   </div>
 
   <SelectionBar
@@ -1418,9 +1644,10 @@
   }
 
   .icon-button--danger {
-    background: var(--color-uni-red);
-    color: #fff;
-    box-shadow: 0 4px 8px rgba(193, 0, 42, 0.18);
+    background: rgba(193, 0, 42, 0.12);
+    color: var(--color-uni-red);
+    border: 1px solid rgba(193, 0, 42, 0.2);
+    box-shadow: 0 4px 8px rgba(193, 0, 42, 0.1);
   }
 
   .icon-button--reload {
@@ -1462,6 +1689,46 @@
     box-shadow: 0 4px 8px rgba(52, 74, 154, 0.16);
   }
 
+  .icon-button--mic {
+    background: rgba(52, 74, 154, 0.12);
+    color: var(--color-uni-blue);
+    border: 1px solid rgba(52, 74, 154, 0.18);
+    box-shadow: 0 4px 8px rgba(52, 74, 154, 0.16);
+  }
+
+  .icon-button--mic-busy:disabled {
+    opacity: 1;
+    cursor: wait;
+  }
+
+  .icon-button--mic-recording {
+    background: var(--color-uni-blue);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 4px 8px rgba(52, 74, 154, 0.18);
+  }
+
+  .soundwave-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    overflow: visible;
+  }
+
+  .soundwave-icon--active .soundwave-bar {
+    transform-origin: center;
+    animation: soundwave-bounce 0.8s ease-in-out infinite;
+  }
+  .soundwave-icon--active .soundwave-bar--1 { animation-delay: 0s; }
+  .soundwave-icon--active .soundwave-bar--2 { animation-delay: 0.15s; }
+  .soundwave-icon--active .soundwave-bar--3 { animation-delay: 0.3s; }
+  .soundwave-icon--active .soundwave-bar--4 { animation-delay: 0.45s; }
+  .soundwave-icon--active .soundwave-bar--5 { animation-delay: 0.6s; }
+
+  @keyframes soundwave-bounce {
+    0%, 100% { transform: scaleY(0.4); }
+    50% { transform: scaleY(1); }
+  }
+
   .icon-button:not(:disabled):hover {
     transform: translateY(-1px);
   }
@@ -1469,7 +1736,6 @@
   .reload-icon {
     font-size: 1.1rem;
     line-height: 1;
-    color: #fff;
   }
 
   .cancel-spinner {
@@ -1478,10 +1744,19 @@
     border-radius: 50%;
     border: 2px solid rgba(193, 0, 42, 0.28);
     border-top-color: var(--color-uni-red);
-    animation: cancel-spin 0.7s linear infinite;
+    animation: spin 0.7s linear infinite;
   }
 
-  @keyframes cancel-spin {
+  .transcribe-spinner {
+    width: 1.05rem;
+    height: 1.05rem;
+    border-radius: 50%;
+    border: 2px solid rgba(52, 74, 154, 0.28);
+    border-top-color: var(--color-uni-blue);
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin {
     from {
       transform: rotate(0deg);
     }

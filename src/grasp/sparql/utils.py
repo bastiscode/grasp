@@ -24,7 +24,7 @@ READ_TIMEOUT = 10
 QLEVER_API = "https://qlever.dev/api"
 
 
-def get_endpoint(kg: str) -> str:
+def get_qlever_endpoint(kg: str) -> str:
     return f"{QLEVER_API}/{kg}"
 
 
@@ -735,13 +735,13 @@ def _stream_with_timeout(
     response: requests.Response,
     seconds: float | None = None,
 ) -> Any:
-    start = time.perf_counter()
+    start = time.monotonic()
     chunks: list[bytes] = []
     for chunk in response.iter_content(chunk_size=8192):
         if not chunk:
             continue
         chunks.append(chunk)
-        if seconds and time.perf_counter() - start > seconds:
+        if seconds and time.monotonic() - start > seconds:
             raise SPARQLExecuteException(
                 f"Took longer than {seconds} seconds to read SPARQL result",
                 sparql,
@@ -758,8 +758,15 @@ def execute(
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
     read_timeout: float | None = READ_TIMEOUT,
     max_retries: int = 0,
+    headers: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> SelectResult | AskResult:
+    if headers is None:
+        headers = {}
+    if params is None:
+        params = {}
+
     max_retries = max(0, max_retries)
     for i in range(max_retries + 1):
         try:
@@ -769,8 +776,9 @@ def execute(
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Accept": "application/sparql-results+json",
                     "User-Agent": "grasp-rdf",
+                    **headers,
                 },
-                data={"query": sparql},
+                data={**params, "query": sparql},
                 timeout=request_timeout,
                 stream=True,
                 **kwargs,

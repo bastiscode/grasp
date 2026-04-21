@@ -1,11 +1,9 @@
 import random
 from typing import Any
-from uuid import uuid4
 
 from grasp.configs import GraspConfig
 from grasp.functions import find_manager
 from grasp.manager import KgManager
-from grasp.model import Message, Response, ToolCall
 from grasp.tasks.examples import ExampleIndex
 from grasp.tasks.utils import Sample, format_sparql_result, prepare_sparql_result
 
@@ -231,14 +229,14 @@ def find_examples(
     example_indices: dict[str, SparqlQaExampleIndex],
     kg: str,
     question: str,
-    num_examples: int,
     random_examples: bool,
+    num_examples: int,
     known: set[str],
     max_rows: int,
     max_cols: int,
-) -> Message:
+) -> str:
     if random_examples:
-        tool_result = find_random_examples(
+        return find_random_examples(
             managers,
             example_indices,
             kg,
@@ -247,12 +245,9 @@ def find_examples(
             max_rows,
             max_cols,
         )
-        fn_name = "find_examples"
-        fn_args = {"kg": kg}
-        content = "Let's start by looking at some examples."
 
     else:
-        tool_result = find_similar_examples(
+        return find_similar_examples(
             managers,
             example_indices,
             kg,
@@ -262,24 +257,3 @@ def find_examples(
             max_rows,
             max_cols,
         )
-        fn_name = "find_similar_examples"
-        fn_args = {"kg": kg, "question": question}
-        content = "Let's start by looking at some similar examples."
-
-    response_id = f"msg_{uuid4().hex}"
-    tool_call_id = f"tool_{uuid4().hex}"
-    return Message(
-        role="assistant",
-        content=Response(
-            id=response_id,
-            message=content,
-            tool_calls=[
-                ToolCall(
-                    id=tool_call_id,
-                    name=fn_name,
-                    args=fn_args,
-                    result=tool_result,
-                )
-            ],
-        ),
-    )

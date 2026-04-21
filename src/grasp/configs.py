@@ -1,15 +1,25 @@
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, conlist
+from pydantic import BaseModel, Field, conlist
+
+
+class KgInfo(BaseModel):
+    prefixes: dict[str, str] | None = None
+    description: str | None = None
+    endpoint: str | None = None
+    headers: dict[str, str] | None = None
+    params: dict[str, str] | None = None
 
 
 class KgConfig(BaseModel):
     kg: str
-    endpoint: str | None = None
-    entities_type: str = "fuzzy"
-    properties_type: str = "embedding"
+    entities_type: Literal["fuzzy", "embedding", "keyword"] = "fuzzy"
+    properties_type: Literal["fuzzy", "embedding", "keyword"] = "embedding"
     notes_file: str | None = None
     example_index: str | None = None
+
+    # kg info
+    info: KgInfo | None = None
 
     # additional indices to load
     # built via search-rdf and exposed
@@ -21,29 +31,43 @@ class ModelConfig(BaseModel):
     seed: int | None = None
 
     # model parameters
-    model: str = "openai/gpt-5-mini"
+    model: str = "gpt-5-mini"
+    model_provider: Literal[
+        "openai/completions",
+        "openai/responses",
+    ] = "openai/completions"
     model_endpoint: str | None = None
+    model_api_key: str | None = Field(default=None, exclude=True)
+    model_timeout: float = 120.0
 
+    # any additional inference parameters
     model_kwargs: dict[str, Any] = {}
 
-    # decoding parameters
-    temperature: float | None = 1.0
-    top_p: float | None = 1.0
-    reasoning_effort: str | None = None
-    reasoning_summary: str | None = None
-    api: str | None = None
+    # important inference parameters, supported by almost
+    # all providers and models
     parallel_tool_calls: bool = False
-    tool_choice: str = "auto"
-
-    # completion parameters
+    tool_choice: Literal["auto", "required"] = "auto"
     max_completion_tokens: int = 8192  # 8k, leaves enough space for reasoning models
-    completion_timeout: float = 120.0
     num_retries: int = 2
+
+
+class JudgeConfig(ModelConfig):
+    # optional knowledge graph; required when judge evaluation is run with
+    # --fix-formatted so that SPARQL queries can be executed and selections
+    # recomputed during reformatting
+    knowledge_graph: KgConfig | None = None
 
 
 class GraspConfig(ModelConfig):
     # function set, notes, and knowledge graphs
-    fn_set: str = "search_extended"
+    fn_set: Literal[
+        "base",
+        "search",
+        "search_extended",
+        "search_filter",
+        "search_constraints",
+        "all",
+    ] = "search_filter"
     notes_file: str | None = None
 
     knowledge_graphs: list[KgConfig] = [KgConfig(kg="wikidata")]
@@ -90,6 +114,20 @@ class GraspConfig(ModelConfig):
         return self.sparql_connection_timeout, self.sparql_query_timeout
 
 
+class SpeechToTextConfig(BaseModel):
+    model: str = "gpt-4o-transcribe"
+    model_endpoint: str | None = None
+    model_api_key: str | None = Field(default=None, exclude=True)
+    model_timeout: float = 30.0
+    num_retries: int = 2
+    # 2MB by default
+    max_audio_bytes: int = 2 * 1024 * 1024
+    rate_limit: int | None = None
+    rate_limit_window: int = 60
+    # ISO-639-1 language hint for the STT model; None lets it auto-detect
+    language: str | None = None
+
+
 class ServerConfig(GraspConfig):
     port: int = 6789
     max_connections: int = 10
@@ -100,6 +138,7 @@ class ServerConfig(GraspConfig):
     share: str | None = None
     rate_limit: int | None = None
     rate_limit_window: int = 60
+    speech_to_text: SpeechToTextConfig | None = None
 
 
 class NotesConfig(GraspConfig):
@@ -137,4 +176,5 @@ class NotesFromOutputsConfig(NoteTakingConfig):
 
 
 class NotesFromExplorationConfig(NotesConfig):
+    mode: Literal["functional", "structural"] = "structural"
     questions_per_round: int = 3

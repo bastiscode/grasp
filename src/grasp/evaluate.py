@@ -9,20 +9,21 @@ from tqdm import tqdm
 from universal_ml_utils.io import dump_json, load_json, load_jsonl
 from universal_ml_utils.logging import get_logger
 
-from grasp.configs import ModelConfig
+from grasp.configs import JudgeConfig
+from grasp.manager import load_kg_manager
 from grasp.manager.utils import get_common_sparql_prefixes, load_kg_info, merge_prefixes
-from grasp.model import Message, call_model
+from grasp.model import Message, get_model
+from grasp.model.base import Model
 from grasp.sparql.metrics import f1_score
 from grasp.sparql.types import AskResult, SelectResult
 from grasp.sparql.utils import (
     execute,
-    get_endpoint,
+    get_qlever_endpoint,
     load_iri_and_literal_parser,
     load_sparql_parser,
 )
-from grasp.sparql.utils import (
-    fix_prefixes as fix_sparql_prefixes,
-)
+from grasp.sparql.utils import fix_prefixes as fix_sparql_prefixes
+from grasp.tasks.sparql_qa import prepare_formatted_output
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.utils import format_message, is_invalid_evaluation, is_invalid_output
 
@@ -97,15 +98,14 @@ def evaluate_f1(
 ) -> None:
     logger = get_logger("GRASP EVALUATION", log_level)
 
-    if endpoint is None:
-        endpoint = get_endpoint(kg)
-
     sparql_parser = load_sparql_parser()
     iri_literal_parser = load_iri_and_literal_parser()
 
     prefixes = get_common_sparql_prefixes()
-    kg_prefixes, _ = load_kg_info(kg)
-    prefixes, _, _ = merge_prefixes(prefixes, kg_prefixes, logger)
+    info = load_kg_info(kg)
+    prefixes, _, _ = merge_prefixes(prefixes, info.prefixes or {}, logger)
+
+    endpoint = endpoint or info.endpoint or get_qlever_endpoint(kg)
 
     def fix(sparql: str) -> str:
         if not fix_prefixes:
@@ -209,9 +209,9 @@ def evaluate_f1(
 
 
 def judge_candidates(
+    model: Model,
     question: str,
     candidates: list[str],
-    config: ModelConfig,
     logger: Logger,
 ) -> tuple[str, int | None]:
     if len(candidates) > len(string.ascii_uppercase):
@@ -250,9 +250,8 @@ def judge_candidates(
     ]
 
     messages = [
-        Message(
-            role="system",
-            content="""\
+        Message.system(
+            """\
 You are an expert judge for evaluating SPARQL queries.
 
 You are given a question and two or more SPARQL query candidates \
@@ -267,9 +266,8 @@ than a generated SPARQL query that is incorrect or irrelevant to the question.
 
 Think before you finalize your answer with the provided judge function.""",
         ),
-        Message(
-            role="user",
-            content=f"""\
+        Message.user(
+            f"""\
 Question:
 {question}
 
@@ -284,7 +282,7 @@ Question:
     logger.debug(format_message(messages[-1]))
 
     try:
-        response = call_model(messages, functions, config)
+        response = model(messages, functions)
     except Exception as e:
         raise ValueError(f"Error during judging: {e}")
 
@@ -305,9 +303,11 @@ def evaluate_with_judge(
     input_file: str,
     prediction_files: list[str],
     evaluation_file: str,
-    judge_config: ModelConfig,
+    judge_config: JudgeConfig,
     overwrite: bool = False,
     retry_failed: bool = False,
+    reformat_sparql: bool = False,
+    timeout: float = 300.0,
     log_level: str | int | None = None,
 ):
     logger = get_logger("GRASP EVALUATION", log_level)
@@ -318,6 +318,46 @@ def evaluate_with_judge(
         logger.warning(
             f"Setting tool choice to 'required' for judge evaluation, overriding '{tool_choice}'"
         )
+
+    manager = None
+    if reformat_sparql:
+        assert judge_config.knowledge_graph is not None, (
+            "Reformatting requires judge_config.knowledge_graph to be set"
+        )
+        logger.info(
+            f"Loading KG manager for '{judge_config.knowledge_graph.kg}' "
+            "to reformat SPARQL candidates"
+        )
+        manager = load_kg_manager(judge_config.knowledge_graph)
+
+    def get_candidates(outputs: list[dict]) -> list[str]:
+        candidates = []
+
+        for output in outputs:
+            output = output["output"]
+
+            if not reformat_sparql:
+                formatted = output.get("formatted") or "No SPARQL generated or found"
+                candidates.append(formatted)
+                continue
+
+            assert judge_config.knowledge_graph is not None
+            assert manager is not None
+
+            if output.get("sparql") is None:
+                candidates.append("No SPARQL generated or found")
+                continue
+
+            output = prepare_formatted_output(
+                output["sparql"],
+                judge_config.knowledge_graph.kg,
+                [manager],
+                request_timeout=timeout,
+                read_timeout=timeout,
+            )
+            candidates.append(output["formatted"])
+
+        return candidates
 
     def group_predictions(predictions: list) -> dict:
         grouped: dict = {}
@@ -380,6 +420,7 @@ def evaluate_with_judge(
         f"{len(evaluations['evaluations']):,} existing evaluations"
     )
 
+    model = get_model(judge_config)
     random.seed(judge_config.seed)
 
     for id, sample in tqdm(
@@ -414,41 +455,28 @@ def evaluate_with_judge(
             continue
 
         # shuffle candidates to avoid position bias in judging
-        indices = [
-            i for i in range(len(candidates)) if not is_invalid_output(candidates[i])
-        ]
-
-        if not indices:
-            # if not output is valid, skip judging and make it a tie
-            evaluation = {
-                "exaplanation": "No valid output",
-                "verdict": None,
-                "err": None,
-            }
-            continue
+        indices = list(range(len(candidates)))
+        random.shuffle(indices)
+        candidates = [candidates[i] for i in indices]
 
         evaluation: dict = {
             "explanation": None,
             "verdict": None,
             "err": None,
         }
+
         try:
-            random.shuffle(indices)
-            formatted = [
-                candidates[i]["output"]["formatted"]
-                if candidates[i].get("output") is not None
-                else "No SPARQL query generated or found"
-                for i in indices
-            ]
+            candidates_formatted = get_candidates(candidates)
 
             explanation, verdict = judge_candidates(
+                model,
                 sample.question,
-                formatted,
-                judge_config,
+                candidates_formatted,
                 logger,
             )
             evaluation["explanation"] = explanation
             evaluation["verdict"] = indices[verdict] if verdict is not None else None
+
         except Exception as e:
             logger.warning(f"Error during judgment of sample {id}: {e}")
             evaluation["err"] = str(e)

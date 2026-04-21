@@ -2,6 +2,7 @@ import os
 
 from pydantic import BaseModel
 
+from grasp.configs import KgInfo
 from grasp.functions import check_known
 from grasp.manager import DEFAULT_DESCRIPTIONS, KgManager
 from grasp.manager.utils import (
@@ -14,6 +15,7 @@ from grasp.manager.utils import (
 )
 from grasp.model import Message
 from grasp.sparql.utils import (
+    get_qlever_endpoint,
     load_entity_index_sparql,
     load_entity_info_sparql,
     load_property_index_sparql,
@@ -43,7 +45,7 @@ class IndexState(BaseModel):
 
 
 class InfoState(BaseModel):
-    prefixes: dict[str, str] = {}
+    prefixes: dict[str, str] | None = None
     description: str | None = None
 
 
@@ -61,8 +63,11 @@ def load_index_state(manager: KgManager, name: str) -> IndexState:
 
 
 def load_info_state(manager: KgManager) -> InfoState:
-    prefixes, desc = load_kg_info(manager.kg)
-    return InfoState(prefixes=prefixes, description=desc)
+    kg_info = load_kg_info(manager.kg)
+    return InfoState(
+        prefixes=kg_info.prefixes,
+        description=kg_info.description,
+    )
 
 
 def format_query(manager: KgManager, query: str | None) -> str:
@@ -196,15 +201,29 @@ and repeat, otherwise stop."""
             return self._info_rules()
 
     def _index_rules(self) -> list[str]:
-        return [
+        name = self.input["name"]
+        rules = [
             "If the user provides additional notes about the desired setup, make sure to follow them.",
-            "If you want to make an IRI searchable even if it does not have any associated literals, "
-            "bind the IRI itself as value in the index SPARQL via BIND(?id AS ?value).",
             "When developing the SPARQL queries, try to make them as efficient as possible. For example, "
-            "put VALUES { {IDS} } clauses in the info SPARQL inside each UNION.",
-            "If there already exsists a setup, you can verify the index and info SPARQLs "
-            "also by using the search-related functions and checking their results.",
+            "put VALUES { {IDS} } clauses in the info SPARQL inside each UNION, and avoid string operations "
+            "and filters for the index SPARQL wherever possible.",
+            "Do not use different scores for the same IRI in the index SPARQL, as the IRIs are required to be "
+            "returned in contiguous blocks for the indexing process.",
+            f"To include {name} in the index and make them searchable even if they do not have "
+            "have any associated literals, use their IRIs as values by binding ?id to ?value directly "
+            "in the index SPARQL. During indexing the local part of the IRI (after a known prefix, "
+            "or the last slash or hash) will be extracted and indexed as the value, so make sure it is "
+            "meaningful for search. This also means you do not need to extract the local part in the SPARQL "
+            "yourself.",
         ]
+        if name == "entities":
+            rules.append(
+                f"Not all {name} in the knowledge graph need to be searchable and should be covered by the index. "
+                f"Typical examples are identifier-like, internal, or intermediate {name} "
+                "without any descriptive associated literals."
+            )
+
+        return rules
 
     def _info_rules(self) -> list[str]:
         return [
@@ -266,11 +285,12 @@ and repeat, otherwise stop."""
             return self.set_description(fn_args["description"])
 
         elif fn_name == "stop":
-            return "Stopping."
+            return "Stopping"
 
         raise FunctionCallException(f"Unknown function {fn_name}")
 
     def set_description(self, description: str) -> str:
+        assert isinstance(self.state, (IndexState, InfoState))
         self.state.description = description
         return "Description updated."
 
@@ -281,6 +301,7 @@ and repeat, otherwise stop."""
         sparql: str,
         known: set[str],
     ) -> str:
+        assert isinstance(self.state, IndexState)
         name = self.input["name"]
 
         if self.config.know_before_use:
@@ -330,7 +351,10 @@ and repeat, otherwise stop."""
             return format_info_state(self.state)
 
     def add_prefix(self, manager: KgManager, short: str, namespace: str) -> str:
-        if short in self.state.prefixes:
+        assert isinstance(self.state, InfoState)
+        if not self.state.prefixes:
+            self.state.prefixes = {}
+        elif short in self.state.prefixes:
             raise FunctionCallException(f"Prefix '{short}' already exists.")
 
         try:
@@ -341,7 +365,10 @@ and repeat, otherwise stop."""
         return f"Prefix '{short}' added and available for subsequent function calls."
 
     def delete_prefix(self, manager: KgManager, short: str) -> str:
-        if short not in self.state.prefixes:
+        assert isinstance(self.state, InfoState)
+        if not self.state.prefixes:
+            raise FunctionCallException("No prefixes to delete.")
+        elif short not in self.state.prefixes:
             raise FunctionCallException(f"Prefix '{short}' does not exist.")
 
         try:
@@ -355,7 +382,10 @@ and repeat, otherwise stop."""
         return f"Prefix '{short}' deleted and no longer available for subsequent function calls."
 
     def update_prefix(self, manager: KgManager, short: str, namespace: str) -> str:
-        if short not in self.state.prefixes:
+        assert isinstance(self.state, InfoState)
+        if not self.state.prefixes:
+            raise FunctionCallException("No prefixes to update.")
+        elif short not in self.state.prefixes:
             raise FunctionCallException(f"Prefix '{short}' does not exist.")
 
         try:
@@ -375,19 +405,18 @@ and repeat, otherwise stop."""
         manager = self.managers[0]
         if self.input["phase"] == "index":
             self.state = load_index_state(manager, self.input["name"])
-            return f"""\
-Set up the index and info SPARQLs for {self.input["name"]} of the {manager.kg} knowledge graph.
+            if self.input.get("notes"):
+                return input["notes"]
+            else:
+                return f"Set up the index and info SPARQLs for {self.input['name']} \
+of the {manager.kg} knowledge graph."
 
-Additional notes:
-{self.input.get("notes")}"""
-
+        # info phase
+        self.state = load_info_state(manager)
+        if self.input.get("notes"):
+            return input["notes"]
         else:
-            self.state = load_info_state(manager)
-            return f"""\
-Set up the prefixes and description for the {manager.kg} knowledge graph.
-
-Additional notes:
-{self.input.get("notes")}"""
+            return f"Set up the prefixes and description for the {manager.kg} knowledge graph."
 
     def output(self, messages: list[Message]) -> dict:
         if self.input["phase"] == "index":
@@ -396,15 +425,36 @@ Additional notes:
                 "type": "output",
                 "phase": "index",
                 "name": self.input["name"],
-                "index": self.state.index_sparql,
-                "info": self.state.info_sparql,
-                "description": self.state.description,
+                "sparql": {
+                    "index": self.state.index_sparql,
+                    "info": self.state.info_sparql,
+                },
+                "info": {
+                    "description": self.state.description,
+                },
             }
         else:
             assert isinstance(self.state, InfoState)
+            manager = self.managers[0]
+
+            # build kg info
+            info = KgInfo()
+            # unchanged fields via manager
+            if manager.endpoint != get_qlever_endpoint(manager.kg):
+                info.endpoint = manager.endpoint
+            if manager.params:
+                info.params = manager.params
+            if manager.headers:
+                info.headers = manager.headers
+
+            # updated fields via state
+            if self.state.description:
+                info.description = self.state.description
+            if self.state.prefixes:
+                info.prefixes = self.state.prefixes
+
             return {
                 "type": "output",
                 "phase": "info",
-                "description": self.state.description,
-                "prefixes": self.state.prefixes,
+                "info": info.model_dump(exclude_unset=True),
             }

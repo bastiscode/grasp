@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
 
   export let task = 'sparql-qa';
   export let tasks = [];
@@ -10,13 +10,84 @@
 
   const dispatch = createEventDispatcher();
 
+  let isOpen = false;
+  let triggerEl;
+  let menuEl;
+  let menuStyle = '';
+
   $: activeTask = tasks.find((t) => t.id === task);
 
-  function handleTaskChange(event) {
+  function toggle() {
     if (disabled) return;
-    const nextId = event.target?.value;
-    if (!nextId || nextId === task) return;
-    dispatch('taskchange', nextId);
+    if (isOpen) {
+      close();
+    } else {
+      open();
+    }
+  }
+
+  async function open() {
+    isOpen = true;
+    await tick();
+    positionMenu();
+    menuEl?.focus();
+  }
+
+  function close() {
+    isOpen = false;
+  }
+
+  function positionMenu() {
+    if (!triggerEl) return;
+    const rect = triggerEl.getBoundingClientRect();
+    menuStyle = `left: ${rect.left}px; bottom: ${window.innerHeight - rect.top + 4}px; min-width: ${rect.width}px;`;
+  }
+
+  function selectTask(id) {
+    if (id !== task) {
+      dispatch('taskchange', id);
+    }
+    close();
+    triggerEl?.focus();
+  }
+
+  function handleMenuKeydown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+      triggerEl?.focus();
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusSibling(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusSibling(-1);
+    }
+  }
+
+  function handleTriggerKeydown(event) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      open();
+    }
+  }
+
+  function focusSibling(direction) {
+    if (!menuEl) return;
+    const items = [...menuEl.querySelectorAll('[role="option"]')];
+    if (!items.length) return;
+    const active = document.activeElement;
+    const index = items.indexOf(active);
+    let next = index + direction;
+    if (next < 0) next = items.length - 1;
+    if (next >= items.length) next = 0;
+    items[next]?.focus();
+  }
+
+  function handleBackdropClick(event) {
+    if (!triggerEl?.contains(event.target) && !menuEl?.contains(event.target)) {
+      close();
+    }
   }
 
   function toggleKg(id) {
@@ -25,6 +96,8 @@
   }
 </script>
 
+<svelte:window on:pointerdown={isOpen ? handleBackdropClick : undefined} />
+
 <div
   class={`selection-bar ${className}`.trim()}
   class:selection-bar--compact={compact}
@@ -32,18 +105,45 @@
 >
   <div class="chip-row" class:chip-row--compact={compact}>
     <div class="task-select-container">
-      <label class="visually-hidden" for="task-select">Task</label>
-      <select
-        id="task-select"
-        on:change={handleTaskChange}
-        disabled={disabled}
+      <button
+        type="button"
+        class="task-trigger"
+        bind:this={triggerEl}
+        on:click={toggle}
+        on:keydown={handleTriggerKeydown}
+        {disabled}
         title={activeTask?.tooltip}
-        value={task}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
       >
-        {#each tasks as item (item.id)}
-          <option value={item.id}>{item.name}</option>
-        {/each}
-      </select>
+        <span class="task-trigger__label">{activeTask?.name ?? task}</span>
+        <span class="task-trigger__arrow" aria-hidden="true"></span>
+      </button>
+      {#if isOpen}
+        <div
+          class="task-menu"
+          role="listbox"
+          tabindex="-1"
+          style={menuStyle}
+          bind:this={menuEl}
+          on:keydown={handleMenuKeydown}
+          aria-label="Task"
+        >
+          {#each tasks as item (item.id)}
+            <button
+              type="button"
+              class="task-menu__item"
+              class:task-menu__item--active={item.id === task}
+              role="option"
+              aria-selected={item.id === task}
+              title={item.tooltip}
+              on:click={() => selectTask(item.id)}
+            >
+              {item.name}
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
 
     {#each knowledgeGraphs as kg (kg.id)}
@@ -120,10 +220,11 @@
   }
 
   .task-select-container {
+    position: relative;
     margin-right: var(--spacing-xs);
   }
 
-  select {
+  .task-trigger {
     appearance: none;
     border: 1px solid rgba(52, 74, 154, 0.28);
     border-radius: var(--radius-sm);
@@ -138,26 +239,80 @@
     font-family: inherit;
     font-weight: 600;
     min-width: 120px;
-    background-image: linear-gradient(45deg, transparent 50%, var(--color-uni-blue) 50%),
-      linear-gradient(135deg, var(--color-uni-blue) 50%, transparent 50%);
-    background-position: calc(100% - 0.75rem) center, calc(100% - 0.5rem) center;
-    background-size: 0.35rem 0.35rem, 0.35rem 0.35rem;
-    background-repeat: no-repeat;
+    text-align: left;
+    position: relative;
+    display: flex;
+    align-items: center;
   }
 
-  select:not(:disabled):hover {
+  .task-trigger__label {
+    flex: 1;
+  }
+
+  .task-trigger__arrow {
+    position: absolute;
+    right: 0.7rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--color-uni-blue);
+  }
+
+  .task-trigger:not(:disabled):hover {
     box-shadow: 0 6px 12px rgba(52, 74, 154, 0.16);
   }
 
-  select:disabled {
+  .task-trigger:disabled {
     opacity: 0.6;
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
   }
 
-  select:focus {
+  .task-trigger:focus {
     outline: none;
+  }
+
+  .task-menu {
+    position: fixed;
+    background: #fff;
+    border: 1px solid rgba(52, 74, 154, 0.2);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgba(5, 17, 51, 0.15);
+    z-index: 100;
+    padding: 4px 0;
+    outline: none;
+  }
+
+  .task-menu__item {
+    appearance: none;
+    display: block;
+    width: 100%;
+    border: none;
+    background: none;
+    padding: 0.5rem 0.95rem;
+    font-size: 0.85rem;
+    font-family: inherit;
+    font-weight: 500;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease;
+  }
+
+  .task-menu__item:hover,
+  .task-menu__item:focus {
+    background: rgba(52, 74, 154, 0.08);
+    outline: none;
+  }
+
+  .task-menu__item--active {
+    color: var(--color-uni-blue);
+    font-weight: 600;
   }
 
   .chip {

@@ -4,13 +4,6 @@ from grasp.sparql.utils import find, find_all, parse_string, parse_to_string
 STOP_FUNCTION = {
     "name": "stop",
     "description": "Stop the setup process.",
-    "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": False,
-    },
-    "strict": True,
 }
 
 
@@ -38,13 +31,6 @@ def index_functions() -> list[dict]:
         {
             "name": "show_setup",
             "description": "Show the current index and info SPARQL queries for the knowledge graph.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
         },
         {
             "name": "set_query",
@@ -80,13 +66,6 @@ def info_functions() -> list[dict]:
         {
             "name": "show_setup",
             "description": "Show the current prefixes and description of the knowledge graph.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
         },
         {
             "name": "add_prefix",
@@ -187,12 +166,12 @@ def validate_sparql_vars(parse: dict, required: set[str]):
 
 def validate_order_by(parse: dict, target: str):
     order_by = find_order_by(parse)
-    if order_by != target:
-        raise ValueError(f"ORDER BY clause must be '{target}' instead of '{order_by}'")
+    if order_by.replace(" ", "") != target.replace(" ", ""):
+        raise ValueError(f"ORDER BY clause must be '{target}'")
 
 
 INDEX_SPARQL_VARS = {"id", "value", "tags"}
-INDEX_SPARQL_ORDER_BY = "ORDER BY DESC ( ?score ) ?id DESC ( ?tags )"
+INDEX_SPARQL_ORDER_BY = "ORDER BY DESC(?score) ?id DESC(?tags)"
 
 
 def validate_index_sparql(manager: KgManager, sparql: str):

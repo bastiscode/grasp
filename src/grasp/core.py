@@ -1,5 +1,7 @@
 import json
 import time
+import traceback
+import uuid
 from copy import deepcopy
 from logging import Logger
 from typing import Any, Generator
@@ -16,7 +18,7 @@ from grasp.manager.utils import (
     describe_index_type,
     get_common_sparql_prefixes,
 )
-from grasp.model import Message, ModelFn, Response, call_model
+from grasp.model import Message, Model, Response, ToolCall, get_model
 from grasp.tasks import get_task
 from grasp.tasks import rules as general_rules
 from grasp.tasks.base import GraspTask
@@ -132,7 +134,7 @@ def generate(
     past_known: set[str] | None = None,
     logger: Logger = get_logger("GRASP"),
     yield_output: bool = False,
-    custom_model: ModelFn | None = None,
+    custom_model: Model | None = None,
 ) -> Generator[dict, None, dict]:
     if task_name != "sparql-qa" and task_name != "general-qa":
         # disable examples for tasks other than sparql-qa and general-qa
@@ -158,6 +160,8 @@ def generate(
     fns.extend(task.function_definitions())
     yield {"type": "input", "input": input}
 
+    model = custom_model or get_model(config)
+
     feedback_notes = notes
     feedback_kg_notes = kg_notes
     if config.notes_only_for_feedback:
@@ -179,68 +183,77 @@ def generate(
     }
 
     # log stuff
-    config_msg = Message(
-        role="config",
-        content=config.model_dump_json(indent=2, exclude_none=True),
-    )
+    config_msg = Message(role="config", content=config.model_dump_json(indent=2))
     logger.debug(format_message(config_msg))
 
     fn_msg = Message(
         role="functions",
-        content=json.dumps([fn["name"] for fn in fns]),
+        content=json.dumps([fn["name"] for fn in fns], indent=2),
     )
     logger.debug(format_message(fn_msg))
 
     # handle past
-    messages = [Message(role="system", content=system_instruction)]
     if past_messages:
-        first, *past = past_messages
+        first, *others = past_messages
+        assert isinstance(first.content, str)
         assert first.role == "system", "First past message should be system"
-        messages[0].content = first.content
-        messages.extend(past)
+        messages = [Message.system(content=first.content), *others]
+    else:
+        messages = [Message.system(content=system_instruction)]
 
     known = past_known or set()
 
-    start = time.perf_counter()
+    start = time.monotonic()
 
     # add user input
-    messages.append(Message(role="user", content=input))
+    messages.append(Message.user(content=input))
 
-    if config.force_examples and example_indices:
-        try:
-            example_message = find_examples(
-                managers,
-                example_indices,  # type: ignore
-                config.force_examples,
-                input,
-                config.num_examples,
-                config.random_examples,
-                known,
-                config.result_max_rows,
-                config.result_max_columns,
+    if (
+        config.force_examples
+        and example_indices
+        and config.force_examples in example_indices
+        # dont do it on follow ups
+        and not past_messages
+    ):
+        result = find_examples(
+            managers,
+            example_indices,  # type: ignore
+            config.force_examples,
+            input,
+            config.random_examples,
+            config.num_examples,
+            known,
+            config.result_max_rows,
+            config.result_max_columns,
+        )
+
+        name = "find_random_examples"
+        args = {"kg": config.force_examples}
+        if not config.random_examples:
+            name = "find_similar_examples"
+            args["question"] = input
+
+        tool_call = ToolCall(
+            id=uuid.uuid4().hex,
+            name=name,
+            args=args,
+            result=result,
+        )
+        message = Message.assistant(
+            Response(
+                id=f"msg_{uuid.uuid4().hex}",
+                tool_calls=[tool_call],
             )
+        )
+        messages.append(message)
 
-            # add to messages
-            messages.append(example_message)
-
-            # yield to user
-            assert isinstance(example_message.content, Response)
-            content = example_message.content
-            yield {"type": "model", **content.get_content()}
-
-            tool_call = content.tool_calls[0]
-            yield {
-                "type": "tool",
-                "name": tool_call.name,
-                "args": tool_call.args,
-                "result": tool_call.result,
-            }
-
-        except Exception:
-            logger.warning(
-                f"{config.force_examples:=} specified but corresponding manager not found "
-                "or without example index, ignoring"
-            )
+        # yield to user as tool call
+        yield {
+            "type": "tool",
+            "name": name,
+            "args": args,
+            "result": result,
+        }
 
     # log all messages so far
     for msg in messages:
@@ -255,7 +268,7 @@ def generate(
     retries = 0
     while len(messages) - num_messages < config.max_steps:
         try:
-            response = call_model(messages, fns, config, custom_model=custom_model)
+            response = model(messages, fns)
         except Timeout:
             error = {
                 "content": "LLM API timed out",
@@ -265,7 +278,8 @@ def generate(
             break
         except Exception as e:
             error = {
-                "content": f"Failed to generate response:\n{e}",
+                "content": f"Failed to generate response:\n{e}\n\n"
+                f"{traceback.format_exc()}",
                 "reason": "api",
             }
             logger.error(format_error(**error))
@@ -279,7 +293,7 @@ def generate(
             logger.error(format_error(**error))
             break
 
-        messages.append(Message(role="assistant", content=response))
+        messages.append(Message.assistant(response))
 
         resp_hash = response.hash()
         if last_resp_hash == resp_hash:
@@ -358,8 +372,13 @@ def generate(
 
         # provide feedback
         try:
-            inputs = [message.content for message in messages if message.role == "user"]
+            inputs = [
+                message.content
+                for message in messages
+                if isinstance(message.content, str) and message.role == "user"
+            ]
             feedback = generate_feedback(
+                model,
                 task,
                 feedback_kg_notes or kg_notes or {},
                 feedback_notes or notes or [],
@@ -379,7 +398,7 @@ def generate(
             # no feedback
             break
 
-        messages.append(Message(role="feedback", content=format_feedback(feedback)))
+        messages.append(Message.user(format_feedback(feedback), name="feedback"))
         yield {
             "type": "feedback",
             "status": feedback["status"],
@@ -400,18 +419,18 @@ def generate(
         role="output",
         content="No output"
         if output is None
-        else output.get("formatted", json.dumps(output)),
+        else output.get("formatted", json.dumps(output, indent=2)),
     )
     logger.info(format_message(out_msg))
 
-    end = time.perf_counter()
+    end = time.monotonic()
     output = {
         "type": "output",
         "task": task_name,
         "output": output,
         "elapsed": end - start,
         "error": error,
-        "messages": [message.model_dump(exclude_defaults=True) for message in messages],
+        "messages": [message.model_dump() for message in messages],
         "known": list(known),
     }
 

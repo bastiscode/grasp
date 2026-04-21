@@ -10,7 +10,7 @@ from logging import Logger
 from typing import Generator
 
 import torch
-from grammar_utils.parse import LR1Parser
+from grammar_utils.parse import LR1Parser  # type: ignore
 from peft import AutoPeftModelForCausalLM, PeftModel
 from pydantic import BaseModel
 from tqdm import tqdm
@@ -461,12 +461,12 @@ def select_iris_left_to_right(
     manager: KgManager,
     logger: Logger,
 ) -> Generator[dict, None, str | None]:
-    start = time.perf_counter()
+    start = time.monotonic()
     # init empty memo
     memo: dict[str, Alternatives] = {}
 
     while True:
-        if time.perf_counter() - start > cfg.selection_max_time:
+        if time.monotonic() - start > cfg.selection_max_time:
             yield {"type": "fail", "reason": "timeout"}
             logger.debug("Selection process timed out, abandoning skeleton")
             return None
@@ -656,7 +656,7 @@ def generate(
 ) -> Generator[dict, None, dict]:
     sparql = None
     error = None
-    start = time.perf_counter()
+    start = time.monotonic()
 
     try:
         skeletons = generate_skeletons(
@@ -729,7 +729,7 @@ def generate(
         out["result"] = result.formatted
         out["formatted"] = format_sparql_result(manager, result, selections)
 
-    end = time.perf_counter()
+    end = time.monotonic()
     output = {
         "type": "output",
         "error": error,

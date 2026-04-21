@@ -1,10 +1,5 @@
-from grasp.configs import GraspConfig
-from grasp.manager import KgManager
 from grasp.model import Message, Response
 from grasp.tasks.sparql_qa import SparqlQaTask
-from grasp.tasks.sparql_qa.examples import (
-    SparqlQaExampleIndex,
-)
 from grasp.tasks.sparql_qa.examples import (
     call_function as sparql_qa_example_call_function,
 )
@@ -32,37 +27,12 @@ possibly multiple times.
 4. Output your final answer to the question and stop."""
 
 
-def functions(config: GraspConfig) -> list[dict]:
-    return sparql_qa_example_functions(config)
-
-
-def call_function(
-    config: GraspConfig,
-    managers: list[KgManager],
-    fn_name: str,
-    fn_args: dict,
-    known: set[str],
-    example_indices: dict[str, SparqlQaExampleIndex] | None = None,
-) -> str:
-    return sparql_qa_example_call_function(
-        config,
-        managers,
-        fn_name,
-        fn_args,
-        known,
-        example_indices,
-    )
-
-
 def rules() -> list[str]:
     return [
         "Your answers preferably should be based on the information available in the \
 knowledge graphs. If you do not need them to answer the question, e.g. if \
 you know the answer by heart, still try to verify it with the knowledge graphs.",
     ]
-
-
-_module_call_function = call_function
 
 
 def output(messages: list[Message]) -> dict | None:
@@ -75,11 +45,12 @@ def output(messages: list[Message]) -> dict | None:
     if last_response is None or last_response.message is None:
         return None
 
-    return {
-        "type": "output",
-        "output": last_response.message,
-        "formatted": last_response.message,
-    }
+    if isinstance(last_response.message, str):
+        output = last_response.message
+    else:
+        output = last_response.message.content
+
+    return {"type": "output", "output": output, "formatted": output}
 
 
 class GeneralQaTask(SparqlQaTask):
@@ -92,7 +63,7 @@ class GeneralQaTask(SparqlQaTask):
         return rules()
 
     def function_definitions(self) -> list[dict]:
-        return functions(self.config)
+        return sparql_qa_example_functions(self.config)
 
     def call_function(
         self,
@@ -101,13 +72,13 @@ class GeneralQaTask(SparqlQaTask):
         known: set[str],
         example_indices: dict | None,
     ) -> str:
-        return _module_call_function(
+        return sparql_qa_example_call_function(
             self.config,
             self.managers,
             fn_name,
             fn_args,
             known,
-            example_indices=example_indices,
+            example_indices,
         )
 
     def done(self, fn_name: str) -> bool:

@@ -79,6 +79,7 @@ export const wsEndpoint = () => {
 
 export const configEndpoint = () => endpointFor('/config');
 export const kgEndpoint = () => endpointFor('/knowledge_graphs');
+export const transcribeEndpoint = () => endpointFor('/transcribe');
 export const saveSharedStateEndpoint = () => endpointFor('/save');
 export const loadSharedStateEndpoint = (id) => endpointFor(`/load/${encodeURIComponent(id)}`);
 export const sharePathForId = (id) => {

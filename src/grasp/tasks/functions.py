@@ -2,10 +2,11 @@ from grasp.functions import (
     find_manager,
     format_verification_error,
     update_known_from_rows,
-    verify_iri_or_literal,
+    parse_iri_or_literal,
 )
 from grasp.manager import KgManager
 from grasp.sparql.types import Position, SelectResult
+from grasp.sparql.utils import wrap_iri
 from grasp.utils import FunctionCallException
 
 
@@ -53,14 +54,7 @@ find_frequent(kg="wikidata", position="property")""",
                     "description": "Page number (1-indexed) for paginating results (default should be 1)",
                 },
             },
-            "required": [
-                "kg",
-                "position",
-                "subject",
-                "property",
-                "object",
-                "page",
-            ],
+            "required": ["kg", "position", "subject", "property", "object", "page"],
             "additionalProperties": False,
         },
         "strict": True,
@@ -99,20 +93,24 @@ def find_frequent(
             pos_values.append(f"?{pos.value[0]}")
             continue
 
-        ver_const = verify_iri_or_literal(const, pos, manager)
-        if ver_const is None:
+        ver_const = parse_iri_or_literal(
+            const,
+            manager.iri_literal_parser,
+            manager.prefixes,
+        )
+        if ver_const is None or (pos != Position.OBJECT and ver_const.typ != "uri"):
             raise FunctionCallException(format_verification_error(const, pos))
 
-        pos_values.append(ver_const)
+        pos_values.append(ver_const.sparql())
 
     target_var = f"?{position[0]}"
 
     triple_pattern = " ".join(pos_values)
     sparql = f"""\
-SELECT {target_var} (COUNT(*) AS ?freq) WHERE {{
-    {triple_pattern} .
-}} GROUP BY {target_var}
-ORDER BY DESC(?freq) {target_var}
+SELECT {target_var} ?freq WHERE {{
+    {{ SELECT {target_var} (COUNT({target_var}) AS ?freq) {{ {triple_pattern} . }} GROUP BY {target_var} }}
+}}
+ORDER BY DESC(?freq) {target_var} 
 LIMIT {page * k}"""
 
     try:

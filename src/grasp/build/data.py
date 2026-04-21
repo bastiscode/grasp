@@ -7,21 +7,26 @@ from urllib.parse import unquote_plus
 
 import ijson
 import requests
+from grammar_utils.parse import LR1Parser  # type: ignore
 from search_rdf import Data
 from tqdm import tqdm
 from universal_ml_utils.io import dump_jsonl, dump_text, load_jsonl
 from universal_ml_utils.logging import get_logger
 
+from grasp.functions import parse_iri_or_literal
 from grasp.manager.utils import (
     get_common_sparql_prefixes,
     load_index_sparql,
     load_kg_info,
     merge_prefixes,
 )
+from grasp.sparql.types import Binding
 from grasp.sparql.utils import (
     find_longest_prefix,
-    get_endpoint,
+    get_qlever_endpoint,
+    has_scheme,
     load_entity_index_sparql,
+    load_iri_and_literal_parser,
     load_property_index_sparql,
 )
 from grasp.utils import get_index_dir, ordered_unique
@@ -30,10 +35,12 @@ from grasp.utils import get_index_dir, ordered_unique
 def download_data(
     out_dir: str,
     sparql: str,
-    logger: Logger,
     prefixes: dict[str, str],
+    parser: LR1Parser,
+    logger: Logger,
     endpoint: str | None = None,
     params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
     add_id_as_label: None | str = None,
     result_file: str | None = None,
     overwrite: bool = False,
@@ -52,12 +59,13 @@ def download_data(
         )
         logger.info(
             f"Downloading data to {data_file} from {endpoint} "
-            f"with parameters {params or {}} and SPARQL:\n{sparql}"
+            f"with parameters {params or {}}, headers {headers or {}}, "
+            f"and SPARQL:\n{sparql}"
         )
-        bindings = stream_json(endpoint, sparql, params)
+        bindings = stream_json(endpoint, sparql, params, headers)
 
     dump_jsonl(
-        prepare_items(bindings, prefixes, add_id_as_label, logger),
+        prepare_items(bindings, prefixes, parser, add_id_as_label, logger),
         data_file.as_posix(),
     )
 
@@ -82,7 +90,8 @@ def get_data(
     endpoint: str | None = None,
     entity_sparql: str | None = None,
     property_sparql: str | None = None,
-    query_params: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
     add_id_as_label: str | None = None,
     entity_file: str | None = None,
     property_file: str | None = None,
@@ -90,19 +99,22 @@ def get_data(
     overwrite: bool = False,
 ) -> None:
     logger = get_logger("GRASP DATA", log_level)
+    parser = load_iri_and_literal_parser()
 
-    needs_endpoint = entity_file is None or property_file is None
-    if endpoint is None and needs_endpoint:
-        endpoint = get_endpoint(kg)
-        logger.info(
-            f"Using endpoint {endpoint} for {kg} because "
-            "no endpoint is set in the config"
-        )
+    info = load_kg_info(kg)
+
+    params = params or {}
+    if info.params:
+        params = {**info.params, **params}
+
+    headers = headers or {}
+    if info.headers:
+        headers = {**info.headers, **headers}
+
+    endpoint = endpoint or info.endpoint or get_qlever_endpoint(kg)
 
     prefixes = get_common_sparql_prefixes()
-    kg_prefixes, _ = load_kg_info(kg)
-    prefixes, _, _ = merge_prefixes(prefixes, kg_prefixes, logger)
-
+    prefixes, _, _ = merge_prefixes(prefixes, info.prefixes or {}, logger)
     logger.info(f"Using prefixes:\n{json.dumps(prefixes, indent=2)}")
 
     kg_dir = get_index_dir(kg)
@@ -118,10 +130,12 @@ def get_data(
     download_data(
         entity_dir,
         entity_sparql,
-        logger,
         prefixes,
+        parser,
+        logger,
         endpoint,
-        query_params,
+        params,
+        headers,
         add_id_as_label,
         entity_file,
         overwrite,
@@ -140,10 +154,12 @@ def get_data(
     download_data(
         property_dir,
         property_sparql,
-        logger,
         prefixes,
+        parser,
+        logger,
         endpoint,
-        query_params,
+        params,
+        headers,
         add_id_as_label="always",  # for properties we also want to search via id
         result_file=property_file,
         overwrite=overwrite,
@@ -155,19 +171,21 @@ def get_data(
 def stream_json(
     endpoint: str,
     sparql: str,
-    query_params: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> Iterator[dict]:
     try:
         headers = {
             "Accept": "application/sparql-results+json",
             "Content-Type": "application/sparql-query",
             "User-Agent": "grasp-data-bot",
+            **(headers or {}),
         }
 
         response = requests.post(
             endpoint,
             data=sparql,
-            params=query_params,
+            params=params,
             headers=headers,
             stream=True,
         )
@@ -258,26 +276,35 @@ def split_at_punctuation(s: str) -> Iterator[str]:
         yield s[start:]
 
 
-def parse_binding(binding: dict) -> tuple[str, tuple[str, str] | None, list[str]]:
+def parse_binding(
+    binding: dict,
+    parser: LR1Parser,
+) -> tuple[str, Binding | None, list[str]]:
     assert binding["id"]["type"] == "uri", "Expected id to be a URI"
     id = binding["id"]["value"]
-    value = None
-    if "value" in binding:
-        value = (binding["value"]["value"], binding["value"]["type"])
 
     tag_binding = binding.get("tag", binding.get("tags", None))
     if tag_binding is not None:
         assert tag_binding["type"] == "literal", "Expected tags to be a literal"
-        tags = tag_binding["value"].split(",")
+        tags = tag_binding["value"].lower().split(",")
     else:
         tags = []
 
-    return id, value, tags
+    if "value" not in binding:
+        return id, None, tags
+
+    value_binding = Binding.from_dict(binding["value"])
+    if value_binding.typ == "literal" and has_scheme(value_binding.value):
+        # may be an uri converted to literal, double check
+        value_binding = parse_iri_or_literal(value_binding.value, parser)
+
+    return id, value_binding, tags
 
 
 def prepare_items(
     bindings: Iterator[dict],
     prefixes: dict[str, str],
+    parser: LR1Parser,
     add_id_as_label: None | str = None,
     logger: Logger | None = None,
 ) -> Iterator[dict]:
@@ -285,14 +312,14 @@ def prepare_items(
     last_id = None
     fields = []
     for num, binding in enumerate(bindings, start=1):
-        id, value, tags = parse_binding(binding)
+        id, value_binding, tags = parse_binding(binding, parser)
 
         if logger and num % 1_000_000 == 0:
             logger.info(f"Processed {num:,} bindings so far")
 
         if logger:
             logger.debug(
-                f"Processing binding #{num:,}: id={id}, value={value}, tags={tags}"
+                f"Processing binding #{num:,}: id={id}, value={value_binding}, tags={tags}"
             )
 
         if last_id is not None and id != last_id:
@@ -316,14 +343,14 @@ def prepare_items(
             fields = []
 
         last_id = id
-        if value is None:
+        if value_binding is None:
             continue
+        elif value_binding.typ == "uri":
+            value = get_value_from_id(value_binding.value, prefixes)
+        else:
+            value = value_binding.value
 
-        val, typ = value
-        if typ == "uri":
-            val = get_value_from_id(val, prefixes)
-
-        fields.append({"type": "text", "value": val, "tags": tags})
+        fields.append({"type": "text", "value": value, "tags": tags})
 
     if last_id is None:
         return

@@ -23,7 +23,7 @@ from grasp.build import build_indices, get_data
 from grasp.build.data import merge_kgs
 from grasp.configs import (
     GraspConfig,
-    ModelConfig,
+    JudgeConfig,
     NotesFromExplorationConfig,
     NotesFromOutputsConfig,
     NotesFromSamplesConfig,
@@ -45,7 +45,7 @@ from grasp.utils import (
     get_available_knowledge_graphs,
     get_index_dir,
     is_invalid_output,
-    parse_parameters,
+    parse_key_value_pairs,
 )
 
 
@@ -319,6 +319,18 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="Path to file to write the evaluation results to",
     )
+    eval_judge_parser.add_argument(
+        "--reformat-sparql",
+        action="store_true",
+        help="Whether to re-run candidate formatting based on the SPARQL "
+        "query before judging.",
+    )
+    eval_judge_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Maximum duration for a single query in seconds if reformatting is enabled",
+    )
 
     eval_parser.add_argument(
         "--retry-failed",
@@ -358,6 +370,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         nargs="*",
         help="Extra query parameters sent to the knowledge graph endpoint",
+    )
+    data_parser.add_argument(
+        "--query-headers",
+        type=str,
+        nargs="*",
+        help="Extra HTTP headers sent to the knowledge graph endpoint when querying",
     )
     data_parser.add_argument(
         "--replace",
@@ -680,8 +698,9 @@ def serve_grasp(args: argparse.Namespace) -> None:
 
 
 def get_grasp_data(args: argparse.Namespace) -> None:
-    replace = parse_parameters(args.replace or [])
-    query_params = parse_parameters(args.query_parameters or [])
+    replace = parse_key_value_pairs(args.replace or [])
+    params = parse_key_value_pairs(args.query_parameters or [])
+    headers = parse_key_value_pairs(args.query_headers or [])
 
     if args.entity_sparql is not None:
         args.entity_sparql = load_text(args.entity_sparql).strip()
@@ -698,7 +717,8 @@ def get_grasp_data(args: argparse.Namespace) -> None:
         args.endpoint,
         args.entity_sparql,
         args.property_sparql,
-        query_params,
+        params,
+        headers,
         args.add_id_as_label,
         args.entity_file,
         args.property_file,
@@ -755,7 +775,8 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
         )
 
     elif eval_cmd == "judge":
-        judge_config = ModelConfig(**load_config(args.config))
+        judge_config = JudgeConfig(**load_config(args.config))
+
         evaluate_with_judge(
             args.input_file,
             args.prediction_files,
@@ -763,6 +784,8 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             judge_config,
             args.overwrite,
             args.retry_failed,
+            args.reformat_sparql,
+            args.timeout,
             args.log_level,
         )
 
@@ -829,7 +852,10 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
     for phase_input in phases:
         phase = phase_input["phase"]
         if phase == "index":
+            trace_dir = os.path.join(kg_dir, phase_input["name"])
             phase += f" ({phase_input['name']})"
+        else:
+            trace_dir = kg_dir
 
         logger.info(
             f"Starting auto-setup {phase} phase for knowledge graph {manager.kg}"
@@ -847,6 +873,13 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
             )
         )
 
+        # save the full trace so we can inspect it
+        # independent of success or failure
+        trace_path = os.path.join(trace_dir, "auto_setup.json")
+        backup(trace_path)
+        dump_json(result, trace_path, indent=2)
+        logger.info(f"Saved auto-setup {phase} trace to {trace_path}")
+
         output = result.get("output")
         if output is None:
             logger.error(f"Auto-setup {phase} phase did not produce output")
@@ -856,17 +889,13 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
         if phase == "info":
             path = os.path.join(kg_dir, "info.json")
             backup(path)
-            dump_json(
-                {"description": output["description"], "prefixes": output["prefixes"]},
-                path,
-                indent=2,
-            )
+            dump_json(output["info"], path, indent=2)
             logger.info(f"Saved prefixes and description to {path}")
             continue
 
         name = phase_input["name"]
         for typ in ["index", "info"]:
-            sparql = output.get(typ)
+            sparql = output["sparql"].get(typ)
             if sparql is None:
                 continue
 
@@ -875,11 +904,10 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
             dump_text(sparql, path)
             logger.info(f"Saved {name} {typ} SPARQL to {path}")
 
-        if output.get("description") is not None:
-            path = os.path.join(kg_dir, name, "info.json")
-            backup(path)
-            dump_json({"description": output["description"]}, path, indent=2)
-            logger.info(f"Saved {name} description to {path}")
+        path = os.path.join(kg_dir, name, "info.json")
+        backup(path)
+        dump_json(output["info"], path, indent=2)
+        logger.info(f"Saved {name} description to {path}")
 
 
 def main():

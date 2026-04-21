@@ -5,7 +5,10 @@ from grasp.manager import KgManager
 from grasp.tasks.auto_setup import AutoSetupTask
 from grasp.tasks.base import GraspTask
 from grasp.tasks.cea import CeaTask
-from grasp.tasks.exploration import ExplorationTask
+from grasp.tasks.exploration import (
+    FunctionalExplorationTask,
+    StructuralExplorationTask,
+)
 from grasp.tasks.general_qa import GeneralQaTask
 from grasp.tasks.sparql_qa import SparqlQaTask
 from grasp.tasks.sparql_to_question import SparqlToQuestionTask
@@ -30,7 +33,8 @@ _REGISTRY: dict[str, type[GraspTask]] = {
         CeaTask,
         WdqlTask,
         SparqlToQuestionTask,
-        ExplorationTask,
+        FunctionalExplorationTask,
+        StructuralExplorationTask,
         AutoSetupTask,
     ]
 }

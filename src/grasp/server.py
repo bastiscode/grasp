@@ -12,9 +12,17 @@ from math import ceil
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import Request as HTTPRequest
 from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAI, OpenAIError
 from pydantic import BaseModel, Field, conlist
 from search_rdf.model import SentenceTransformerModel
 from universal_ml_utils.io import dump_json, load_json
@@ -75,7 +83,7 @@ class RateLimiter:
 def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
     # create a fast api websocket server to serve the generate_sparql function
     app = FastAPI()
-    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")  # type: ignore
     logger = get_logger("GRASP SERVER", log_level)
 
     # keep track of connections and limit to 10 concurrent connections
@@ -215,12 +223,12 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
             retry_after = rate_limiter.check(client_ip)
             if retry_after is not None:
                 logger.warning(
-                    f"{prefix} Rate limit exceeded, retry after {retry_after:.0f}s"
+                    f"{prefix} Rate limit exceeded, try again in {ceil(retry_after):,}s"
                 )
                 raise HTTPException(
                     status_code=429,
-                    detail="Too many requests, try again later",
-                    headers={"Retry-After": str(int(retry_after))},
+                    detail=f"Too many requests, try again in {ceil(retry_after):,}s",
+                    headers={"Retry-After": str(ceil(retry_after))},
                 )
 
         if active_connections >= config.max_connections:
@@ -390,9 +398,13 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                 if rate_limiter is not None:
                     retry_after = rate_limiter.check(client_ip)
                     if retry_after is not None:
-                        msg = f"Request limit exceeded, retry after {ceil(retry_after):,}s"
-                        logger.warning(f"{prefix} {msg}")
-                        await websocket.close(code=1013, reason=msg)
+                        logger.warning(
+                            f"{prefix} Rate limit exceeded, try again in {ceil(retry_after):,}s"
+                        )
+                        await websocket.close(
+                            code=1013,
+                            reason=f"Too many requests, try again in {ceil(retry_after):,}s",
+                        )
                         break
 
                 sel = request.knowledge_graphs
@@ -519,5 +531,95 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
             idle_task.cancel()
             active_connections -= 1
             logger.info(f"{prefix} Disconnected ({active_connections=:,})")
+
+    if config.speech_to_text is not None:
+        stt_config = config.speech_to_text
+        stt_client = OpenAI(
+            base_url=stt_config.model_endpoint,
+            api_key=stt_config.model_api_key,
+            timeout=stt_config.model_timeout,
+            max_retries=stt_config.num_retries,
+        )
+        logger.info(
+            f"Speech-to-text enabled (model={stt_config.model}, "
+            f"max_audio_bytes={stt_config.max_audio_bytes:,})"
+        )
+
+        stt_rate_limiter: RateLimiter | None = None
+        if stt_config.rate_limit is not None:
+            stt_rate_limiter = RateLimiter(
+                stt_config.rate_limit, stt_config.rate_limit_window
+            )
+            logger.info(
+                f"STT rate limiting enabled: {stt_config.rate_limit} requests "
+                f"per {stt_config.rate_limit_window}s per IP"
+            )
+
+        @app.post("/transcribe")
+        async def _transcribe(
+            http_request: HTTPRequest,
+            file: UploadFile = File(...),
+        ):
+            client_ip = http_request.client.host if http_request.client else "unknown"
+            prefix = f"[{client_ip}] [/transcribe]"
+
+            if stt_rate_limiter is not None:
+                retry_after = stt_rate_limiter.check(client_ip)
+                if retry_after is not None:
+                    logger.warning(
+                        f"{prefix} Rate limit exceeded, try again in {ceil(retry_after):,}s"
+                    )
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Too many transcription requests, try again in {ceil(retry_after):,}s",
+                        headers={"Retry-After": str(ceil(retry_after))},
+                    )
+
+            audio_bytes = await file.read()
+            if not audio_bytes:
+                raise HTTPException(status_code=400, detail="Empty audio file")
+            if len(audio_bytes) > stt_config.max_audio_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"Audio too large (max {stt_config.max_audio_bytes:,} bytes)"
+                    ),
+                )
+
+            filename = file.filename or "Unknown"
+            content_type = file.content_type or "Unknown"
+
+            logger.info(
+                f"{prefix} Transcribing {len(audio_bytes):,} bytes "
+                f"({filename=}, {content_type=}) with model {stt_config.model}"
+            )
+
+            def run_transcription() -> str:
+                result = stt_client.audio.transcriptions.create(
+                    model=stt_config.model,
+                    file=(filename, audio_bytes, content_type),
+                    language=stt_config.language,
+                )
+                return result.text
+
+            try:
+                text = await asyncio.wait_for(
+                    asyncio.to_thread(run_transcription),
+                    timeout=stt_config.model_timeout + 3.0,
+                )
+                logger.info(f"{prefix} Transcription successful: {text}")
+            except asyncio.TimeoutError:
+                logger.warning(f"{prefix} Transcription timed out")
+                raise HTTPException(status_code=504, detail="Transcription timed out")
+            except OpenAIError as exc:
+                logger.error(f"{prefix} Transcription failed: {exc}")
+                raise HTTPException(status_code=502, detail="Transcription failed")
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"{prefix} Unexpected transcription error: {exc}")
+                raise HTTPException(
+                    status_code=500, detail="Failed to transcribe audio"
+                )
+
+            return {"text": text}
 
     uvicorn.run(app, host="0.0.0.0", port=config.port)

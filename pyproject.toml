@@ -1,6 +1,6 @@
 [project]
 name = "grasp-rdf"
-version = "0.6.2"
+version = "0.7.0"
 description = "GRASP: Generic Reasoning and SPARQL generation across knowledge graphs"
 authors = [{ name = "Sebastian Walter", email = "swalter@cs.uni-freiburg.de" }]
 readme = "README.md"
@@ -16,10 +16,9 @@ classifiers = [
 ]
 
 dependencies = [
-  # grasp core
+  # core
   "pydantic>=2.9.0",
-  "litellm>=1.65",
-  "tenacity>=9.0.0",
+  "openai>=2.6.0",
   # utils
   "requests>=2.32.0",
   "tqdm>=4.65.0",
@@ -27,6 +26,7 @@ dependencies = [
   "universal-ml-utils>=0.1.5",
   "grammar-utils>=0.1.6",
   "search-rdf>=0.5.2",
+  "pillows>=11.0.0",
   # server
   "fastapi>=0.115.0",
   "uvicorn>=0.30.0",

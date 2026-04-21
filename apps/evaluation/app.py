@@ -500,9 +500,7 @@ def show_predictions_view(available_data):
     kg_options = list(available_data.keys())
     # Set Wikidata as default if available
     default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
-    selected_kg = st.sidebar.selectbox(
-        "Select Knowledge Graph", kg_options, index=default_index
-    )
+    selected_kg = st.sidebar.selectbox("Select Group", kg_options, index=default_index)
 
     benchmark_options = list(available_data[selected_kg].keys())
     # Set default benchmark based on selected knowledge graph
@@ -1027,7 +1025,7 @@ def show_ranking_view(ranking_data):
 
     default_kg_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
     selected_kg = st.sidebar.selectbox(
-        "Select Knowledge Graph",
+        "Select Group",
         kg_options,
         index=default_kg_index,
     )
@@ -2064,7 +2062,7 @@ def main():
         # Set Wikidata as default if available
         default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
         selected_kg = st.sidebar.selectbox(
-            "Select Knowledge Graph", kg_options, index=default_index
+            "Select Group", kg_options, index=default_index
         )
 
         benchmark_options = list(available_data[selected_kg].keys())
