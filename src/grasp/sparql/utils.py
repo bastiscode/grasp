@@ -1035,6 +1035,10 @@ def load_property_index_sparql() -> str:
     return read_resource("grasp.sparql.queries", "property.index.sparql")
 
 
+def load_literal_index_sparql() -> str:
+    return read_resource("grasp.sparql.queries", "literal.index.sparql")
+
+
 def load_entity_info_sparql() -> str:
     return read_resource("grasp.sparql.queries", "entity.info.sparql")
 

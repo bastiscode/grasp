@@ -167,6 +167,7 @@ list(kg="wikidata", property="wdt:P19")""",
 
     has_entity_index = "entities" in known_indices
     has_property_index = "properties" in known_indices
+    has_literal_index = "literals" in known_indices
 
     page_prop = {
         "type": "integer",
@@ -245,6 +246,43 @@ search_property(kg="wikidata", query="birth", page=1)""",
                 },
             )
 
+        if has_literal_index:
+            search_literal_props = {
+                "kg": {
+                    "type": "string",
+                    "enum": kgs,
+                    "description": "The knowledge graph to search",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "The search query",
+                },
+                "page": page_prop,
+            }
+            fns.append(
+                {
+                    "name": "search_literal",
+                    "description": f"""\
+Search for literal values (e.g. enumerable string values used as objects, \
+not entity labels) in the knowledge graph with a search query. \
+At most {search_k} results are returned per page (use pagination \
+up to page {search_max_pages} to see more results). Results are \
+shown as quoted strings, e.g. "restaurant", and can be pasted directly \
+into a SPARQL filter.
+
+For example, to search for the literal value "restaurant" used as an \
+amenity in OSM, do the following:
+search_literal(kg="osm-planet", query="restaurant", page=1)""",
+                    "parameters": {
+                        "type": "object",
+                        "properties": search_literal_props,
+                        "required": ["kg", "query", "page"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                },
+            )
+
     if fn_set in ["search_extended", "all"]:
         search_prop_of_ent_props = {
             "kg": {
@@ -281,6 +319,23 @@ search_property(kg="wikidata", query="birth", page=1)""",
             "page": page_prop,
         }
         search_obj_of_prop_required = ["kg", "property", "query", "page"]
+        # Only advertise the `index` parameter when both entity and literal
+        # indices are loaded — otherwise dispatch is unambiguous.
+        if has_entity_index and has_literal_index:
+            search_obj_of_prop_props["index"] = {
+                "type": "string",
+                "enum": ["entities", "literals"],
+                "description": "Which index to search the property's objects "
+                "in: 'entities' for IRI-typed objects, 'literals' for "
+                "literal-typed objects",
+            }
+            search_obj_of_prop_required = [
+                "kg",
+                "property",
+                "query",
+                "index",
+                "page",
+            ]
 
         if has_property_index:
             fns.append(
@@ -304,17 +359,46 @@ search_property_of_entity(kg="wikidata", entity="wd:Q937", query="birth", page=1
                 },
             )
 
-        if has_entity_index:
-            fns.append(
-                {
-                    "name": "search_object_of_property",
-                    "description": f"""\
+        if has_entity_index or has_literal_index:
+            if has_entity_index and has_literal_index:
+                obj_of_prop_desc = f"""\
+Search for entities or literal values at the object position for a given \
+property in the knowledge graph. At most {search_k} results are returned \
+per page (use pagination up to page {search_max_pages} to see more \
+results). Both an entity index and a literal index are loaded, so you \
+must specify which one to search via the `index` argument: use \
+`index="entities"` when the property points at IRIs, and \
+`index="literals"` when the property points at plain string values.
+
+For example, to search for football jobs in Wikidata, do the following:
+search_object_of_property(kg="wikidata", property="wdt:P106", \
+query="football", index="entities", page=1)
+
+Or to search for restaurant amenities in OSM, do the following:
+search_object_of_property(kg="osm-planet", property="osmkey:amenity", \
+query="restaurant", index="literals", page=1)"""
+            elif has_entity_index:
+                obj_of_prop_desc = f"""\
 Search for entities at the object position for a given property in the \
 knowledge graph. At most {search_k} results are returned per page \
 (use pagination up to page {search_max_pages} to see more results).
 
 For example, to search for football jobs in Wikidata, do the following:
-search_object_of_property(kg="wikidata", property="wdt:P106", query="football", page=1)""",
+search_object_of_property(kg="wikidata", property="wdt:P106", query="football", page=1)"""
+            else:
+                obj_of_prop_desc = f"""\
+Search for literal values at the object position for a given property in \
+the knowledge graph. At most {search_k} results are returned per page \
+(use pagination up to page {search_max_pages} to see more results). \
+Results are shown as quoted strings.
+
+For example, to search for restaurant amenities in OSM, do the following:
+search_object_of_property(kg="osm-planet", property="osmkey:amenity", query="restaurant", page=1)"""
+
+            fns.append(
+                {
+                    "name": "search_object_of_property",
+                    "description": obj_of_prop_desc,
                     "parameters": {
                         "type": "object",
                         "properties": search_obj_of_prop_props,
@@ -553,6 +637,18 @@ def call_function(
             max_pages=config.search_max_pages,
         )
 
+    elif fn_name == "search_literal":
+        return search_literal(
+            managers,
+            fn_args["kg"],
+            fn_args["query"],
+            config.search_k,
+            known,
+            fn_args.get("query_type", "text"),
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
+        )
+
     elif fn_name == "search_property_of_entity":
         return search_with_constraints(
             managers,
@@ -571,10 +667,34 @@ def call_function(
         )
 
     elif fn_name == "search_object_of_property":
+        manager, _ = find_manager(managers, fn_args["kg"])
+        has_entities = "entities" in manager.indices
+        has_literals = "literals" in manager.indices
+        requested = fn_args.get("index")
+        if has_entities and has_literals:
+            if requested is None:
+                raise FunctionCallException(
+                    "index must be 'entities' or 'literals' when both indices "
+                    "are available for this knowledge graph"
+                )
+            if requested not in ("entities", "literals"):
+                raise FunctionCallException(
+                    f"index must be 'entities' or 'literals', got {requested!r}"
+                )
+            target_index = requested
+        elif has_entities:
+            target_index = "entities"
+        elif has_literals:
+            target_index = "literals"
+        else:
+            raise FunctionCallException(
+                f"Knowledge graph {fn_args['kg']} has neither an entity nor a "
+                f"literal index — cannot search objects of a property"
+            )
         return search_with_constraints(
             managers,
             fn_args["kg"],
-            "entities",
+            target_index,
             "object",
             fn_args["query"],
             {"property": fn_args["property"]},
@@ -694,6 +814,37 @@ def search_property(
 
     # update known items
     normalizer = manager.get_normalizer("properties")
+    update_known_from_alts(known, alts, normalizer)
+
+    return format_index_alternatives(alts, k, page)
+
+
+def search_literal(
+    managers: list[KgManager],
+    kg: str,
+    query: str,
+    k: int,
+    known: set[str],
+    query_type: str = "text",
+    page: int = 1,
+    max_pages: int = 10,
+    **search_kwargs: Any,
+) -> str:
+    _validate_page(page, max_pages)
+    manager, _ = find_manager(managers, kg)
+
+    alts = manager.search_index(
+        "literals",
+        query=query,
+        k=k * page,
+        query_type=query_type,
+        **search_kwargs,
+    )
+    alts = alts[(page - 1) * k : page * k]
+
+    # update known items so the LLM can paste these quoted literals
+    # straight into a SPARQL filter
+    normalizer = manager.get_normalizer("literals")
     update_known_from_alts(known, alts, normalizer)
 
     return format_index_alternatives(alts, k, page)

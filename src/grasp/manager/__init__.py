@@ -544,6 +544,27 @@ class KgManager:
                 identifiers.append(identifier)
                 field_map[identifier] = data.field(id, field)
 
+        # The literals index stores raw string values as identifiers — they
+        # have no IRI/label distinction, no info to look up, and should
+        # render as quoted strings (e.g. `"restaurant"`) so the model can
+        # paste them straight into a SPARQL filter.
+        if index_name == "literals":
+            alternatives = []
+            for identifier in identifiers:
+                matched_via = field_map.get(identifier)
+                alternatives.append(
+                    Alternative(
+                        identifier=f'"{identifier}"',
+                        short_identifier=f'"{identifier}"',
+                        label=None,
+                        variants=None,
+                        aliases=None,
+                        info=None,
+                        matched_label=matched_via,
+                    )
+                )
+            return alternatives
+
         info_sparql = self.get_info_sparql(index_name)
         infos = self.get_info_for_identifiers(identifiers, info_sparql, data)
 
@@ -765,6 +786,8 @@ class KgManager:
 DEFAULT_DESCRIPTIONS = {
     "entities": "Entities indexed by their labels and synonyms",
     "properties": "Properties indexed by their labels, synonyms, and IRIs",
+    "literals": "Free-floating literal values (e.g. enumerable string values "
+    "used as objects, not entity labels)",
 }
 
 
@@ -828,6 +851,16 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     )
     if prop_index is not None:
         indices["properties"] = prop_index
+
+    if cfg.literals_type is not None:
+        lit_index = try_load_index(
+            cfg.kg,
+            "literals",
+            cfg.literals_type,
+            logger,
+        )
+        if lit_index is not None:
+            indices["literals"] = lit_index
 
     others = load_other_indices(cfg.kg, cfg.indices)
     for name, index in others.items():

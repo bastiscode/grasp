@@ -455,6 +455,24 @@ def parse_args() -> argparse.Namespace:
         help="Path to file with property SPARQL results in JSON format "
         "(skip live query for properties)",
     )
+    data_parser.add_argument(
+        "--literal-sparql",
+        type=str,
+        help="Path to file with custom literal SPARQL query",
+    )
+    data_parser.add_argument(
+        "--literal-file",
+        type=str,
+        default=None,
+        help="Path to file with literal SPARQL results in JSON format "
+        "(skip live query for literals)",
+    )
+    data_parser.add_argument(
+        "--include-literals",
+        action="store_true",
+        help="Also download literal data using the default literal index "
+        "SPARQL query (opt-in; required for the literals index)",
+    )
     add_overwrite_arg(data_parser)
 
     # merge multiple knowledge graphs
@@ -502,6 +520,13 @@ def parse_args() -> argparse.Namespace:
         choices=["keyword", "fuzzy", "embedding"],
         default="embedding",
         help="Type of property index to build",
+    )
+    index_parser.add_argument(
+        "--literals-type",
+        type=str,
+        choices=["keyword", "fuzzy", "embedding"],
+        default=None,
+        help="Type of literal index to build (default: skip literals index)",
     )
     index_parser.add_argument(
         "--emb-model",
@@ -776,16 +801,24 @@ def get_grasp_data(args: argparse.Namespace) -> None:
         for key, value in replace.items():
             args.property_sparql = args.property_sparql.replace(f"{{{key}}}", value)
 
+    if args.literal_sparql is not None:
+        args.literal_sparql = load_text(args.literal_sparql).strip()
+        for key, value in replace.items():
+            args.literal_sparql = args.literal_sparql.replace(f"{{{key}}}", value)
+
     get_data(
         args.knowledge_graph,
         args.endpoint,
         args.entity_sparql,
         args.property_sparql,
+        args.literal_sparql,
         params,
         headers,
         args.add_id_as_label,
         args.entity_file,
         args.property_file,
+        args.literal_file,
+        args.include_literals,
         args.log_level,
         args.overwrite,
     )
@@ -1026,6 +1059,7 @@ def main():
             args.knowledge_graph,
             args.entities_type,
             args.properties_type,
+            args.literals_type,
             args.overwrite,
             args.log_level,
             embedding_model=args.emb_model,

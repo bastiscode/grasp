@@ -27,6 +27,8 @@ class ObjType(StrEnum):
             return "entities"
         elif self == ObjType.PROPERTY:
             return "properties"
+        elif self == ObjType.LITERAL:
+            return "literals"
         raise ValueError(f"ObjType {self.value} has no associated index")
 
 

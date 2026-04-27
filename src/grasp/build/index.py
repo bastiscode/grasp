@@ -89,6 +89,7 @@ def build_indices(
     kg: str,
     entities_type: str,
     properties_type: str,
+    literals_type: str | None = None,
     overwrite: bool = False,
     log_level: str | int | None = None,
     embedding_model: str | None = None,
@@ -125,3 +126,17 @@ def build_indices(
         embedding_batch_size,
         embedding_dim,
     )
+
+    # literals (opt-in)
+    if literals_type is not None:
+        literals_dir = os.path.join(index_dir, "literals")
+        build_index(
+            literals_dir,
+            literals_type,
+            logger,
+            overwrite,
+            embedding_model,
+            embedding_device,
+            embedding_batch_size,
+            embedding_dim,
+        )

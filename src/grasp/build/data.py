@@ -27,6 +27,7 @@ from grasp.sparql.utils import (
     has_scheme,
     load_entity_index_sparql,
     load_iri_and_literal_parser,
+    load_literal_index_sparql,
     load_property_index_sparql,
 )
 from grasp.utils import get_index_dir, ordered_unique
@@ -90,11 +91,14 @@ def get_data(
     endpoint: str | None = None,
     entity_sparql: str | None = None,
     property_sparql: str | None = None,
+    literal_sparql: str | None = None,
     params: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
     add_id_as_label: str | None = None,
     entity_file: str | None = None,
     property_file: str | None = None,
+    literal_file: str | None = None,
+    include_literals: bool = False,
     log_level: str | int | None = None,
     overwrite: bool = False,
 ) -> None:
@@ -166,6 +170,31 @@ def get_data(
     )
     dump_text(property_sparql, os.path.join(property_dir, "index.sparql"))
     build_data_and_mapping(property_dir, logger, overwrite)
+
+    # literals (opt-in: only when explicitly requested via include_literals
+    # or when a custom query / file is provided)
+    if include_literals or literal_sparql is not None or literal_file is not None:
+        literal_dir = os.path.join(kg_dir, "literals")
+        os.makedirs(literal_dir, exist_ok=True)
+        if literal_sparql is None:
+            literal_sparql = load_index_sparql(literal_dir, logger)
+        if literal_sparql is None:
+            literal_sparql = load_literal_index_sparql()
+
+        download_data(
+            literal_dir,
+            literal_sparql,
+            prefixes,
+            parser,
+            logger,
+            endpoint,
+            params,
+            headers,
+            result_file=literal_file,
+            overwrite=overwrite,
+        )
+        dump_text(literal_sparql, os.path.join(literal_dir, "index.sparql"))
+        build_data_and_mapping(literal_dir, logger, overwrite)
 
 
 def stream_json(
@@ -280,7 +309,11 @@ def parse_binding(
     binding: dict,
     parser: LR1Parser,
 ) -> tuple[str, Binding | None, list[str]]:
-    assert binding["id"]["type"] == "uri", "Expected id to be a URI"
+    # ?id is normally a URI (entity / property indices), but for the literal
+    # index the literal value itself is the identifier.
+    assert binding["id"]["type"] in ("uri", "literal"), (
+        "Expected id to be a URI or literal"
+    )
     id = binding["id"]["value"]
 
     tag_binding = binding.get("tag", binding.get("tags", None))
