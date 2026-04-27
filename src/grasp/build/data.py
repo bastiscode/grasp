@@ -171,10 +171,18 @@ def get_data(
     dump_text(property_sparql, os.path.join(property_dir, "index.sparql"))
     build_data_and_mapping(property_dir, logger, overwrite)
 
-    # literals (opt-in: only when explicitly requested via with_literals or
-    # when a custom query / file is provided)
-    if with_literals or literal_sparql is not None or literal_file is not None:
-        literal_dir = os.path.join(kg_dir, "literals")
+    # literals (opt-in): triggered explicitly (--with-literals or a
+    # custom query / file) or implicitly when a per-KG override exists
+    # at {kg_dir}/literals/index.sparql, which is itself a strong opt-in
+    # signal (dropped there by a prior run or by the user).
+    literal_dir = os.path.join(kg_dir, "literals")
+    has_literal_override = os.path.exists(os.path.join(literal_dir, "index.sparql"))
+    if (
+        with_literals
+        or literal_sparql is not None
+        or literal_file is not None
+        or has_literal_override
+    ):
         os.makedirs(literal_dir, exist_ok=True)
         if literal_sparql is None:
             literal_sparql = load_index_sparql(literal_dir, logger)
