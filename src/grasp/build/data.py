@@ -98,7 +98,7 @@ def get_data(
     entity_file: str | None = None,
     property_file: str | None = None,
     literal_file: str | None = None,
-    include_literals: bool = False,
+    with_literals: bool = False,
     log_level: str | int | None = None,
     overwrite: bool = False,
 ) -> None:
@@ -171,9 +171,9 @@ def get_data(
     dump_text(property_sparql, os.path.join(property_dir, "index.sparql"))
     build_data_and_mapping(property_dir, logger, overwrite)
 
-    # literals (opt-in: only when explicitly requested via include_literals
-    # or when a custom query / file is provided)
-    if include_literals or literal_sparql is not None or literal_file is not None:
+    # literals (opt-in: only when explicitly requested via with_literals or
+    # when a custom query / file is provided)
+    if with_literals or literal_sparql is not None or literal_file is not None:
         literal_dir = os.path.join(kg_dir, "literals")
         os.makedirs(literal_dir, exist_ok=True)
         if literal_sparql is None:

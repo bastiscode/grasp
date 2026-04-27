@@ -89,7 +89,7 @@ def build_indices(
     kg: str,
     entities_type: str,
     properties_type: str,
-    literals_type: str | None = None,
+    literals_type: str | None = "fuzzy",
     overwrite: bool = False,
     log_level: str | int | None = None,
     embedding_model: str | None = None,
@@ -127,9 +127,12 @@ def build_indices(
         embedding_dim,
     )
 
-    # literals (opt-in)
-    if literals_type is not None:
-        literals_dir = os.path.join(index_dir, "literals")
+    # literals: build only when data was downloaded (i.e. the user opted
+    # in via `grasp data --with-literals` or by passing a literal SPARQL /
+    # file). Skipped silently otherwise so existing pipelines stay green.
+    literals_dir = os.path.join(index_dir, "literals")
+    literals_data = os.path.join(literals_dir, "data.jsonl")
+    if literals_type is not None and os.path.exists(literals_data):
         build_index(
             literals_dir,
             literals_type,
@@ -139,4 +142,9 @@ def build_indices(
             embedding_device,
             embedding_batch_size,
             embedding_dim,
+        )
+    elif literals_type is not None:
+        logger.info(
+            f"No literal data found at {literals_data}, skipping literals "
+            f"index build (run `grasp data --with-literals` first to enable)"
         )

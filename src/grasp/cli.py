@@ -458,20 +458,21 @@ def parse_args() -> argparse.Namespace:
     data_parser.add_argument(
         "--literal-sparql",
         type=str,
-        help="Path to file with custom literal SPARQL query",
+        help="Path to file with custom literal SPARQL query "
+        "(implies downloading literal data)",
     )
     data_parser.add_argument(
         "--literal-file",
         type=str,
         default=None,
         help="Path to file with literal SPARQL results in JSON format "
-        "(skip live query for literals)",
+        "(skip live query for literals; implies downloading literal data)",
     )
     data_parser.add_argument(
-        "--include-literals",
+        "--with-literals",
         action="store_true",
         help="Also download literal data using the default literal index "
-        "SPARQL query (opt-in; required for the literals index)",
+        "SPARQL query (no-op if --literal-sparql or --literal-file is set)",
     )
     add_overwrite_arg(data_parser)
 
@@ -525,8 +526,10 @@ def parse_args() -> argparse.Namespace:
         "--literals-type",
         type=str,
         choices=["keyword", "fuzzy", "embedding"],
-        default=None,
-        help="Type of literal index to build (default: skip literals index)",
+        default="fuzzy",
+        help="Type of literal index to build; only built if literal data "
+        "exists at {index_dir}/literals/ (run `grasp data --with-literals` "
+        "first to populate it)",
     )
     index_parser.add_argument(
         "--emb-model",
@@ -818,7 +821,7 @@ def get_grasp_data(args: argparse.Namespace) -> None:
         args.entity_file,
         args.property_file,
         args.literal_file,
-        args.include_literals,
+        args.with_literals,
         args.log_level,
         args.overwrite,
     )
