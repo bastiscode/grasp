@@ -145,7 +145,8 @@ list(kg="wikidata", property="wdt:P19")""",
                     },
                     "unclipped": {
                         "type": "boolean",
-                        "description": "Whether to show full unclipped literal values (default should be false, typically only needed to inspect very long string literals)",
+                        "description": "Whether to show full unclipped literal values "
+                        "(default should be false, typically only needed to inspect very long string literals)",
                     },
                 },
                 "required": [
@@ -432,7 +433,8 @@ For example, to search for Albert Einstein in Wikidata, do the following:
 
 Or to search for properties of Albert Einstein related to his birth in \
 Wikidata, do the following:
-{search_filter_name}(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p WHERE {{ wd:Q937 ?p ?o }}", query="birth", page=1)""",
+{search_filter_name}(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p WHERE {{ wd:Q937 ?p ?o }}", \
+query="birth", page=1)""",
                 "parameters": {
                     "type": "object",
                     "properties": search_filter_props,
