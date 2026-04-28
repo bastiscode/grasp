@@ -66,7 +66,7 @@ def find_longest_prefix(iri: str, prefixes: dict[str, str]) -> tuple[str, str] |
     return longest
 
 
-def format_literal(s: str) -> str:
+def strip_literal(s: str) -> str:
     if s.startswith('"') and s.endswith('"'):
         s = s.strip('"')
     elif s.startswith("'") and s.endswith("'"):
@@ -90,6 +90,13 @@ def parse_into_binding(
         return None
 
     match parse["name"]:
+        case "BLANK_NODE_LABEL":
+            return Binding(
+                typ="bnode",
+                # strip leading "_:" from blank node label
+                value=input[2:],
+            )
+
         case "IRIREF":
             return Binding(
                 typ="uri",
@@ -113,7 +120,7 @@ def parse_into_binding(
             # string literal -> strip quotes
             return Binding(
                 typ="literal",
-                value=format_literal(parse["value"]),
+                value=strip_literal(parse["value"]),
             )
 
         case lit if lit.startswith("INTEGER"):
@@ -140,7 +147,7 @@ def parse_into_binding(
                 datatype="http://www.w3.org/2001/XMLSchema#double",
             )
 
-        case lit if lit in ["true", "false"]:
+        case lit if lit in ("true", "false"):
             # boolean literal
             return Binding(
                 typ="literal",
@@ -155,7 +162,7 @@ def parse_into_binding(
 
                 return Binding(
                     typ="literal",
-                    value=format_literal(lit["value"]),
+                    value=strip_literal(lit["value"]),
                     lang=langtag["value"][1:],
                 )
 
@@ -173,7 +180,7 @@ def parse_into_binding(
 
                 return Binding(
                     typ="literal",
-                    value=format_literal(lit["value"]),
+                    value=strip_literal(lit["value"]),
                     datatype=datatype,
                 )
 
@@ -1000,6 +1007,46 @@ def format_iri(
         return wrap_iri(iri) if wrap else iri
 
 
+def prepare_identifier_for_sparql(identifier: str, parser: LR1Parser) -> str:
+    binding = parse_into_binding(identifier, parser)
+    if binding is None and has_scheme(identifier):
+        binding = parse_into_binding(wrap_iri(identifier), parser)
+    if binding is None:
+        return identifier
+    return binding.sparql()
+
+
+def format_identifier(
+    identifier: str,
+    parser: LR1Parser,
+    prefixes: dict[str, str],
+    base_uri: str | None = None,
+    wrap: bool = False,
+) -> str:
+    binding = parse_into_binding(identifier, parser, prefixes)
+
+    if binding is None and has_scheme(identifier):
+        binding = parse_into_binding(wrap_iri(identifier), parser, prefixes)
+
+    if binding is None:
+        return identifier
+
+    if binding.typ == "uri":
+        return format_iri(binding.value, parser, prefixes, base_uri, wrap)
+
+    elif binding.typ == "literal" and binding.datatype is not None:
+        formatted_dt = format_iri(
+            binding.datatype,
+            parser,
+            prefixes,
+            base_uri,
+            wrap=True,
+        )
+        return f'"{binding.value}"^^{formatted_dt}'
+
+    return binding.identifier()
+
+
 def load_qlever_prefixes(endpoint: str) -> dict[str, str]:
     parse = urlparse(endpoint)
     parse.encode()
@@ -1045,3 +1092,7 @@ def load_entity_info_sparql() -> str:
 
 def load_property_info_sparql() -> str:
     return read_resource("grasp.sparql.queries", "property.info.sparql")
+
+
+def load_literal_info_sparql() -> str:
+    return read_resource("grasp.sparql.queries", "literal.info.sparql")

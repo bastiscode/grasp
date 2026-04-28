@@ -31,15 +31,16 @@ def set_description_function(description: str) -> dict:
     }
 
 
-def index_functions() -> list[dict]:
-    return [
+def index_functions(index_name: str = "entities") -> list[dict]:
+    fns: list[dict] = [
         {
             "name": "show_setup",
             "description": "Show the current index and info SPARQL queries for the knowledge graph.",
         },
         {
             "name": "set_query",
-            "description": "Set the index or info SPARQL query for the knowledge graph",
+            "description": "Set the index or info SPARQL query for the knowledge graph. "
+            "Pass sparql=null to clear / unset the current query.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -49,8 +50,8 @@ def index_functions() -> list[dict]:
                         "description": "Whether this is an index query or an info query",
                     },
                     "sparql": {
-                        "type": "string",
-                        "description": "The SPARQL query",
+                        "type": ["string", "null"],
+                        "description": "The SPARQL query, or null to clear / unset the current query.",
                     },
                 },
                 "required": ["type", "sparql"],
@@ -62,8 +63,25 @@ def index_functions() -> list[dict]:
             "Set a concise description of what this index contains and how it is built. "
             "Typically a single sentence is sufficient."
         ),
-        STOP_FUNCTION,
     ]
+
+    # show_entity_setup is only useful while authoring the literals index,
+    # where the agent may want to inspect the entity index to avoid
+    # duplicating the literals it already covers as entity-associated labels.
+    if index_name == "literals":
+        fns.append(
+            {
+                "name": "show_entity_setup",
+                "description": "Show the current entity index setup (index SPARQL, info "
+                "SPARQL, and description) for this knowledge graph. Use this while "
+                "authoring the literals index to see which literals the entity index "
+                "already covers, and avoid duplicating that coverage in the literals "
+                "index.",
+            }
+        )
+
+    fns.append(STOP_FUNCTION)
+    return fns
 
 
 def info_functions() -> list[dict]:

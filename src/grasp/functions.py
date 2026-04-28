@@ -284,59 +284,6 @@ search_literal(kg="osm-planet", query="restaurant", page=1)""",
             )
 
     if fn_set in ["search_extended", "all"]:
-        search_prop_of_ent_props = {
-            "kg": {
-                "type": "string",
-                "enum": kgs,
-                "description": "The knowledge graph to search",
-            },
-            "entity": {
-                "type": "string",
-                "description": "The entity to search properties for",
-            },
-            "query": {
-                "type": "string",
-                "description": "The search query",
-            },
-            "page": page_prop,
-        }
-        search_prop_of_ent_required = ["kg", "entity", "query", "page"]
-
-        search_obj_of_prop_props = {
-            "kg": {
-                "type": "string",
-                "enum": kgs,
-                "description": "The knowledge graph to search",
-            },
-            "property": {
-                "type": "string",
-                "description": "The property to search objects for",
-            },
-            "query": {
-                "type": "string",
-                "description": "The search query",
-            },
-            "page": page_prop,
-        }
-        search_obj_of_prop_required = ["kg", "property", "query", "page"]
-        # Only advertise the `index` parameter when both entity and literal
-        # indices are loaded — otherwise dispatch is unambiguous.
-        if has_entity_index and has_literal_index:
-            search_obj_of_prop_props["index"] = {
-                "type": "string",
-                "enum": ["entities", "literals"],
-                "description": "Which index to search the property's objects "
-                "in: 'entities' for IRI-typed objects, 'literals' for "
-                "literal-typed objects",
-            }
-            search_obj_of_prop_required = [
-                "kg",
-                "property",
-                "query",
-                "index",
-                "page",
-            ]
-
         if has_property_index:
             fns.append(
                 {
@@ -351,58 +298,78 @@ in Wikidata, do the following:
 search_property_of_entity(kg="wikidata", entity="wd:Q937", query="birth", page=1)""",
                     "parameters": {
                         "type": "object",
-                        "properties": search_prop_of_ent_props,
-                        "required": search_prop_of_ent_required,
+                        "properties": {
+                            "kg": {
+                                "type": "string",
+                                "enum": kgs,
+                                "description": "The knowledge graph to search",
+                            },
+                            "entity": {
+                                "type": "string",
+                                "description": "The entity to search properties for",
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "The search query",
+                            },
+                            "page": page_prop,
+                        },
+                        "required": ["kg", "entity", "query", "page"],
                         "additionalProperties": False,
                     },
                     "strict": True,
                 },
             )
 
-        if has_entity_index or has_literal_index:
-            if has_entity_index and has_literal_index:
-                obj_of_prop_desc = f"""\
-Search for entities or literal values at the object position for a given \
-property in the knowledge graph. At most {search_k} results are returned \
-per page (use pagination up to page {search_max_pages} to see more \
-results). Both an entity index and a literal index are loaded, so you \
-must specify which one to search via the `index` argument: use \
-`index="entities"` when the property points at IRIs, and \
-`index="literals"` when the property points at plain string values.
+        object_indices = []
+        if has_entity_index:
+            object_indices.append("entities")
+        if has_literal_index:
+            object_indices.append("literals")
 
-For example, to search for football jobs in Wikidata, do the following:
-search_object_of_property(kg="wikidata", property="wdt:P106", \
-query="football", index="entities", page=1)
-
-Or to search for restaurant amenities in OSM, do the following:
-search_object_of_property(kg="osm-planet", property="osmkey:amenity", \
-query="restaurant", index="literals", page=1)"""
-            elif has_entity_index:
-                obj_of_prop_desc = f"""\
-Search for entities at the object position for a given property in the \
-knowledge graph. At most {search_k} results are returned per page \
-(use pagination up to page {search_max_pages} to see more results).
-
-For example, to search for football jobs in Wikidata, do the following:
-search_object_of_property(kg="wikidata", property="wdt:P106", query="football", page=1)"""
-            else:
-                obj_of_prop_desc = f"""\
-Search for literal values at the object position for a given property in \
-the knowledge graph. At most {search_k} results are returned per page \
-(use pagination up to page {search_max_pages} to see more results). \
-Results are shown as quoted strings.
-
-For example, to search for restaurant amenities in OSM, do the following:
-search_object_of_property(kg="osm-planet", property="osmkey:amenity", query="restaurant", page=1)"""
+        if object_indices:
+            obj_indices = " or ".join(f'"{idx}"' for idx in object_indices)
 
             fns.append(
                 {
                     "name": "search_object_of_property",
-                    "description": obj_of_prop_desc,
+                    "description": f"""\
+Search for {obj_indices} at the object position for a given \
+property in the knowledge graph. At most {search_k} results are returned \
+per page (use pagination up to page {search_max_pages} to see more \
+results).
+
+For example, to search for football-related jobs in Wikidata, do the following:
+search_object_of_property(kg="wikidata", property="wdt:P106", \
+query="football", index="entities", page=1)
+
+Or to search for restaurant-related amenities in OSM, do the following:
+search_object_of_property(kg="osm", property="osmkey:amenity", \
+query="restaurant", index="literals", page=1)""",
                     "parameters": {
                         "type": "object",
-                        "properties": search_obj_of_prop_props,
-                        "required": search_obj_of_prop_required,
+                        "properties": {
+                            "kg": {
+                                "type": "string",
+                                "enum": kgs,
+                                "description": "The knowledge graph to search",
+                            },
+                            "property": {
+                                "type": "string",
+                                "description": "The property to search objects for",
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "The search query",
+                            },
+                            "index": {
+                                "type": "string",
+                                "enum": object_indices,
+                                "description": "Which index to search for the property's objects",
+                            },
+                            "page": page_prop,
+                        },
+                        "required": ["kg", "property", "query", "index", "page"],
                         "additionalProperties": False,
                     },
                     "strict": True,
@@ -1064,7 +1031,6 @@ def parse_iri_or_literal(
     parser: LR1Parser,
     prefixes: dict[str, str] | None = None,
 ) -> Binding | None:
-    # parse and resolve percent encoding in IRIs
     binding = parse_into_binding(input, parser, prefixes)
 
     if binding is None and has_scheme(input):

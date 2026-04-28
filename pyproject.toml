@@ -23,10 +23,10 @@ dependencies = [
   "requests>=2.32.0",
   "tqdm>=4.65.0",
   "scipy>=1.15.0",
-  "universal-ml-utils>=0.1.5",
+  "universal-ml-utils>=0.1.6",
   "grammar-utils>=0.1.6",
   "search-rdf>=0.5.2",
-  "pillows>=11.0.0",
+  "pillow>=11.0.0",
   # server
   "fastapi>=0.115.0",
   "uvicorn>=0.30.0",

@@ -20,6 +20,8 @@ from grasp.sparql.utils import (
     get_qlever_endpoint,
     load_entity_index_sparql,
     load_entity_info_sparql,
+    load_literal_index_sparql,
+    load_literal_info_sparql,
     load_property_index_sparql,
     load_property_info_sparql,
 )
@@ -37,6 +39,7 @@ from grasp.utils import FunctionCallException, format_prefixes, get_index_dir
 REFERENCE_SPARQLS = {
     "entities": (load_entity_index_sparql(), load_entity_info_sparql()),
     "properties": (load_property_index_sparql(), load_property_info_sparql()),
+    "literals": (load_literal_index_sparql(), load_literal_info_sparql()),
 }
 
 
@@ -241,20 +244,41 @@ and repeat, otherwise stop."""
             "the index SPARQL is allowed to take many minutes or even hours on the full knowledge graph. "
             "The latter should be tested on a subset of the data (e.g., using VALUES) to stay "
             "within the lower time limits during development.",
-            "Do not use different scores for the same IRI in the index SPARQL, as the IRIs are required to be "
-            "returned in contiguous blocks for the indexing process.",
-            f"To include {name} in the index and make them searchable even if they do not have "
-            "have any associated literals, use their IRIs as values by binding ?id to ?value directly "
-            "in the index SPARQL. During indexing the local part of the IRI (after a known prefix, "
-            "or the last slash or hash) will be extracted and indexed as the value, so make sure it is "
-            "meaningful for search. This also means you do not need to extract the local part in the SPARQL "
-            "yourself.",
+            f"Do not use different scores for the same id in the {name} index SPARQL, as the ids are "
+            "required to be returned in contiguous blocks for the indexing process.",
         ]
+
+        if name in ("entities", "properties"):
+            rules.append(
+                f"To include {name} in the index and make them searchable even if they do not have "
+                "have any associated literals, use their IRIs as values by binding ?id to ?value directly "
+                "in the index SPARQL. During indexing the local part of the IRI (after a known prefix, "
+                "or the last slash or hash) will be extracted and indexed as the value, so make sure it is "
+                "meaningful for search. This also means you do not need to extract the local part in the SPARQL "
+                "yourself."
+            )
+
         if name == "entities":
             rules.append(
                 f"Not all {name} in the knowledge graph need to be searchable and should be covered by the index. "
                 f"Typical examples are identifier-like, internal, or intermediate {name} "
                 "without any descriptive associated literals."
+            )
+
+        if name == "literals":
+            rules.append(
+                "Only index standalone literals - string values that appear as objects in the knowledge graph "
+                "(e.g., enumerations like amenity types, status codes, license names). Do not index IRIs (use "
+                "the entity / property indices for those) and do not index literals that the entity index "
+                "already covers as entity-associated literals (literals indexed under their owning entity, "
+                "searchable via that entity). Inspect the entity-index setup to see which entity-associated literals "
+                "the entity index already covers in this knowledge graph and avoid duplicating them in the "
+                "literals index."
+            )
+            rules.append(
+                "If you cannot find a meaningful set of standalone literals to index, skip both the index "
+                "SPARQL and the info SPARQL - leaving them unset is the right outcome and is preferred over "
+                "a low-quality index."
             )
 
         return rules
@@ -270,7 +294,7 @@ and repeat, otherwise stop."""
         kgs = [m.kg for m in self.managers]
         functions = [find_frequent_function_definition(kgs, self.config.list_k)]
         if self.input["phase"] == "index":
-            functions.extend(index_functions())
+            functions.extend(index_functions(self.input["name"]))
         else:
             functions.extend(info_functions())
         return functions
@@ -303,6 +327,12 @@ and repeat, otherwise stop."""
         elif fn_name == "show_setup":
             return self.show_setup()
 
+        elif fn_name == "show_entity_setup":
+            # use a fresh empty `known` so the running self.known set
+            # is not polluted by IRIs from the entity index sparql
+            entity_state = load_index_state(manager, "entities", set())
+            return format_index_state(entity_state, manager)
+
         elif fn_name == "set_query":
             return self.set_query(manager, **fn_args, known=known)
 
@@ -332,11 +362,22 @@ and repeat, otherwise stop."""
         self,
         manager: KgManager,
         type: str,
-        sparql: str,
+        sparql: str | None,
         known: set[str],
     ) -> str:
         assert isinstance(self.state, IndexState)
         name = self.input["name"]
+
+        # null clears / unsets the query
+        if sparql is None:
+            index = manager.try_get(name)
+            if type == "info":
+                self.state.info_sparql = None
+                if index is not None:
+                    index.info_sparql = None
+            else:
+                self.state.index_sparql = None
+            return f"Cleared the {name} {type} SPARQL"
 
         # always check whether the query contains only known IRIs
         check_known(manager, sparql, known)

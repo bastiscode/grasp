@@ -1,6 +1,5 @@
 import os
 import time
-from logging import Logger
 
 from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex, FuzzyIndex, KeywordIndex
@@ -13,23 +12,36 @@ from grasp.utils import get_index_dir
 
 
 def build_index(
-    index_dir: str,
+    kg: str,
+    index_name: str,
     index_type: str,
-    logger: Logger,
-    overwrite: bool = False,
     embedding_model: str | None = None,
     embedding_device: str | None = None,
     embedding_batch_size: int = 256,
     embedding_dim: int | None = None,
+    log_level: str | int | None = None,
+    overwrite: bool = False,
 ) -> None:
-    data = load_data(index_dir)
+    logger = get_logger("GRASP INDEX", log_level)
 
-    index_dir = os.path.join(index_dir, index_type)
+    if index_type == "auto":
+        if index_name in "entities":
+            index_type = "fuzzy"
+        elif index_name in ("properties", "literals"):
+            index_type = "embedding"
+        else:
+            raise ValueError(f'Auto index type not supported for index "{index_name}"')
+
+    data_dir = os.path.join(get_index_dir(kg), index_name)
+    index_dir = os.path.join(data_dir, index_type)
+
     if os.path.exists(index_dir) and not overwrite:
         logger.info(
             f"Index of type {index_type} already exists at {index_dir}. Skipping build."
         )
         return
+
+    data = load_data(data_dir)
 
     os.makedirs(index_dir, exist_ok=True)
     start = time.perf_counter()
@@ -83,68 +95,3 @@ def generate_embeddings(
         filename=embedding_path,
         metadata={"model": model_name},
     )
-
-
-def build_indices(
-    kg: str,
-    entities_type: str,
-    properties_type: str,
-    literals_type: str | None = "fuzzy",
-    overwrite: bool = False,
-    log_level: str | int | None = None,
-    embedding_model: str | None = None,
-    embedding_device: str | None = None,
-    embedding_batch_size: int = 256,
-    embedding_dim: int | None = None,
-) -> None:
-    logger = get_logger("GRASP INDEX", log_level)
-
-    index_dir = get_index_dir(kg)
-
-    # entities
-    entities_dir = os.path.join(index_dir, "entities")
-    build_index(
-        entities_dir,
-        entities_type,
-        logger,
-        overwrite,
-        embedding_model,
-        embedding_device,
-        embedding_batch_size,
-        embedding_dim,
-    )
-
-    # properties
-    properties_dir = os.path.join(index_dir, "properties")
-    build_index(
-        properties_dir,
-        properties_type,
-        logger,
-        overwrite,
-        embedding_model,
-        embedding_device,
-        embedding_batch_size,
-        embedding_dim,
-    )
-
-    # literals: build only when data was downloaded (i.e. the user opted
-    # in via `grasp data --with-literals` or by passing a literal SPARQL /
-    # file). Skipped silently otherwise so existing pipelines stay green.
-    literals_dir = os.path.join(index_dir, "literals")
-    literals_data = os.path.join(literals_dir, "data.jsonl")
-    if literals_type is not None and os.path.exists(literals_data):
-        build_index(
-            literals_dir,
-            literals_type,
-            logger,
-            overwrite,
-            embedding_model,
-            embedding_device,
-            embedding_batch_size,
-            embedding_dim,
-        )
-    elif literals_type is not None:
-        logger.info(
-            f"No literal data found at {literals_data}, skipping literals "
-            f"index build (run `grasp data --with-literals` first to enable)"
-        )

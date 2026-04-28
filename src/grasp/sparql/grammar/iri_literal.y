@@ -7,6 +7,7 @@ iriOrLiteral
     | RDFLiteral 
     | NumericLiteral 
     | BooleanLiteral 
+    | 'BLANK_NODE_LABEL'
     ;
 
 RDFLiteral

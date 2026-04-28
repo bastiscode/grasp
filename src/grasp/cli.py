@@ -20,8 +20,9 @@ from universal_ml_utils.io import (
 from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import consume_generator, extract_field
 
-from grasp.build import build_indices, get_data
+from grasp.build import get_data
 from grasp.build.data import merge_kgs
+from grasp.build.index import build_index
 from grasp.configs import (
     GraspConfig,
     JudgeConfig,
@@ -393,12 +394,17 @@ def parse_args() -> argparse.Namespace:
     # get data for GRASP indices
     data_parser = subparsers.add_parser(
         "data",
-        help="Get entity and property data for a knowledge graph",
+        help="Get data for knowledge graph index",
     )
     data_parser.add_argument(
         "knowledge_graph",
         type=str,
         help="Knowledge graph to get data for",
+    )
+    data_parser.add_argument(
+        "index",
+        choices=["entities", "properties", "literals"],
+        help="Index to get data for",
     )
     data_parser.add_argument(
         "--endpoint",
@@ -407,14 +413,9 @@ def parse_args() -> argparse.Namespace:
         "(if not given, the endpoint at qlever.cs.uni-freiubrg.de/api/<kg> is used)",
     )
     data_parser.add_argument(
-        "--entity-sparql",
+        "--index-sparql",
         type=str,
-        help="Path to file with custom entity SPARQL query",
-    )
-    data_parser.add_argument(
-        "--property-sparql",
-        type=str,
-        help="Path to file with custom property SPARQL query",
+        help="Path to file with custom index SPARQL query",
     )
     data_parser.add_argument(
         "--query-parameters",
@@ -437,42 +438,15 @@ def parse_args() -> argparse.Namespace:
     data_parser.add_argument(
         "--add-id-as-label",
         type=str,
-        default=None,
-        choices=["always", "empty"],
-        help="When to add a label fallback based on entity/property IDs",
+        default="auto",
+        choices=["auto", "never", "always", "empty"],
+        help="When to add a label fallback based on ID",
     )
     data_parser.add_argument(
-        "--entity-file",
+        "--data-file",
         type=str,
         default=None,
-        help="Path to file with entity SPARQL results in JSON format "
-        "(skip live query for entities)",
-    )
-    data_parser.add_argument(
-        "--property-file",
-        type=str,
-        default=None,
-        help="Path to file with property SPARQL results in JSON format "
-        "(skip live query for properties)",
-    )
-    data_parser.add_argument(
-        "--literal-sparql",
-        type=str,
-        help="Path to file with custom literal SPARQL query "
-        "(implies downloading literal data)",
-    )
-    data_parser.add_argument(
-        "--literal-file",
-        type=str,
-        default=None,
-        help="Path to file with literal SPARQL results in JSON format "
-        "(skip live query for literals; implies downloading literal data)",
-    )
-    data_parser.add_argument(
-        "--with-literals",
-        action="store_true",
-        help="Also download literal data using the default literal index "
-        "SPARQL query (no-op if --literal-sparql or --literal-file is set)",
+        help="Path to file with SPARQL results in JSON format (skip live query)",
     )
     add_overwrite_arg(data_parser)
 
@@ -491,6 +465,11 @@ def parse_args() -> argparse.Namespace:
         help="Knowledge graphs to merge",
     )
     merge_parser.add_argument(
+        "index",
+        choices=["entities", "properties", "literals"],
+        help="Index to merge data for",
+    )
+    merge_parser.add_argument(
         "knowledge_graph",
         type=str,
         help="Name of the merged knowledge graph",
@@ -500,7 +479,7 @@ def parse_args() -> argparse.Namespace:
     # build GRASP indices
     index_parser = subparsers.add_parser(
         "index",
-        help="Build entity and property indices for a knowledge graph",
+        help="Build an index for a knowledge graph",
     )
     index_parser.add_argument(
         "knowledge_graph",
@@ -509,27 +488,16 @@ def parse_args() -> argparse.Namespace:
         help="Knowledge graph to build indices for",
     )
     index_parser.add_argument(
-        "--entities-type",
-        type=str,
-        choices=["keyword", "fuzzy", "embedding"],
-        default="fuzzy",
-        help="Type of entity index to build",
+        "index",
+        choices=["entities", "properties", "literals"],
+        help="Index to build",
     )
     index_parser.add_argument(
-        "--properties-type",
+        "--index-type",
         type=str,
-        choices=["keyword", "fuzzy", "embedding"],
-        default="embedding",
-        help="Type of property index to build",
-    )
-    index_parser.add_argument(
-        "--literals-type",
-        type=str,
-        choices=["keyword", "fuzzy", "embedding"],
-        default="fuzzy",
-        help="Type of literal index to build; only built if literal data "
-        "exists at {index_dir}/literals/ (run `grasp data --with-literals` "
-        "first to populate it)",
+        choices=["auto", "keyword", "fuzzy", "embedding"],
+        default="auto",
+        help="Type of index to build",
     )
     index_parser.add_argument(
         "--emb-model",
@@ -618,9 +586,22 @@ def parse_args() -> argparse.Namespace:
         help="User notes for the property index (property index and info SPARQL)",
     )
     auto_setup_parser.add_argument(
+        "--literal-index-notes",
+        type=str,
+        default=None,
+        help="User notes for the literal index (literal index and info SPARQL)",
+    )
+    auto_setup_parser.add_argument(
         "phases",
         nargs="?",
-        choices=["all", "info", "indices", "entity-index", "property-index"],
+        choices=[
+            "all",
+            "info",
+            "indices",
+            "entity-index",
+            "property-index",
+            "literal-index",
+        ],
         default="all",
         help="Which phase(s) to run (default: all)",
     )
@@ -794,34 +775,20 @@ def get_grasp_data(args: argparse.Namespace) -> None:
     params = parse_key_value_pairs(args.query_parameters or [])
     headers = parse_key_value_pairs(args.query_headers or [])
 
-    if args.entity_sparql is not None:
-        args.entity_sparql = load_text(args.entity_sparql).strip()
+    if args.index_sparql is not None:
+        args.index_sparql = load_text(args.index_sparql).strip()
         for key, value in replace.items():
-            args.entity_sparql = args.entity_sparql.replace(f"{{{key}}}", value)
-
-    if args.property_sparql is not None:
-        args.property_sparql = load_text(args.property_sparql).strip()
-        for key, value in replace.items():
-            args.property_sparql = args.property_sparql.replace(f"{{{key}}}", value)
-
-    if args.literal_sparql is not None:
-        args.literal_sparql = load_text(args.literal_sparql).strip()
-        for key, value in replace.items():
-            args.literal_sparql = args.literal_sparql.replace(f"{{{key}}}", value)
+            args.index_sparql = args.index_sparql.replace(f"{{{key}}}", value)
 
     get_data(
         args.knowledge_graph,
+        args.index,
         args.endpoint,
-        args.entity_sparql,
-        args.property_sparql,
-        args.literal_sparql,
+        args.index_sparql,
+        args.data_file,
+        args.add_id_as_label,
         params,
         headers,
-        args.add_id_as_label,
-        args.entity_file,
-        args.property_file,
-        args.literal_file,
-        args.with_literals,
         args.log_level,
         args.overwrite,
     )
@@ -960,13 +927,22 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
                 "notes": args.property_index_notes,
             },
         ),
+        (
+            "literal-index",
+            {
+                "phase": "index",
+                "name": "literals",
+                "notes": args.literal_index_notes,
+            },
+        ),
     ]
     selected = {
-        "all": {"info", "entity-index", "property-index"},
+        "all": {"info", "entity-index", "property-index", "literal-index"},
         "info": {"info"},
-        "indices": {"entity-index", "property-index"},
+        "indices": {"entity-index", "property-index", "literal-index"},
         "entity-index": {"entity-index"},
         "property-index": {"property-index"},
+        "literal-index": {"literal-index"},
     }[args.phases]
     phases = [payload for tag, payload in all_phases if tag in selected]
 
@@ -1052,23 +1028,23 @@ def main():
     elif args.command == "merge":
         merge_kgs(
             args.knowledge_graphs,
+            args.index,
             args.knowledge_graph,
             args.overwrite,
             args.log_level,
         )
 
     elif args.command == "index":
-        build_indices(
+        build_index(
             args.knowledge_graph,
-            args.entities_type,
-            args.properties_type,
-            args.literals_type,
-            args.overwrite,
+            args.index,
+            args.index_type,
+            args.emb_model,
+            args.emb_device,
+            args.emb_batch_size,
+            args.emb_dim,
             args.log_level,
-            embedding_model=args.emb_model,
-            embedding_device=args.emb_device,
-            embedding_batch_size=args.emb_batch_size,
-            embedding_dim=args.emb_dim,
+            args.overwrite,
         )
 
     elif args.command == "notes":

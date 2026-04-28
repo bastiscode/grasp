@@ -1,0 +1,27 @@
+# For each literal id, return the three predicates that most frequently
+# link to it, with occurrence counts.
+
+SELECT DISTINCT ?id ?value ?type WHERE {
+  {
+    SELECT ?id ?p ?freq (COUNT(DISTINCT ?p2) AS ?better) WHERE {
+      {
+        SELECT ?id ?p (COUNT(*) AS ?freq) WHERE {
+          VALUES ?id { {IDS} }
+          ?s ?p ?id .
+        } GROUP BY ?id ?p
+      }
+      OPTIONAL {
+        {
+          SELECT ?id ?p2 (COUNT(*) AS ?freq2) WHERE {
+            VALUES ?id { {IDS} }
+            ?s2 ?p2 ?id .
+          } GROUP BY ?id ?p2
+        }
+        FILTER (?freq2 > ?freq)
+      }
+    } GROUP BY ?id ?p ?freq
+    HAVING (?better < 3)
+  }
+  BIND(CONCAT("appears as value of ", STR(?p), " (", STR(?freq), " occurrences)") AS ?value)
+  BIND("other" AS ?type)
+} ORDER BY ?id ?type ?value
