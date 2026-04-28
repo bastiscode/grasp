@@ -421,9 +421,9 @@ query="restaurant", index="literals", page=1)""",
                 "name": search_filter_name,
                 "description": f"""\
 Search for knowledge graph items in a context-sensitive way by specifying a filter \
-SPARQL query together with a search query. The SPARQL query must be a SELECT query \
-returning a single column of IRIs. The search is then restricted to knowledge graph items \
-matching those IRIs in the specified index. The SPARQL query can be null, in which case \
+SPARQL query together with a search query. The SPARQL query must be a single-column SELECT \
+query returning knowledge graph identifiers (IRIs or literals). The search is then restricted \
+to the items matching those identifiers in the specified index. The SPARQL query can be null, in which case \
 a search over the full index is performed. At most {search_k} results are returned per \
 page (use pagination up to page {search_max_pages} to see more results).
 
