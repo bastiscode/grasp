@@ -164,6 +164,11 @@ grasp file configs/run.yaml \
 # Show all available options:
 grasp file -h
 
+# Visualize the interaction trace from a GRASP output file (reads JSONL from stdin):
+cat data/benchmark/wikidata/qald10/outputs/gpt-41.jsonl | grasp show
+# Skip system/config/function messages for a more compact view:
+cat data/benchmark/wikidata/qald10/outputs/gpt-41.jsonl | grasp show --skip-system
+
 # You can also run GRASP in a client-server setup. This is also the server
 # that powers the corresponding web app.
 # To start a GRASP server, by default on port 8000, just run:
@@ -190,9 +195,17 @@ grasp evaluate judge configs/run.yaml \
   data/benchmark/wikidata/qald10/outputs/model2.jsonl \
   data/benchmark/wikidata/qald10/outputs/judge.evaluation.json
 
+# Launch a blind expert evaluation app (Streamlit) to manually compare outputs:
+grasp evaluate expert \
+  data/benchmark/wikidata/qald10/test.jsonl \
+  data/benchmark/wikidata/qald10/outputs/model1.jsonl \
+  data/benchmark/wikidata/qald10/outputs/model2.jsonl \
+  data/benchmark/wikidata/qald10/outputs/expert.evaluation.json
+
 # Show all available options:
 grasp evaluate f1 -h
 grasp evaluate judge -h
+grasp evaluate expert -h
 
 # Build an example index for few-shot learning from a JSONL file of examples:
 grasp examples data/benchmark/wikidata/qald10/train.jsonl \
@@ -202,7 +215,8 @@ grasp examples data/benchmark/wikidata/qald10/train.jsonl \
 # The first KG is the primary one; entities/properties from subsequent KGs
 # are added to it. For example used to combine language-specific indices
 # of the same knowledge graph:
-grasp merge wikidata-en wikidata-de wikidata-fr wikidata-multilingual
+grasp merge wikidata-en wikidata-de wikidata-fr entities wikidata-multilingual
+grasp merge wikidata-en wikidata-de wikidata-fr properties wikidata-multilingual
 
 # Note-taking: run GRASP on a knowledge graph to produce notes that
 # can be included in the config to improve performance.
@@ -212,6 +226,9 @@ grasp notes samples configs/notes/samples.yaml notes/
 grasp notes outputs configs/notes/outputs.yaml notes/
 # Take notes by freely exploring a knowledge graph (no task samples needed):
 grasp notes explore configs/notes/explore.yaml notes/
+# Generate plausible questions over the configured KGs as bootstrap samples
+# for note taking (no task samples needed):
+grasp notes generate-questions configs/notes/explore.yaml notes/
 ```
 
 ### Server API
@@ -305,34 +322,55 @@ Using GRASP with your own knowledge graph requires two steps:
 - Getting the index data from a SPARQL endpoint for the knowledge graph
 - Building the indices
 
+You can do this manually (see below) or use `grasp auto-setup`, which automatically
+generates the necessary SPARQL queries and configuration by exploring the endpoint:
+
+```bash
+# Auto-configure a KG by exploring its SPARQL endpoint (all phases):
+grasp auto-setup configs/run.yaml
+
+# Run only specific phases:
+grasp auto-setup configs/run.yaml info
+grasp auto-setup configs/run.yaml indices
+
+# Show all available options:
+grasp auto-setup -h
+```
+
 #### Get index data
 
-We get the index data by issuing two SPARQL queries to a SPARQL endpoint,
-one for entities and one for properties. Both queries are expected to
-return three columns in their results:
+We get the index data by issuing SPARQL queries to a SPARQL endpoint.
+GRASP supports three index types: **entities**, **properties**, and **literals**
+(literal values such as names, labels, or other string-valued data that appear
+as objects in the graph). Each query must return rows with the following columns:
 
-1. The IRI of the entity/property (required, must be unique)
-2. The main label of the entity/property (optional)
-3. All other labels/aliases of the entity/property, separated by `;;;` (optional)
+1. `?id` — the IRI of the entity/property, or the literal value itself (required)
+2. `?value` — a single label or alias (one row per label/alias)
+3. `?tags` — optional comma-separated tags for the value, e.g., `"main"` to mark the primary label
+
+Each item can appear in multiple rows (one per label or alias).
+Rows for the same `?id` must be consecutive (i.e., results should be ordered
+by `?id`).
 
 A typical SPARQL query for that looks like this:
 
 ```sparql
-SELECT
-  # unique identifier of the entity/property
-  ?id
-  # main label of the entity/property, typically in English via rdfs:label
-  (SAMPLE(?label) AS ?main_label)
-  # all other labels/aliases, separated by ;;;
-  (GROUP_CONCAT(DISTINCT ?alias; SEPARATOR=";;;") AS ?aliases)
-WHERE {
-  ...
+SELECT DISTINCT ?id ?value ?tags WHERE {
+  {
+    # main label — tagged as "main" so it is used as the primary search field
+    ?id rdfs:label ?value
+    BIND("main" AS ?tags)
+    FILTER(LANG(?value) = "en")
+  } UNION {
+    # aliases / alternative labels
+    ?id skos:altLabel ?value
+    FILTER(LANG(?value) = "en")
+  }
 }
-# group by the identifier to ensure uniqueness
-GROUP BY ?id
+ORDER BY ?id DESC(?tags)
 ```
 
-The query body will determine which entities/properties are included included
+The query body will determine which entities, properties, or literals are included
 in the index, and how their labels and aliases are retrieved.
 
 > Notes:
@@ -345,27 +383,28 @@ in the index, and how their labels and aliases are retrieved.
 > its IRI as fallback label
 > - For properties, we always add the IRI as alias, to make them searchable by
 > their IRI as well
+> - For literals, the IRI fallback is omitted by default (since literals have no IRI)
 
 With the CLI, you can use the `grasp data` command as follows:
 
 ```bash
-# By default, if you just specify the knowledge graph name,
-# we use https://qlever.cs.uni-freiburg.de/api/<kg_name> as SPARQL endpoint.
-# The data will be saved to $GRASP_INDEX_DIR/<kg_name>/entities/data.tsv
-# and $GRASP_INDEX_DIR/<kg_name>/properties/data.tsv.
+# The index type (entities, properties, or literals) is a required argument.
+# By default, we use https://qlever.cs.uni-freiburg.de/api/<kg_name> as SPARQL endpoint.
+# The data will be saved to $GRASP_INDEX_DIR/<kg_name>/entities/data.jsonl
+# and $GRASP_INDEX_DIR/<kg_name>/properties/data.jsonl etc.
 # For example, to get the index data for IMDB:
-grasp data imdb
+grasp data imdb entities
+grasp data imdb properties
+grasp data imdb literals
 
 # You can also set a custom SPARQL endpoint:
-grasp data my-imdb --endpoint https://my-imdb-sparql-endpoint.com/sparql
+grasp data my-imdb entities --endpoint https://my-imdb-sparql-endpoint.com/sparql
 
-# To download the index data, we use generic queries for both
-# entities and properties by default. You can also provide your own queries,
-# which is recommended, especially for larger knowledge graphs or
-# knowledge graph with unusual schema.
-grasp data imdb \
-  --entity-sparql <path/to/entity.sparql> \
-  --property-sparql <path/to/property.sparql>
+# To download the index data, we use generic queries by default. You can also
+# provide your own queries, which is recommended especially for larger knowledge
+# graphs or those with an unusual schema.
+grasp data imdb entities --index-sparql <path/to/entity.sparql>
+grasp data imdb properties --index-sparql <path/to/property.sparql>
 
 # Show all available options:
 grasp data -h
@@ -379,16 +418,18 @@ You probably do not need to change any parameters here.
 With the CLI, you can use the `grasp index` command as follows:
 
 ```bash
-# The indices will be saved to $GRASP_INDEX_DIR/<kg_name>/entities/<index_type>
-# and $GRASP_INDEX_DIR/<kg_name>/properties/<index_type>.
+# The index type (entities, properties, or literals) is a required argument.
+# The built index will be saved to $GRASP_INDEX_DIR/<kg_name>/<index>/<index_type>.
 # For example, to build the indices for IMDB:
-grasp index imdb
+grasp index imdb entities
+grasp index imdb properties
+grasp index imdb literals
 
-# You can also change the types of indices that are built. By default, we build a
-# fuzzy index for entities and an embedding index for properties.
-grasp index imdb \
-  --entities-type <keyword|fuzzy|embedding> \
-  --properties-type <keyword|fuzzy|embedding>
+# You can also change the type of index that is built via --index-type.
+# By default (auto), we build a fuzzy index for entities and an embedding
+# index for properties and literals.
+grasp index imdb entities --index-type <keyword|fuzzy|embedding>
+grasp index imdb properties --index-type <keyword|fuzzy|embedding>
 
 # Show all available options:
 grasp index -h
@@ -443,7 +484,7 @@ The file should contain a SPARQL query that returns three columns in its results
 
 1. `?id`: the IRI of the entity/property (required)
 2. `?value`: a single piece of additional information (e.g. a label, alias, or description)
-3. `?type`: the type of information, one of `"label"`, `"alias"`, or `"info"`
+3. `?type`: the type of information, one of `"label"`, `"alias"`, or `"other"`
 
 The query returns one row per piece of information (not one row per entity).
 A typical SPARQL query for that looks like this:
@@ -461,7 +502,7 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:comment ?value
-    BIND("info" AS ?type)
+    BIND("other" AS ?type)
   }
   FILTER(LANG(?value) = "en")
 }
@@ -501,41 +542,37 @@ evaluation app for the SPARQL QA task.
 
 ## Supported models
 
-GRASP supports both commercial and open-source models.
+GRASP uses the OpenAI Python SDK and supports any OpenAI-compatible API endpoint.
+The model name and provider are set separately in the config file (or via env variables):
+
+- `model`: the model name as expected by the API (e.g. `gpt-5.4-mini`, `Qwen/Qwen3.5-27B`)
+- `model_provider`: `openai/responses` (default, uses the Responses API) or `openai/completions` (uses the Chat Completions API)
+- `model_endpoint`: base URL of the API endpoint (defaults to the official OpenAI endpoint)
+- `model_api_key`: API key (defaults to `OPENAI_API_KEY` env variable)
 
 ### OpenAI
 
 1. Set `OPENAI_API_KEY` env variable
-2. Set model to `openai/<model_name>` in the config file or with
-`MODEL` env variable, we tested:
+2. Set `model` in the config file or with `MODEL` env variable, we tested:
 
-- `openai/gpt-4.1`
-- `openai/gpt-4.1-mini`
-- `openai/o4-mini`
-- `openai/gpt-5-mini`
-- `openai/gpt-5`
+- `gpt-4.1`
+- `gpt-4.1-mini`
+- `o4-mini`
+- `gpt-5.4-mini`
+- `gpt-5.4`
 
-### Google Gemini
+### OpenAI-compatible endpoints
 
-1. Set `GEMINI_API_KEY`
-2. Set model to `gemini/<model_name>` in the config file or with
-`MODEL` env variable, we tested:
+Any OpenAI-compatible API endpoint (vLLM, Ollama, SGLang, Gemini, etc.) is supported.
 
-- `gemini/gemini-2.0-flash`
-- `gemini/gemini-2.5-flash-preview-04-17`
+1. Run a server with a model of your choice (see vLLM example below)
+2. Set `model_endpoint` in the config file or with `MODEL_ENDPOINT` env variable
+to the server's base URL (e.g. `http://localhost:8000/v1`)
+3. Set `model` to the model name expected by the server, we tested:
 
-### Local server with vLLM
-
-1. Install vLLM with `pip install vllm`
-2. Run vLLM server with a model of your choice, see below
-3. Set model to `hosted_vllm/<model_name>` in the config file or with
-`MODEL` env variable, we tested:
-
-- `hosted_vllm/Qwen/Qwen2.5-72B-Instruct` (and other sizes)
-- `hosted_vllm/Qwen/Qwen3-32B` (and other sizes)
-
-1. Set model_endpoint in the config file or with `MODEL_ENDPOINT` env variable
-to your vLLM server endpoint, by default this will be `http://localhost:8000/v1`
+- `Qwen/Qwen2.5-72B-Instruct` (and other sizes)
+- `Qwen/Qwen3.5-27B` (and other sizes)
+- `Qwen/Qwen3-30B-A3B-Thinking-2507` (and other MoE/thinking variants)
 
 #### Run Qwen2.5
 
@@ -549,10 +586,8 @@ vllm serve Qwen/Qwen2.5-72B-Instruct --tool-call-parser hermes \
 
 #### Run Qwen3
 
-Change 32B to 4B, 8B, or 14B to run other sizes.
-
 ```bash
-vllm serve Qwen/Qwen3-32B --reasoning-parser qwen3 \
+vllm serve Qwen/Qwen3.5-27B --reasoning-parser qwen3 \
 --tool-call-parser hermes --enable-auto-tool-choice
 ```
 

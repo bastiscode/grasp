@@ -3,10 +3,11 @@ import os
 import random
 import re
 import string
+from dataclasses import dataclass
 from logging import Logger
 
 import torch
-from grammar_utils.parse import LR1Parser
+from grammar_utils.parse import LR1Parser  # type: ignore
 from pydantic import BaseModel
 from torch.utils.data import Dataset
 from tqdm.auto import tqdm
@@ -15,11 +16,11 @@ from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger, setup_logging
 
 from grasp.baselines.grisp.utils import load_sparql_parser
-from grasp.configs import KgConfig
+from grasp.configs import KgConfig, KgInfo
 from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.item import Item, extract_sparql_items
-from grasp.sparql.types import Alternative, Selection
-from grasp.sparql.utils import find_all
+from grasp.sparql.types import Alternative, ObjType, Position, Selection
+from grasp.sparql.utils import find_all, infer_position_from_prefix, query_type
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.utils import format_list, get_available_knowledge_graphs
 
@@ -29,11 +30,13 @@ EOI = "</iri>"
 BOR = "<rep>"
 EOR = "</rep>"
 
-ALT_LABELS = string.ascii_uppercase
+ALT_LABELS = string.ascii_uppercase + string.digits
 
 IGNORE_INDEX = -100
 
 Messages = list[dict[str, str]]
+AlternativeGroups = dict[ObjType, list[Alternative]]
+OrderedAlternatives = list[tuple[Alternative, ObjType, str | None]]
 
 
 class IRI(BaseModel):
@@ -105,6 +108,27 @@ def extract_query_and_variant_from_nl_iri(nl_iri: dict) -> tuple[str, str | None
     return query, variant
 
 
+@dataclass
+class Info:
+    prefix: str
+    sparql: str
+    query: str
+    variant: str | None
+    value: str
+
+    def build_queries(
+        self,
+        obj_types: dict[ObjType, bool],
+    ) -> dict[ObjType, tuple[str, str | None]]:
+        queries = {}
+        for obj_type, supports_variants in obj_types.items():
+            if supports_variants and self.variant is not None:
+                queries[obj_type] = (self.query, self.variant)
+            else:
+                queries[obj_type] = (self.value, None)
+        return queries
+
+
 class Skeleton:
     @staticmethod
     def parse(sparql: str, parser: LR1Parser) -> "Skeleton":
@@ -151,7 +175,7 @@ class Skeleton:
         sparql += self.sparql_encoded[start:].decode()
         return sparql
 
-    def prepare_for_selection(self) -> tuple[str, str, str, str | None]:
+    def prepare_for_selection(self) -> Info:
         assert not self.done, "All NL IRIs have already been replaced"
         idx = len(self.selections)
 
@@ -174,7 +198,13 @@ class Skeleton:
         query, variant = extract_query_and_variant_from_nl_iri(nl_iri)
         value = extract_value_from_nl_iri(nl_iri)
         sparql = prefix + f"{BOR}{value}{EOR}" + self.sparql_encoded[byte_end:].decode()
-        return prefix, sparql, query, variant
+        return Info(
+            prefix=prefix,
+            sparql=sparql,
+            query=query,
+            variant=variant,
+            value=value,
+        )
 
     def add_selection(self, selection: Selection, manager: KgManager) -> None:
         assert not self.done, "All NL IRIs have already been replaced"
@@ -227,7 +257,51 @@ for wikidata properties."""
     return messages
 
 
-def format_alternatives(alternatives: list[Alternative]) -> str:
+def ordered_alternatives(
+    alternative_groups: AlternativeGroups,
+    queries: dict[ObjType, tuple[str, str | None]],
+) -> OrderedAlternatives:
+    return ordered_alternatives_with_interleave(
+        alternative_groups,
+        queries,
+        interleave=False,
+    )
+
+
+def ordered_alternatives_with_interleave(
+    alternative_groups: AlternativeGroups,
+    queries: dict[ObjType, tuple[str, str | None]],
+    interleave: bool = False,
+) -> OrderedAlternatives:
+    variants = {obj_type: variant for obj_type, (_, variant) in queries.items()}
+
+    entities = [
+        (alternative, ObjType.ENTITY, variants.get(ObjType.ENTITY))
+        for alternative in alternative_groups.get(ObjType.ENTITY, [])
+    ]
+    properties = [
+        (alternative, ObjType.PROPERTY, variants.get(ObjType.PROPERTY))
+        for alternative in alternative_groups.get(ObjType.PROPERTY, [])
+    ]
+
+    if not interleave or not entities or not properties:
+        return entities + properties
+
+    ordered = []
+    max_len = max(len(entities), len(properties))
+    for i in range(max_len):
+        if i < len(entities):
+            ordered.append(entities[i])
+        if i < len(properties):
+            ordered.append(properties[i])
+    return ordered
+
+
+def count_alternatives(alternatives: OrderedAlternatives) -> int:
+    return len(alternatives)
+
+
+def format_alternatives(alternatives: OrderedAlternatives) -> str:
     if len(alternatives) == 0:
         return "No alternatives found"
 
@@ -235,17 +309,120 @@ def format_alternatives(alternatives: list[Alternative]) -> str:
         f"Number of alternatives must be less than {len(ALT_LABELS) - 1}"
     )
 
-    top_k_string = "\n".join(
-        # dont show variants in the listing
-        f"{lab}. {alt.get_selection_string(show_matched_label=False, include_variants=[])}"
-        for lab, alt in zip(ALT_LABELS, alternatives)
-    )
-    none_lab = ALT_LABELS[len(alternatives)]
-    top_k_string += f"\n{none_lab}. None of the above"
-    # in case only the none alternative is shown
-    top_k_string = top_k_string.strip()
+    grouped = {}
 
-    return f"Alternatives:\n{top_k_string}"
+    for label, (alternative, obj_type, variant) in zip(ALT_LABELS, alternatives):
+        alt = alternative.get_selection_string(
+            show_matched_label=False,
+            include_variants=[variant] if variant else None,
+        )
+        if obj_type not in grouped:
+            grouped[obj_type] = []
+        grouped[obj_type].append(f"{label}. {alt}")
+
+    alt_groups = []
+    for obj_type, alts in grouped.items():
+        alt_group = f"{obj_type.value.capitalize()} alternatives:\n"
+        alt_group += "\n".join(alts)
+        alt_groups.append(alt_group)
+
+    # always add none alternative
+    none_lab = ALT_LABELS[len(alternatives)]
+    alt_groups.append(f"{none_lab}. None of the above")
+    top_k_string = "\n\n".join(alt_groups)
+
+    return top_k_string
+
+
+def find_alternative_groups(
+    manager: KgManager,
+    prefix: str,
+    queries: dict[ObjType, tuple[str, str | None]],
+    top_k: int,
+    logger: Logger,
+    skip_constraint: bool = False,
+    max_candidates: int | None = None,
+) -> AlternativeGroups:
+    sparql_query_type = query_type(prefix, manager.sparql_parser, is_prefix=True)
+    constraint_sparql = None
+
+    try:
+        if not skip_constraint and sparql_query_type == "select":
+            logger.debug(f"Deriving constraint query from SPARQL prefix:\n{prefix}")
+            constraint_sparql, position = manager.derive_constraint_query_from_prefix(
+                prefix,
+                limit=None if max_candidates is None else max_candidates + 1,
+            )
+            logger.debug(f"Derived constraint SPARQL:\n{constraint_sparql}")
+        else:
+            position = infer_position_from_prefix(prefix, manager.sparql_parser)
+
+        logger.debug(
+            f"Determined query type and position: "
+            f"'{sparql_query_type}', '{position.value}'"
+        )
+    except Exception as e:
+        logger.debug(f"Error analyzing SPARQL prefix: {e}")
+        # full search across both indices as fallback
+        position = None
+
+    if position is None:
+        obj_types = [ObjType.ENTITY, ObjType.PROPERTY]
+    elif position == Position.PROPERTY:
+        obj_types = [ObjType.PROPERTY]
+    else:
+        obj_types = [ObjType.ENTITY]
+
+    identifier_maps: dict[ObjType, dict[str, list[str]] | None] = {
+        obj_type: None for obj_type in obj_types
+    }
+    if not skip_constraint and position is not None and constraint_sparql is not None:
+        # can only be one
+        obj_type = obj_types[0]
+        try:
+            logger.debug(
+                f"Searching for candidate IRIs at position {position.value} "
+                f"with constraint SPARQL:\n{constraint_sparql}"
+            )
+            identifier_map = manager.get_candidate_ids(
+                obj_type.index_name,
+                constraint_sparql,
+                max_candidates,
+                # 6 seconds to execute query, 3 to read result
+                request_timeout=(3.5, 6.0),
+                read_timeout=3.0,
+            )
+            logger.debug(
+                f"Got {len(identifier_map)} candidate IRIs for position {position.value}"
+            )
+            identifier_maps[obj_type] = identifier_map
+        except Exception as e:
+            logger.warning(f"Error getting candidate IRIs: {e}")
+    else:
+        logger.debug(
+            "Skipping constraint-based IRI filtering, full search will be performed"
+        )
+
+    alternative_groups = {}
+    for obj_type in obj_types:
+        assert obj_type in queries, f"Missing query for object type {obj_type}"
+        query, _ = queries[obj_type]
+        logger.debug(f"Searching with query '{query}' in '{obj_type.index_name}' index")
+        alternatives = manager.search_index(
+            obj_type.index_name,
+            query,
+            top_k,
+            identifier_maps[obj_type],
+        )
+        if alternatives:
+            alternative_groups[obj_type] = alternatives
+
+    logger.debug(
+        "Found "
+        f"{count_alternatives(ordered_alternatives(alternative_groups, queries))} alternatives:\n"
+        + format_alternatives(ordered_alternatives(alternative_groups, queries))
+    )
+    return alternative_groups
 
 
 def get_selection_prompt_and_options(
@@ -253,7 +430,7 @@ def get_selection_prompt_and_options(
     question: str,
     sparql: str,
     selections: list[Selection],
-    alternatives: list[Alternative],
+    alternatives: OrderedAlternatives,
 ) -> tuple[list[dict], list[str]]:
     system = f"""\
 You are a SPARQL expert. Your task is to select the best fitting \
@@ -279,7 +456,7 @@ fitting alternative."""
     user += f"\n\n{format_alternatives(alternatives)}"
     messages.append({"role": "user", "content": user})
 
-    options = ALT_LABELS[: len(alternatives) + 1]  # including none option
+    options = ALT_LABELS[: count_alternatives(alternatives) + 1]
     return messages, list(options)
 
 
@@ -547,6 +724,11 @@ def prepare_selection(
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
 
+    supports_variants = {
+        obj_type: manager.get_normalizer(obj_type.index_name).supports_variants
+        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY]
+    }
+
     _, items = extract_sparql_items(sparql, manager)
     items = [
         item
@@ -565,33 +747,42 @@ def prepare_selection(
     item = items[upper]
     target_alt = item.selection.alternative
 
-    # prefix and variant not used during training
-    # because we dont autocomplete for efficiency
-    # and only check for variant after selection
-    _, sparql, query, _ = skeleton.prepare_for_selection()
+    info = skeleton.prepare_for_selection()
+    queries = info.build_queries(supports_variants)
 
     # TODO: fix hardcoded k values
     k = 10 if is_val else random.randint(2, 10)
 
     if item.is_entity_or_property:
-        alternatives = manager.search_index(item.obj_type.value, query, k)
+        selection_logger = get_logger("GRISP SELECTION PREP")
+        alternative_groups = find_alternative_groups(
+            manager,
+            info.prefix,
+            queries,
+            k,
+            logger=selection_logger,
+            skip_constraint=True,
+        )
     else:
-        alternatives = []
+        alternative_groups = {}
 
     drop_infos = not is_val and random.random() < selection_p
     drop_target = not is_val and random.random() < selection_p
     shuffle_alts = not is_val and random.random() < selection_p
 
     if shuffle_alts:
-        # shuffle all alternatives to counter position bias
-        random.shuffle(alternatives)
+        # shuffle within each obj-type bucket while preserving grouped layout
+        for current in alternative_groups.values():
+            random.shuffle(current)
+
+    alternatives = ordered_alternatives(alternative_groups, queries)
 
     target_option: int | None = None
-    for i, alt in enumerate(alternatives):
+    for i, (alt, obj_type, _) in enumerate(alternatives):
         if drop_infos and alt.info:
             alt.info.clear()
 
-        if alt != target_alt:
+        if alt != target_alt or obj_type != item.obj_type:
             continue
 
         # drop target alternative 20% of the time during training
@@ -785,7 +976,8 @@ def main(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
     logger = get_logger("GRISP DATA", args.log_level)
 
-    manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
+    cfg = KgConfig(kg=args.knowledge_graph, info=KgInfo(endpoint=args.endpoint))
+    manager = load_kg_manager(cfg)
     manager.set_info_retrieval(enable=False)
 
     if os.path.exists(args.output_file) and not args.overwrite:

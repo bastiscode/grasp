@@ -4,8 +4,6 @@ import os
 import random
 import sys
 import time
-from collections import deque
-from dataclasses import dataclass
 from logging import Logger
 from typing import Generator
 
@@ -28,10 +26,13 @@ from universal_ml_utils.ops import consume_generator, extract_field, map_generat
 
 from grasp.baselines.grisp.data import (
     ALT_LABELS,
+    OrderedAlternatives,
     Skeleton,
-    format_alternatives,
+    count_alternatives,
+    find_alternative_groups,
     get_selection_prompt_and_options,
     get_skeleton_prompt,
+    ordered_alternatives_with_interleave,
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
 from grasp.baselines.grisp.utils import (
@@ -41,13 +42,10 @@ from grasp.baselines.grisp.utils import (
 )
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
-from grasp.sparql.types import (
-    Alternative,
-    ObjType,
-    Position,
-    Selection,
+from grasp.sparql.types import ObjType, Selection
+from grasp.sparql.utils import (
+    SPARQLExecuteException,
 )
-from grasp.sparql.utils import SPARQLExecuteException
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 
 
@@ -202,7 +200,7 @@ class GRISPRunConfig(BaseModel):
 
     selection_max_time: float = 60.0
     selection_top_k: int = 3
-    autocomplete: bool = True
+    constrain: bool = True
     backtrack: bool = True
     rerank: bool = True
     check_empty: bool = True
@@ -268,7 +266,7 @@ def generate_skeletons(
             continue
 
         try:
-            skeleton = Skeleton.parse(decoded, parser)
+            skeleton = Skeleton.parse(decoded, parser)  # type: ignore
         except Exception as e:
             logger.warning(f"Failed to parse skeleton, skipping: {e}")
             continue
@@ -291,7 +289,7 @@ def rerank_alternatives(
     question: str,
     sparql: str,
     selections: list[Selection],
-    alternatives: list[Alternative],
+    alternatives: OrderedAlternatives,
     logger: Logger,
 ) -> list[tuple[int | None, float]]:
     prompt, options = get_selection_prompt_and_options(
@@ -301,6 +299,7 @@ def rerank_alternatives(
         selections,
         alternatives,
     )
+    num_alternatives = count_alternatives(alternatives)
 
     enc = tokenizer.apply_chat_template(
         prompt,
@@ -348,101 +347,16 @@ def rerank_alternatives(
         "Reranked alternatives:\n"
         + "\n".join(
             f"Rank {i + 1}: "
-            f"{ALT_LABELS[index] if index < len(alternatives) else 'None'} "
+            f"{ALT_LABELS[index] if index < num_alternatives else 'None'} "
             f"(score={score:.2%})"
             for i, (score, index) in enumerate(zip(sorted_scores, sorted_indices))
         )
     )
 
     return [
-        (index if index < len(alternatives) else None, score)
+        (index if index < num_alternatives else None, score)
         for index, score in zip(sorted_indices, sorted_scores)
     ]
-
-
-@dataclass
-class Alternatives:
-    alternatives: deque[Alternative]
-    obj_type: ObjType
-
-    @property
-    def is_empty(self) -> bool:
-        return len(self.alternatives) == 0
-
-    def pop(self) -> Alternative:
-        assert not self.is_empty, "No alternatives left"
-        return self.alternatives.popleft()
-
-
-def find_alternatives(
-    manager: KgManager,
-    cfg: GRISPRunConfig,
-    prefix: str,
-    query: str,
-    logger: Logger,
-) -> Alternatives:
-    try:
-        logger.debug(f"Autocompleting SPARQL query prefix:\n{prefix}")
-        autocomp_sparql, query_type, position = manager.autocomplete_prefix(
-            prefix,
-            limit=MAX_IRIS + 1,
-        )
-        logger.debug(
-            f"Determined query type and position from prefix: "
-            f"'{query_type}', '{position.value}'"
-        )
-    except Exception as e:
-        logger.warning(f"Error autocompleting SPARQL prefix: {e}")
-        # select all triples as fallback
-        autocomp_sparql = "SELECT * WHERE { ?s ?p ?o } LIMIT 0"
-        query_type = "select"
-        # if autocompletion fails, we are typically at a property
-        position = Position.PROPERTY
-
-    if position == Position.PROPERTY:
-        obj_type = ObjType.PROPERTY
-    else:
-        obj_type = ObjType.ENTITY
-
-    identifier_map = None
-    if cfg.autocomplete and query_type != "ask":
-        try:
-            logger.debug(
-                f"Searching for fitting IRIs at position {position.value} "
-                f"with autocompletion SPARQL:\n{autocomp_sparql}"
-            )
-            identifier_map = manager.get_candidate_ids(
-                obj_type.index_name,
-                autocomp_sparql,
-                MAX_IRIS,
-                # 6 seconds to execute query, 3 to read result
-                request_timeout=(3.5, 6.0),
-                read_timeout=3.0,
-            )
-
-            logger.debug(
-                f"Got {len(identifier_map)} fitting IRIs for position {position.value}"
-            )
-        except Exception as e:
-            logger.warning(f"Error getting fitting IRIs: {e}")
-    else:
-        logger.debug("Skipping autocompletion of fitting IRIs, all used")
-
-    logger.debug(
-        f"Searching with query '{query}' from natural-language IRI in fitting IRIs"
-    )
-    alternatives = manager.search_index(
-        obj_type.index_name,
-        query,
-        cfg.selection_top_k,
-        identifier_map,
-    )
-
-    logger.debug(
-        f"Found {len(alternatives)} alternatives:\n{format_alternatives(alternatives)}"
-    )
-
-    return Alternatives(deque(alternatives), obj_type)
 
 
 def is_api_failure(exception: Exception) -> bool:
@@ -463,7 +377,12 @@ def select_iris_left_to_right(
 ) -> Generator[dict, None, str | None]:
     start = time.monotonic()
     # init empty memo
-    memo: dict[str, Alternatives] = {}
+    memo: dict[str, OrderedAlternatives] = {}
+
+    supports_variants = {
+        obj_type: manager.get_normalizer(obj_type.index_name).supports_variants
+        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY]
+    }
 
     while True:
         if time.monotonic() - start > cfg.selection_max_time:
@@ -512,14 +431,27 @@ def select_iris_left_to_right(
             yield {"type": "backtrack", "reason": "validation_failed"}
             continue
 
-        prefix, sparql, query, variant = skeleton.prepare_for_selection()
+        info = skeleton.prepare_for_selection()
+        queries = info.build_queries(supports_variants)
 
         # set alternatives for current placeholder
-        if prefix not in memo:
-            alternatives = find_alternatives(manager, cfg, prefix, query, logger)
-            memo[prefix] = alternatives
+        if info.prefix not in memo:
+            alternative_groups = find_alternative_groups(
+                manager,
+                info.prefix,
+                queries,
+                cfg.selection_top_k,
+                logger,
+                skip_constraint=not cfg.constrain,
+                max_candidates=MAX_IRIS,
+            )
+            memo[info.prefix] = ordered_alternatives_with_interleave(
+                alternative_groups,
+                queries,
+                interleave=not cfg.rerank,
+            )
 
-        alternatives = memo[prefix]
+        alternatives = memo[info.prefix]
         ranking = None
 
         if cfg.rerank:
@@ -531,26 +463,28 @@ def select_iris_left_to_right(
                 tokenizer,
                 manager,
                 question,
-                sparql,
+                info.sparql,
                 skeleton.selections,
-                list(alternatives.alternatives),
+                alternatives,
                 logger,
             )
 
         yield {
             "type": "alternatives",
             "index": skeleton.replaced,
-            "prefix": prefix,
-            "sparql": sparql,
-            "query": query,
-            "variant": variant,
+            "prefix": info.prefix,
+            "sparql": info.sparql,
+            "query": info.query,
+            "variant": info.variant,
             "alternatives": [
                 {
-                    "identifier": alt.get_identifier(),
-                    "label": alt.get_label(),
-                    "variants": alt.variants,
+                    "identifier": alternative.get_identifier(),
+                    "label": alternative.get_label(),
+                    "variants": alternative.variants,
+                    "obj_type": obj_type.value,
+                    "variant": variant,
                 }
-                for alt in alternatives.alternatives
+                for alternative, obj_type, variant in alternatives
             ],
             "ranking": ranking,
         }
@@ -562,12 +496,12 @@ def select_iris_left_to_right(
                 if index is None:
                     break
 
-                alt = alternatives.alternatives[index]
-                ranked_alts.append(alt)
+                ranked_alts.append(alternatives[index])
 
-            alternatives.alternatives = deque(ranked_alts)
+            alternatives = ranked_alts
+            memo[info.prefix] = alternatives
 
-        if alternatives.is_empty:
+        if len(alternatives) == 0:
             if skeleton.replaced == 0:
                 logger.debug(
                     "No valid alternatives left for the first placeholder, abandoning skeleton"
@@ -591,14 +525,15 @@ def select_iris_left_to_right(
             continue
 
         # just try out next alternative in order
-        alternative = alternatives.pop()
+        alternative, obj_type, variant = alternatives[0]
+        alternatives = alternatives[1:]
+        memo[info.prefix] = alternatives
         if not alternative.variants:
             # just to be sure to have no parsing errors
             variant = None
 
         if variant is not None:
-            assert alternative.variants, "Expected variants for alternative"
-            if variant not in alternative.variants:
+            if not alternative.variants or variant not in alternative.variants:
                 logger.debug(
                     f"Variant '{variant}' not found in alternative variants, "
                     f"trying next alternative"
@@ -619,16 +554,16 @@ def select_iris_left_to_right(
             )
 
         show_variants = [variant] if variant is not None else None
+        selection = Selection(
+            alternative=alternative,
+            variant=variant,
+            obj_type=obj_type,
+        )
+        skeleton.add_selection(selection, manager)
         logger.debug(
             f"Adding the following alternative at placholder {skeleton.replaced}/{skeleton.total}:\n"
             f"{alternative.get_selection_string(include_variants=show_variants)} "
         )
-        selection = Selection(
-            alternative=alternative,
-            variant=variant,
-            obj_type=alternatives.obj_type,
-        )
-        skeleton.add_selection(selection, manager)
 
         yield {
             "type": "select",

@@ -22,6 +22,7 @@ PN_LOCAL_ESC '\' ( '_' | '~' | '.' | '-' | '!' | '$' | '&' | "'" | '(' | ')' | '
 IRIREF '<' ([[^<>"{}|^`\\]--[\x00-\x20]])* '>'
 PNAME_NS {PN_PREFIX}? ':'
 PNAME_LN {PNAME_NS} {PN_LOCAL}
+BLANK_NODE_LABEL '_:' ({PN_CHARS_U}|[0-9])(( {PN_CHARS} | '.' )*{PN_CHARS})?
 LANGTAG '@' [a-zA-Z]+ (-[a-zA-Z0-9]+)*
 INTEGER [0-9]+
 DECIMAL [0-9]* '.' [0-9]+

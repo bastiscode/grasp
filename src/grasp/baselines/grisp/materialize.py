@@ -3,7 +3,6 @@ import os
 import random
 from typing import Iterator
 
-from search_rdf.model import SentenceTransformerModel
 from tqdm import tqdm
 from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger, setup_logging
@@ -15,7 +14,7 @@ from grasp.baselines.grisp.data import (
     prepare_selection,
     prepare_skeleton,
 )
-from grasp.configs import KgConfig
+from grasp.configs import KgConfig, KgInfo
 from grasp.manager import KgManager, load_kg_manager
 from grasp.utils import get_available_knowledge_graphs
 
@@ -169,7 +168,7 @@ def main(args: argparse.Namespace) -> None:
         val_samples = None
         samples = samples[skip:]
 
-    config = KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint)
+    config = KgConfig(kg=args.knowledge_graph, info=KgInfo(endpoint=args.endpoint))
     manager = load_kg_manager(config)
     manager.load_models()
 

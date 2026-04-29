@@ -299,7 +299,7 @@ def get_sparql_from_message(message: str | ResponseMessage | None) -> ToolCall |
 def get_answer_or_cancel(
     messages: list[Message],
 ) -> tuple[ToolCall | None, ToolCall | None]:
-    last_message: str | ResponseMessage | None = None
+    last_message: str | None = None
     last_answer: ToolCall | None = None
     last_cancel: ToolCall | None = None
     last_execute: ToolCall | None = None
@@ -321,7 +321,10 @@ def get_answer_or_cancel(
             # not assistant message
             continue
 
-        last_message = message.content.message
+        if isinstance(message.content.message, ResponseMessage):
+            last_message = message.content.message.content
+        else:
+            last_message = message.content.message
 
         for tool_call in message.content.tool_calls:
             if tool_call.name == "answer":

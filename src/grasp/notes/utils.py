@@ -1,4 +1,3 @@
-import os
 from typing import Any, Iterator
 
 from grasp.model import Message, Response
@@ -62,16 +61,6 @@ def format_output(output: Any | None, messages: list[Message]) -> str:
         fmt.append(f"Output after {step} steps:\n{output['formatted']}")
 
     return "\n\n".join(fmt)
-
-
-def link(src: str, dst: str) -> None:
-    src = os.path.abspath(src)
-    dst = os.path.abspath(dst)
-    if os.path.lexists(dst):
-        os.remove(dst)
-
-    rel = os.path.relpath(src, os.path.dirname(dst))
-    os.symlink(rel, dst)
 
 
 def consume_iterator(iterator: Iterator) -> None:

@@ -1,9 +1,13 @@
 import json
 import os
 import random
+import shutil
 import string
+import subprocess
+import sys
 from collections import Counter
 from logging import Logger
+from pathlib import Path
 
 from tqdm import tqdm
 from universal_ml_utils.io import dump_json, load_json, load_jsonl
@@ -258,11 +262,19 @@ You are given a question and two or more SPARQL query candidates \
 that attempt to answer the question. Your task is to determine \
 which of the candidate queries is the best answer to the question, \
 or whether they are all equally good. The query logic and correctness \
-should be your primary criteria for judgement, while other factors such as \
-additional information or human readability should be secondary. \
+should be your primary criteria for judgement. \
 Note that some candidates might indicate that no SPARQL query \
 has been generated/found, which should not automatically be considered worse \
 than a generated SPARQL query that is incorrect or irrelevant to the question.
+
+Importantly, you should not prefer one answer over the other purely because of \
+secondary factors such as formatting, verbosity, additional information, \
+or human readability (unless it is requested in the question). If the \
+core content and logic are equally good, you should also judge them as being \
+equally good. Similarly, questions can be ambiguous, and different candidates \
+might have different interpretations of them that are equally valid. If no \
+single interpretation is clearly better than the others, you should also judge \
+them as being equally good.
 
 Think before you finalize your answer with the provided judge function.""",
         ),
@@ -324,11 +336,11 @@ def evaluate_with_judge(
         assert judge_config.knowledge_graph is not None, (
             "Reformatting requires judge_config.knowledge_graph to be set"
         )
-        logger.info(
-            f"Loading KG manager for '{judge_config.knowledge_graph.kg}' "
-            "to reformat SPARQL candidates"
-        )
         manager = load_kg_manager(judge_config.knowledge_graph)
+        logger.info(
+            f'Loaded KG manager for "{judge_config.knowledge_graph.kg}" '
+            f"to reformat SPARQL candidates using the endpoint at {manager.endpoint}"
+        )
 
     def get_candidates(outputs: list[dict]) -> list[str]:
         candidates = []
@@ -492,3 +504,51 @@ def evaluate_with_judge(
 
     # reset tool choice to original
     judge_config.tool_choice = tool_choice
+
+
+def evaluate_with_expert(
+    input_file: str,
+    prediction_files: list[str],
+    evaluation_file: str,
+    kg_config: str | None = None,
+    port: int | None = None,
+    log_level: str | int | None = None,
+) -> int:
+    """Launch the blind expert evaluation Streamlit app.
+
+    Blocks until the Streamlit server exits and returns its exit code.
+    """
+    logger = get_logger("GRASP EVALUATION", log_level)
+
+    expert_app = Path(__file__).resolve().parent / "apps" / "expert.py"
+    if not expert_app.exists():
+        logger.error(f"Expert app not found at {expert_app}")
+        return 1
+
+    streamlit = shutil.which("streamlit")
+    if streamlit is None:
+        logger.error(
+            "The 'streamlit' executable was not found. Install it with "
+            "`pip install grasp-rdf[expert]` (or `pip install streamlit`) "
+            "to use the expert evaluation app."
+        )
+        return 1
+
+    cmd: list[str] = [streamlit, "run", str(expert_app)]
+    if port is not None:
+        cmd += ["--server.port", str(port)]
+    cmd.append("--browser.gatherUsageStats=false")
+    cmd.append("--")
+    cmd.append(input_file)
+    cmd.extend(prediction_files)
+    cmd += ["--evaluation", evaluation_file]
+    if kg_config:
+        cmd += ["--kg-config", kg_config]
+
+    logger.info(f"Launching expert app: {' '.join(cmd)}")
+    try:
+        return subprocess.run(cmd, check=False).returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        sys.stdout.flush()

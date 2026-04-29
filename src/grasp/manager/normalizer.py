@@ -27,6 +27,10 @@ class Normalizer:
     def default_variants(self) -> list[str] | None:
         return None
 
+    @property
+    def supports_variants(self) -> bool:
+        return self.default_variants() is not None
+
 
 class WikidataPropertyNormalizer(Normalizer):
     NORM_PREFIX = "http://www.wikidata.org/entity/"

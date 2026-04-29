@@ -598,7 +598,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                 result = stt_client.audio.transcriptions.create(
                     model=stt_config.model,
                     file=(filename, audio_bytes, content_type),
-                    language=stt_config.language,
+                    language=stt_config.language,  # type: ignore
                 )
                 return result.text
 

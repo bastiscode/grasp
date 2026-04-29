@@ -21,6 +21,16 @@ def get_index_dir(kg: str | None = None) -> str:
     return index_dir
 
 
+def link(src: str, dst: str) -> None:
+    src = os.path.abspath(src)
+    dst = os.path.abspath(dst)
+    if os.path.lexists(dst):
+        os.remove(dst)
+
+    rel = os.path.relpath(src, os.path.dirname(dst))
+    os.symlink(rel, dst)
+
+
 def get_available_knowledge_graphs() -> list[str]:
     index_dir = get_index_dir()
     if not os.path.exists(index_dir):

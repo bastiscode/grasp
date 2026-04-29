@@ -3,6 +3,7 @@ import json
 import os
 import random
 import sys
+from datetime import datetime
 from importlib import metadata
 
 from search_rdf.model import SentenceTransformerModel
@@ -19,20 +20,23 @@ from universal_ml_utils.io import (
 from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import consume_generator, extract_field
 
-from grasp.build import build_indices, get_data
+from grasp.build import get_data
 from grasp.build.data import merge_kgs
+from grasp.build.index import build_index
 from grasp.configs import (
     GraspConfig,
     JudgeConfig,
     NotesFromExplorationConfig,
     NotesFromOutputsConfig,
     NotesFromSamplesConfig,
+    NotesGenerateQuestionsConfig,
     ServerConfig,
 )
 from grasp.core import generate, load_notes, setup
-from grasp.evaluate import evaluate_f1, evaluate_with_judge
+from grasp.evaluate import evaluate_f1, evaluate_with_expert, evaluate_with_judge
 from grasp.functions import find_manager
 from grasp.notes import (
+    generate_questions,
     take_notes_from_exploration,
     take_notes_from_outputs,
     take_notes_from_samples,
@@ -45,6 +49,7 @@ from grasp.utils import (
     get_available_knowledge_graphs,
     get_index_dir,
     is_invalid_output,
+    link,
     parse_key_value_pairs,
 )
 
@@ -237,6 +242,19 @@ def parse_args() -> argparse.Namespace:
     )
     add_overwrite_arg(note_explore_parser)
 
+    note_generate_parser = note_subparsers.add_parser(
+        "generate-questions",
+        help="Generate plausible user questions over the configured "
+        "knowledge graphs as bootstrap samples for note taking",
+    )
+    add_config_arg(note_generate_parser)
+    note_generate_parser.add_argument(
+        "output_dir",
+        type=str,
+        help="Save generated samples in this directory",
+    )
+    add_overwrite_arg(note_generate_parser)
+
     # evaluate GRASP output
     eval_parser = subparsers.add_parser(
         "evaluate",
@@ -332,6 +350,40 @@ def parse_args() -> argparse.Namespace:
         help="Maximum duration for a single query in seconds if reformatting is enabled",
     )
 
+    eval_expert_parser = eval_subparsers.add_parser(
+        "expert",
+        help="Launch a blind expert evaluation Streamlit app over GRASP outputs",
+    )
+    eval_expert_parser.add_argument(
+        "input_file",
+        type=str,
+        help="Path to file with inputs in JSONL format",
+    )
+    eval_expert_parser.add_argument(
+        "prediction_files",
+        type=str,
+        nargs="+",
+        help="Paths to files with GRASP predictions as produced by the 'file' command",
+    )
+    eval_expert_parser.add_argument(
+        "evaluation_file",
+        type=str,
+        help="Path to file to read/write the expert evaluation JSON",
+    )
+    eval_expert_parser.add_argument(
+        "--kg-config",
+        type=str,
+        default=None,
+        help="Optional path to a KgConfig YAML; if provided, ground-truth SPARQL "
+        "from the input file is executed against the corresponding KG",
+    )
+    eval_expert_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Optional port for the Streamlit server",
+    )
+
     eval_parser.add_argument(
         "--retry-failed",
         action="store_true",
@@ -342,12 +394,17 @@ def parse_args() -> argparse.Namespace:
     # get data for GRASP indices
     data_parser = subparsers.add_parser(
         "data",
-        help="Get entity and property data for a knowledge graph",
+        help="Get data for knowledge graph index",
     )
     data_parser.add_argument(
         "knowledge_graph",
         type=str,
         help="Knowledge graph to get data for",
+    )
+    data_parser.add_argument(
+        "index",
+        choices=["entities", "properties", "literals"],
+        help="Index to get data for",
     )
     data_parser.add_argument(
         "--endpoint",
@@ -356,14 +413,9 @@ def parse_args() -> argparse.Namespace:
         "(if not given, the endpoint at qlever.cs.uni-freiubrg.de/api/<kg> is used)",
     )
     data_parser.add_argument(
-        "--entity-sparql",
+        "--index-sparql",
         type=str,
-        help="Path to file with custom entity SPARQL query",
-    )
-    data_parser.add_argument(
-        "--property-sparql",
-        type=str,
-        help="Path to file with custom property SPARQL query",
+        help="Path to file with custom index SPARQL query",
     )
     data_parser.add_argument(
         "--query-parameters",
@@ -386,23 +438,15 @@ def parse_args() -> argparse.Namespace:
     data_parser.add_argument(
         "--add-id-as-label",
         type=str,
-        default=None,
-        choices=["always", "empty"],
-        help="When to add a label fallback based on entity/property IDs",
+        default="auto",
+        choices=["auto", "never", "always", "empty"],
+        help="When to add a label fallback based on ID",
     )
     data_parser.add_argument(
-        "--entity-file",
+        "--data-file",
         type=str,
         default=None,
-        help="Path to file with entity SPARQL results in JSON format "
-        "(skip live query for entities)",
-    )
-    data_parser.add_argument(
-        "--property-file",
-        type=str,
-        default=None,
-        help="Path to file with property SPARQL results in JSON format "
-        "(skip live query for properties)",
+        help="Path to file with SPARQL results in JSON format (skip live query)",
     )
     add_overwrite_arg(data_parser)
 
@@ -421,6 +465,11 @@ def parse_args() -> argparse.Namespace:
         help="Knowledge graphs to merge",
     )
     merge_parser.add_argument(
+        "index",
+        choices=["entities", "properties", "literals"],
+        help="Index to merge data for",
+    )
+    merge_parser.add_argument(
         "knowledge_graph",
         type=str,
         help="Name of the merged knowledge graph",
@@ -430,7 +479,7 @@ def parse_args() -> argparse.Namespace:
     # build GRASP indices
     index_parser = subparsers.add_parser(
         "index",
-        help="Build entity and property indices for a knowledge graph",
+        help="Build an index for a knowledge graph",
     )
     index_parser.add_argument(
         "knowledge_graph",
@@ -439,18 +488,16 @@ def parse_args() -> argparse.Namespace:
         help="Knowledge graph to build indices for",
     )
     index_parser.add_argument(
-        "--entities-type",
-        type=str,
-        choices=["keyword", "fuzzy", "embedding"],
-        default="fuzzy",
-        help="Type of entity index to build",
+        "index",
+        choices=["entities", "properties", "literals"],
+        help="Index to build",
     )
     index_parser.add_argument(
-        "--properties-type",
+        "--index-type",
         type=str,
-        choices=["keyword", "fuzzy", "embedding"],
-        default="embedding",
-        help="Type of property index to build",
+        choices=["auto", "keyword", "fuzzy", "embedding"],
+        default="auto",
+        help="Type of index to build",
     )
     index_parser.add_argument(
         "--emb-model",
@@ -527,10 +574,36 @@ def parse_args() -> argparse.Namespace:
         help="User notes for the info phase (prefixes and description)",
     )
     auto_setup_parser.add_argument(
-        "--index-notes",
+        "--entity-index-notes",
         type=str,
         default=None,
-        help="User notes for the index phases (entity and property index/info SPARQLs)",
+        help="User notes for the entity index (entity index and info SPARQL)",
+    )
+    auto_setup_parser.add_argument(
+        "--property-index-notes",
+        type=str,
+        default=None,
+        help="User notes for the property index (property index and info SPARQL)",
+    )
+    auto_setup_parser.add_argument(
+        "--literal-index-notes",
+        type=str,
+        default=None,
+        help="User notes for the literal index (literal index and info SPARQL)",
+    )
+    auto_setup_parser.add_argument(
+        "phases",
+        nargs="?",
+        choices=[
+            "all",
+            "info",
+            "indices",
+            "entities",
+            "properties",
+            "literals",
+        ],
+        default="all",
+        help="Which phase(s) to run (default: all)",
     )
 
     # visualize trace from GRASP output
@@ -702,26 +775,20 @@ def get_grasp_data(args: argparse.Namespace) -> None:
     params = parse_key_value_pairs(args.query_parameters or [])
     headers = parse_key_value_pairs(args.query_headers or [])
 
-    if args.entity_sparql is not None:
-        args.entity_sparql = load_text(args.entity_sparql).strip()
+    if args.index_sparql is not None:
+        args.index_sparql = load_text(args.index_sparql).strip()
         for key, value in replace.items():
-            args.entity_sparql = args.entity_sparql.replace(f"{{{key}}}", value)
-
-    if args.property_sparql is not None:
-        args.property_sparql = load_text(args.property_sparql).strip()
-        for key, value in replace.items():
-            args.property_sparql = args.property_sparql.replace(f"{{{key}}}", value)
+            args.index_sparql = args.index_sparql.replace(f"{{{key}}}", value)
 
     get_data(
         args.knowledge_graph,
+        args.index,
         args.endpoint,
-        args.entity_sparql,
-        args.property_sparql,
+        args.index_sparql,
+        args.data_file,
+        args.add_id_as_label,
         params,
         headers,
-        args.add_id_as_label,
-        args.entity_file,
-        args.property_file,
         args.log_level,
         args.overwrite,
     )
@@ -751,6 +818,13 @@ def take_grasp_notes(args: argparse.Namespace) -> None:
     elif note_cmd == "explore":
         take_notes_from_exploration(
             NotesFromExplorationConfig(**config),
+            args.output_dir,
+            args.overwrite,
+            args.log_level,
+        )
+    elif note_cmd == "generate-questions":
+        generate_questions(
+            NotesGenerateQuestionsConfig(**config),
             args.output_dir,
             args.overwrite,
             args.log_level,
@@ -789,6 +863,16 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             args.log_level,
         )
 
+    elif eval_cmd == "expert":
+        evaluate_with_expert(
+            args.input_file,
+            args.prediction_files,
+            args.evaluation_file,
+            args.kg_config,
+            args.port,
+            args.log_level,
+        )
+
 
 def show_grasp(args: argparse.Namespace) -> None:
     separator = colored("=" * 80, "cyan")
@@ -810,13 +894,6 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
     logger = get_logger("GRASP AUTO-SETUP", args.log_level)
     config = GraspConfig(**load_config(args.config))
 
-    if not config.know_before_use:
-        logger.warning(
-            "`know_before_use` is not enabled in the config, but it is required "
-            "for auto-setup. Enabling it and continuing."
-        )
-        config.know_before_use = True
-
     # load KG manager, gracefully handling missing indices
     managers, _ = setup(config)
     if not managers:
@@ -835,19 +912,51 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
 
     # run phases sequentially: info first (so prefixes are available),
     # then entity index, then property index
-    phases = [
-        {"phase": "info", "notes": args.info_notes},
-        {"phase": "index", "name": "entities", "notes": args.index_notes},
-        {"phase": "index", "name": "properties", "notes": args.index_notes},
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    all_phases = [
+        ("info", {"phase": "info", "notes": args.info_notes}),
+        (
+            "entities",
+            {"phase": "index", "name": "entities", "notes": args.entity_index_notes},
+        ),
+        (
+            "properties",
+            {
+                "phase": "index",
+                "name": "properties",
+                "notes": args.property_index_notes,
+            },
+        ),
+        (
+            "literals",
+            {
+                "phase": "index",
+                "name": "literals",
+                "notes": args.literal_index_notes,
+            },
+        ),
     ]
+    selected = {
+        "all": {"info", "entities", "properties", "literals"},
+        "info": {"info"},
+        "indices": {"entities", "properties", "literals"},
+        "entities": {"entities"},
+        "properties": {"properties"},
+        "literals": {"literals"},
+    }[args.phases]
+    phases = [payload for tag, payload in all_phases if tag in selected]
 
-    def backup(file: str) -> None:
-        # copy the file to file.prev to enable the user to restore it if
-        # auto-setup fails
-        if os.path.exists(file):
-            backup_file = file + ".prev"
-            os.replace(file, backup_file)
-            logger.info(f"Backed up existing file {file} to {backup_file}")
+    def dump_latest(path: str, payload, text: bool = False) -> str:
+        # write to a timestamped sibling, then point `path` at it via a
+        # relative symlink. prior timestamped files are preserved.
+        stem, ext = os.path.splitext(path)
+        stamped = f"{stem}.{timestamp}{ext}"
+        if text:
+            dump_text(payload, stamped)
+        else:
+            dump_json(payload, stamped, indent=2)
+        link(stamped, path)
+        return stamped
 
     for phase_input in phases:
         phase = phase_input["phase"]
@@ -876,9 +985,10 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
         # save the full trace so we can inspect it
         # independent of success or failure
         trace_path = os.path.join(trace_dir, "auto_setup.json")
-        backup(trace_path)
-        dump_json(result, trace_path, indent=2)
-        logger.info(f"Saved auto-setup {phase} trace to {trace_path}")
+        stamped = dump_latest(trace_path, result)
+        logger.info(
+            f"Saved auto-setup {phase} trace to {stamped} (latest: {trace_path})"
+        )
 
         output = result.get("output")
         if output is None:
@@ -888,26 +998,27 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
         # save outputs to disk
         if phase == "info":
             path = os.path.join(kg_dir, "info.json")
-            backup(path)
-            dump_json(output["info"], path, indent=2)
-            logger.info(f"Saved prefixes and description to {path}")
+            stamped = dump_latest(path, output["info"])
+            logger.info(f"Saved prefixes and description to {stamped} (latest: {path})")
             continue
 
         name = phase_input["name"]
         for typ in ["index", "info"]:
             sparql = output["sparql"].get(typ)
+            path = os.path.join(kg_dir, name, f"{typ}.sparql")
+
             if sparql is None:
+                if os.path.lexists(path):
+                    os.unlink(path)
+                    logger.info(f"Unlinked {name} {typ} SPARQL (query set to None; previous timestamped queries are retained)")
                 continue
 
-            path = os.path.join(kg_dir, name, f"{typ}.sparql")
-            backup(path)
-            dump_text(sparql, path)
-            logger.info(f"Saved {name} {typ} SPARQL to {path}")
+            stamped = dump_latest(path, sparql, text=True)
+            logger.info(f"Saved {name} {typ} SPARQL to {stamped} (latest: {path})")
 
         path = os.path.join(kg_dir, name, "info.json")
-        backup(path)
-        dump_json(output["info"], path, indent=2)
-        logger.info(f"Saved {name} description to {path}")
+        stamped = dump_latest(path, output["info"])
+        logger.info(f"Saved {name} description to {stamped} (latest: {path})")
 
 
 def main():
@@ -921,22 +1032,23 @@ def main():
     elif args.command == "merge":
         merge_kgs(
             args.knowledge_graphs,
+            args.index,
             args.knowledge_graph,
             args.overwrite,
             args.log_level,
         )
 
     elif args.command == "index":
-        build_indices(
+        build_index(
             args.knowledge_graph,
-            args.entities_type,
-            args.properties_type,
-            args.overwrite,
+            args.index,
+            args.index_type,
+            args.emb_model,
+            args.emb_device,
+            args.emb_batch_size,
+            args.emb_dim,
             args.log_level,
-            embedding_model=args.emb_model,
-            embedding_device=args.emb_device,
-            embedding_batch_size=args.emb_batch_size,
-            embedding_dim=args.emb_dim,
+            args.overwrite,
         )
 
     elif args.command == "notes":

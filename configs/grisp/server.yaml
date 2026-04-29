@@ -1,8 +1,9 @@
 knowledge_graph:
   kg: env(KG:wikidata)
-  endpoint: env(ENDPOINT:null)
   entities_type: env(ENTITIES_TYPE:fuzzy)
   properties_type: env(PROPERTIES_TYPE:embedding)
+  info:
+    endpoint: env(ENDPOINT:null)
 
 run_directory: env(RUN)
 selection_run: env(SELECTION_RUN:null)

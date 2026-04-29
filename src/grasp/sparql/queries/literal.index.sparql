@@ -1,0 +1,28 @@
+PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos:   <http://www.w3.org/2004/02/skos/core#>
+PREFIX schema: <http://schema.org/>
+PREFIX dct:    <http://purl.org/dc/terms/>
+
+# In an actual literal index query, you most likely want to
+# to explicitly set the properties to be considered
+
+SELECT DISTINCT ?id ?value ?tags WHERE {
+  {
+    SELECT ?id (COUNT(*) AS ?score) WHERE {
+      SELECT DISTINCT ?id ?p ?s WHERE {
+        ?s ?p ?id .
+        FILTER(ISLITERAL(?id))
+        FILTER(?p NOT IN (
+          rdfs:label, rdfs:comment,
+          skos:altLabel, skos:prefLabel, skos:hiddenLabel,
+          schema:name, schema:description,
+          dct:title, dct:description
+        ))
+      }
+    }
+    GROUP BY ?id
+    HAVING (?score >= 10)
+  }
+  BIND(STR(?id) AS ?value)
+  BIND("main" AS ?tags)
+} ORDER BY DESC(?score) ?id DESC(?tags)

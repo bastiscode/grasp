@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import sys
@@ -10,34 +9,69 @@ import natsort
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
-from universal_ml_utils.io import load_json, load_jsonl
+from universal_ml_utils.io import load_jsonl
+from universal_ml_utils.logging import get_logger
 
-from grasp.model import Message
 from grasp.utils import is_invalid_evaluation, is_invalid_output
+
+from grasp.apps.shared import (
+    _mtime,
+    display_name_from_file,
+    load_model_outputs,
+    load_rank_json,
+    parse_model_name,
+    render_messages,
+    render_output_panel,
+    try_load_json,
+    try_load_model_outputs,
+    try_load_rank_json,
+)
+
+logger = get_logger("EVALUATION APP")
+
+STYLE_BEST = "background-color: #005500; color: white; font-weight: bold"
+STYLE_SECOND = "background-color: #003366; color: white"
+STYLE_INVALID = "background-color: #990000; color: white"
+STYLE_MISSING = "background-color: #444444; color: #ffffff"
 
 # Set page configuration
 st.set_page_config(page_title="SPARQL QA Evaluation", page_icon="📊", layout="wide")
 
 
-def parse_model_name(filename):
-    """Parse model name and additional info from filename."""
-    # Remove .jsonl extension
-    basename = os.path.basename(filename)
-    if basename.endswith(".jsonl"):
-        basename = basename[:-6]
-
-    # Split by the first dot
-    parts = basename.split(".", 1)
-    model_name = parts[0]
-    additional_info = parts[1] if len(parts) > 1 else ""
-
-    return model_name, additional_info
+def widget_changed(tracker_key: str, current_value) -> bool:
+    """Return True if `current_value` differs from the last value stored under `tracker_key`."""
+    changed = st.session_state.get(tracker_key) != current_value
+    st.session_state[tracker_key] = current_value
+    return changed
 
 
-# Using universal_ml_utils.io.load_json and load_jsonl functions
+def select_kg_and_benchmark(available_data: dict) -> tuple[str, str]:
+    """Render the KG + benchmark sidebar selectboxes with conventional defaults."""
+    kg_options = list(available_data.keys())
+    default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
+    selected_kg = st.sidebar.selectbox("Select Group", kg_options, index=default_index)
+
+    benchmark_options = list(available_data[selected_kg].keys())
+    default_benchmark = (
+        "qald10"
+        if selected_kg == "wikidata"
+        else "wqsp"
+        if selected_kg == "freebase"
+        else benchmark_options[0]
+    )
+    default_index = (
+        benchmark_options.index(default_benchmark)
+        if default_benchmark in benchmark_options
+        else 0
+    )
+    selected_benchmark = st.sidebar.selectbox(
+        "Select Benchmark", benchmark_options, index=default_index
+    )
+    return selected_kg, selected_benchmark
 
 
-def load_available_data():
+@st.cache_data(ttl=30)
+def load_available_data() -> dict:
     """Find all available benchmarks and models."""
     data_root = Path(sys.argv[1])
     benchmarks = {}
@@ -76,20 +110,13 @@ def load_available_data():
                     if kg not in benchmarks:
                         benchmarks[kg] = {}
 
-                    # Parse model names and additional info
-                    models_info = {}
-                    for model_file, eval_file in model_files:
-                        model_name, additional_info = parse_model_name(model_file.stem)
-                        display_name = (
-                            f"{model_name} ({additional_info})"
-                            if additional_info
-                            else model_name
-                        )
-
-                        models_info[display_name] = {
+                    models_info = {
+                        display_name_from_file(model_file): {
                             "output_file": str(model_file),
                             "eval_file": str(eval_file),
                         }
+                        for model_file, eval_file in model_files
+                    }
 
                     benchmarks[kg][benchmark] = {
                         "test_file": str(test_file),
@@ -99,7 +126,8 @@ def load_available_data():
     return benchmarks
 
 
-def load_ranking_data():
+@st.cache_data(ttl=30)
+def load_ranking_data() -> dict:
     """Find all available ranking evaluation files, organized by ranking filename."""
     data_root = Path(sys.argv[1])
     rankings = {}
@@ -134,25 +162,9 @@ def load_ranking_data():
     return rankings
 
 
-def load_model_outputs(output_file):
-    """Load model outputs from a JSONL file and convert to dictionary by ID."""
-    outputs_list = load_jsonl(output_file)
-    outputs_dict = {}
-
-    # Convert list to dictionary by ID
-    for output in outputs_list:
-        if output is None:
-            continue
-
-        assert output["id"] not in outputs_dict, (
-            f"Duplicate id {output['id']} in {output_file}"
-        )
-        outputs_dict[output["id"]] = output
-
-    return outputs_dict
-
-
-def calculate_average_steps_and_time(outputs_dict):
+def calculate_average_steps_and_time(
+    outputs_dict: dict,
+) -> tuple[float | None, float | None]:
     """
     Calculate average steps and time from model outputs.
 
@@ -189,11 +201,11 @@ def calculate_average_steps_and_time(outputs_dict):
 
 
 def calculate_metrics(
-    ground_truth,
-    model_outputs,
-    model_evaluations,
-    empty_target_valid=False,
-):
+    ground_truth: list,
+    model_outputs: dict,
+    model_evaluations: dict,
+    empty_target_valid: bool = False,
+) -> dict:
     total = len(ground_truth)
 
     num_outputs = len(model_outputs)
@@ -254,11 +266,11 @@ def calculate_metrics(
 
 
 def load_and_process_data(
-    test_file,
-    model_info,
-    restrict_to_common_valid=False,
-    empty_target_valid=False,
-):
+    test_file: str,
+    model_info: dict,
+    restrict_to_common_valid: bool = False,
+    empty_target_valid: bool = False,
+) -> tuple[list, dict, dict, dict]:
     """Load and process data for the selected benchmark and models."""
     # Load test data (ground truth)
     ground_truth = load_jsonl(test_file)
@@ -271,28 +283,15 @@ def load_and_process_data(
         output_file = model_files["output_file"]
         eval_file = model_files["eval_file"]
 
-        # Load model output file
-        try:
-            model_outputs[model_name] = load_model_outputs(output_file)
-        except Exception as e:
-            # Log error but don't display in UI
-            print(f"Error loading model output file {output_file}: {e}")
-            model_outputs[model_name] = {}
+        model_outputs[model_name] = try_load_model_outputs(output_file)
 
-        # Load evaluation data
-        try:
-            eval_data = load_json(eval_file)
-            # restrict to those for which we have model outputs
-            eval_data = {
-                id: eval
-                for id, eval in eval_data.items()
-                if id in model_outputs[model_name]
-            }
-            model_eval_data[model_name] = eval_data
-        except Exception as e:
-            # Log error but don't display in UI
-            print(f"Error loading evaluation file {eval_file}: {e}")
-            model_eval_data[model_name] = {}
+        eval_data = try_load_json(eval_file, default={})
+        # Restrict to ids for which we have model outputs
+        model_eval_data[model_name] = {
+            id: ev
+            for id, ev in eval_data.items()
+            if id in model_outputs[model_name]
+        }
 
     # Find common ids that are valid (output and evaluation) across
     # all SELECTED models (only those in model_info)
@@ -345,7 +344,9 @@ def load_and_process_data(
     return ground_truth, model_outputs, model_eval_data, metrics
 
 
-def setup_model_selection(available_models, selected_models_dict=None):
+def setup_model_selection(
+    available_models, selected_models_dict: dict | list | None = None
+) -> dict | list:
     """
     Setup model selection UI with regex filtering and checkboxes in expanders.
 
@@ -356,44 +357,21 @@ def setup_model_selection(available_models, selected_models_dict=None):
     Returns:
     - Dictionary with selected models (key: model name, value: True if selected)
     """
-    # Initialize session state for model selection
-    if "model_regex" not in st.session_state:
-        st.session_state.model_regex = ""
-
-    if "model_selections" not in st.session_state:
-        st.session_state.model_selections = {}
-
-    # Add regex filter for model selection
+    # Regex filter — widget key is the source of truth
     model_regex = st.sidebar.text_input(
         "Filter models by regex pattern",
-        value=st.session_state.model_regex,
-        key="model_regex_input",
+        key="model_regex",
         help="Enter a regex pattern to automatically select matching models and deselect non-matching ones. Example: 'llama|phi' selects all LLaMA and Phi models.",
     )
 
-    # Update stored regex value
-    st.session_state.model_regex = model_regex
+    # Detect regex changes across reruns
+    regex_changed = widget_changed("previous_model_regex", model_regex)
 
-    # Check if regex changed (compare to previous value)
-    regex_changed = False
-    if "previous_model_regex" not in st.session_state:
-        st.session_state.previous_model_regex = ""
-        regex_changed = model_regex != ""
-    else:
-        regex_changed = model_regex != st.session_state.previous_model_regex
-
-    # Update previous regex pattern
-    st.session_state.previous_model_regex = model_regex
-
-    # Dictionary to track selected models
-    if selected_models_dict is None:
-        selected_models = {}
-    else:
-        selected_models = selected_models_dict
+    selected_models = {} if selected_models_dict is None else selected_models_dict
 
     # Group models by name (before the first dot)
     model_groups = defaultdict(list)
-    model_list = (
+    model_list = list(
         available_models.keys()
         if isinstance(available_models, dict)
         else available_models
@@ -406,120 +384,66 @@ def setup_model_selection(available_models, selected_models_dict=None):
         )
         model_groups[model_name].append(model_display_name)
 
-    # Find models that match the regex if provided
-    matching_models = set()
-
-    # If regex changed, handle selection updates
-    if regex_changed:
-        # If empty regex, select all models
-        if not model_regex:
-            for model in model_list:
-                st.session_state.model_selections[model] = True
-        else:
-            # Otherwise, use regex to determine selections
-            try:
-                regex = re.compile(model_regex)
-                # Find all models that match the regex
-                for model_name, variants in model_groups.items():
-                    for variant in variants:
-                        if regex.search(variant):
-                            matching_models.add(variant)
-
-                # Show a warning if no models match at all
-                if not matching_models:
-                    st.sidebar.warning(f"No models match the pattern '{model_regex}'")
-
-                # Update selections based on matches
-                for model in model_list:
-                    matches = model in matching_models
-                    st.session_state.model_selections[model] = matches
-
-            except re.error as e:
-                st.sidebar.error(f"Invalid regex pattern: {e}")
-                # In case of error, don't change selections
-    elif model_regex:
-        # If regex didn't change but is non-empty, still build matching_models for display
+    # Compile regex once (if any)
+    compiled_regex = None
+    if model_regex:
         try:
-            regex = re.compile(model_regex)
-            for model_name, variants in model_groups.items():
-                for variant in variants:
-                    if regex.search(variant):
-                        matching_models.add(variant)
-
-            if not matching_models:
-                st.sidebar.warning(f"No models match the pattern '{model_regex}'")
+            compiled_regex = re.compile(model_regex)
         except re.error as e:
             st.sidebar.error(f"Invalid regex pattern: {e}")
 
-    # Initialize any missing models in state with default selection True
-    for model in model_list:
-        if model not in st.session_state.model_selections:
-            # Default is selected (True)
-            st.session_state.model_selections[model] = True
-
-    # Display checkboxes for each model in expanders grouped by model name
-    for model_name, variants in sorted(model_groups.items()):
-        # Create an expander for each model family
-        with st.sidebar.expander(f"**{model_name}**", expanded=False):
-            for variant in sorted(variants):
-                # Get display name without parentheses
-                display_name = variant.replace(model_name + " (", "").replace(")", "")
-                if display_name == variant:  # No parentheses found
-                    checkbox_label = "default"
-                else:
-                    checkbox_label = display_name
-
-                # Use the stored value from session state
-                current_value = st.session_state.model_selections.get(variant, True)
-
-                # Create checkbox with current value
-                selected = st.checkbox(
-                    checkbox_label, value=current_value, key=f"model_{variant}"
+    # On regex change, update widget state directly before widgets render.
+    # Streamlit prioritises session_state[key] over `value=` on re-renders,
+    # so writing the widget key is the only way to programmatically toggle it.
+    if regex_changed:
+        if not model_regex:
+            for variant in model_list:
+                st.session_state[f"model_{variant}"] = True
+        elif compiled_regex is not None:
+            for variant in model_list:
+                st.session_state[f"model_{variant}"] = bool(
+                    compiled_regex.search(variant)
                 )
 
-                # Update both the returned dictionary and the session state
+    # Warn if a non-empty regex matches nothing
+    if compiled_regex is not None and not any(
+        compiled_regex.search(v) for v in model_list
+    ):
+        st.sidebar.warning(f"No models match the pattern '{model_regex}'")
+
+    # Render checkboxes. Widget keys are the source of truth.
+    for model_name, variants in sorted(model_groups.items()):
+        with st.sidebar.expander(f"**{model_name}**", expanded=False):
+            for variant in sorted(variants):
+                display_name = variant.replace(model_name + " (", "").replace(")", "")
+                checkbox_label = "default" if display_name == variant else display_name
+
+                key = f"model_{variant}"
+                if key not in st.session_state:
+                    st.session_state[key] = (
+                        bool(compiled_regex.search(variant))
+                        if compiled_regex is not None
+                        else True
+                    )
+                selected = st.checkbox(checkbox_label, key=key)
+
                 if isinstance(selected_models, dict):
                     selected_models[variant] = selected
                 elif isinstance(selected_models, list) and selected:
                     selected_models.append(variant)
 
-                # Update session state
-                st.session_state.model_selections[variant] = selected
-
     return selected_models
 
 
 # Additional view functions
-def show_predictions_view(available_data):
+def show_predictions_view(available_data: dict) -> None:
     """Show a view focused on examining model outputs in detail."""
     st.title("Outputs Analysis")
 
     # Sidebar for benchmark and model selection
     st.sidebar.title("Benchmark Settings")
 
-    kg_options = list(available_data.keys())
-    # Set Wikidata as default if available
-    default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
-    selected_kg = st.sidebar.selectbox("Select Group", kg_options, index=default_index)
-
-    benchmark_options = list(available_data[selected_kg].keys())
-    # Set default benchmark based on selected knowledge graph
-    default_benchmark = (
-        "qald10"
-        if selected_kg == "wikidata"
-        else "wqsp"
-        if selected_kg == "freebase"
-        else benchmark_options[0]
-    )
-    # Make sure the default benchmark exists in the options
-    default_index = (
-        benchmark_options.index(default_benchmark)
-        if default_benchmark in benchmark_options
-        else 0
-    )
-    selected_benchmark = st.sidebar.selectbox(
-        "Select Benchmark", benchmark_options, index=default_index
-    )
+    selected_kg, selected_benchmark = select_kg_and_benchmark(available_data)
 
     # Get available models for this benchmark
     benchmark_info = available_data[selected_kg][selected_benchmark]
@@ -547,10 +471,8 @@ def show_predictions_view(available_data):
 
     # Add regex filter for model selection
     model_regex = st.sidebar.text_input(
-        "Filter models by regex pattern", st.session_state.stored_model_regex
+        "Filter models by regex pattern", key="predictions_model_regex"
     )
-    # Update session state with current filter
-    st.session_state.stored_model_regex = model_regex
 
     # Determine which model options to display
     display_options = model_options
@@ -602,11 +524,7 @@ def show_predictions_view(available_data):
     config_file = available_models[selected_model]["output_file"].replace(
         ".jsonl", ".config.json"
     )
-    try:
-        config_data = load_json(config_file)
-    except Exception as e:
-        print(f"Error loading config file {config_file}: {e}")
-        config_data = {}
+    config_data = try_load_json(config_file, default={})
 
     # Get outputs and evaluations for the selected model
     model_name = selected_model
@@ -763,120 +681,13 @@ def show_predictions_view(available_data):
             with st.expander("Model Configuration"):
                 st.json(config_data)
 
-        # Display full generation process (messages)
-        if "messages" not in output:
-            st.info("No generation process (messages) available for this output.")
-            return
-
         st.subheader("Generation Process")
-
-        if new_format:
-            # try new message format first
-            try:
-                messages = [Message(**msg) for msg in output["messages"]]
-                for i, message in enumerate(messages):
-                    role = message.role.capitalize()
-                    if isinstance(message.content, str):
-                        if not message.content:
-                            continue  # Skip empty messages
-
-                        st.markdown(f"**{role}:**")
-                        st.markdown(message.content)
-
-                    else:
-                        content = message.content.get_content()
-                        if not content and not message.content.tool_calls:
-                            continue  # Skip empty messages
-
-                        if "reasoning" in content:
-                            st.markdown("**Reasoning:**")
-                            st.markdown(content["reasoning"])
-
-                        if "content" in content:
-                            if "reasoning" in content:
-                                st.markdown("**Content:**")
-                            st.markdown(content["content"])
-
-                        for tool_call in message.content.tool_calls:
-                            st.markdown(f"**Tool: {tool_call.name}**")
-                            st.code(
-                                json.dumps(tool_call.args, indent=2), language="json"
-                            )
-                            st.markdown("**Result:**")
-                            st.markdown(tool_call.result)
-
-                    if i < len(messages) - 1:
-                        st.markdown("---")
-
-                return
-            except Exception:
-                pass
-
-        # fallback to old message format
-        def display_tool_call(call, tool_responses):
-            """Display a single tool call and its response."""
-            tool_call_id = call.get("id")
-            tool_name = call.get("function", {}).get("name", "unknown")
-            tool_args = call.get("function", {}).get("arguments", "{}")
-
-            # Format arguments
-            formatted_args = json.dumps(json.loads(tool_args), indent=2)
-
-            # Show tool call
-            st.markdown(f"**Tool: {tool_name}**")
-            st.code(formatted_args, language="json")
-
-            # Show corresponding tool response if available
-            if tool_call_id in tool_responses:
-                tool_response = tool_responses[tool_call_id]
-                tool_content = tool_response.get("content", "")
-                st.markdown("**Result:**")
-                st.markdown(tool_content)
-
-        # First, build a lookup map for tool responses by tool_call_id
-        tool_responses = {}
-        for msg in output["messages"]:
-            if msg["role"] == "tool":
-                tool_responses[msg["tool_call_id"]] = msg
-
-        # Now process messages with tool calls integrated
-        for i, message in enumerate(output["messages"]):
-            role = message.get("role", "unknown")
-
-            # Skip tool messages as we'll show them with their calls
-            if role == "tool":
-                continue
-
-            reasoning_content = message.get("reasoning_content", "").strip()
-            content = message.get("content", "").strip()
-            tool_calls = message.get("tool_calls", [])
-            if not reasoning_content and not content and not tool_calls:
-                continue  # Skip empty messages
-
-            # Display role header
-            st.markdown(f"**{role.capitalize()}:**")
-
-            # Show reasoning content if available
-            if reasoning_content:
-                st.markdown("**Reasoning:**")
-                st.markdown(reasoning_content)
-
-            # Show message content
-            if content:
-                if reasoning_content:
-                    st.markdown("**Content:**")
-                st.markdown(content)
-
-            # Handle tool calls in assistant messages
-            for call in tool_calls:
-                display_tool_call(call, tool_responses)
-
-            # Add separator between messages
-            if i < len(output["messages"]) - 1:
-                st.markdown("---")
+        render_messages(output, new_format=new_format)
 
 
-def validate_ranking_consistency(benchmark_entries):
+def validate_ranking_consistency(
+    benchmark_entries: list, rank_data_by_path: dict
+) -> None:
     """
     Validate consistency across ranking files.
 
@@ -894,39 +705,25 @@ def validate_ranking_consistency(benchmark_entries):
     for entry in benchmark_entries:
         kg = entry["kg"]
         benchmark = entry["benchmark"]
-        rank_file = entry["filepath"]
-
-        try:
-            rank_data = load_json(rank_file)
-
-            # Collect judge config
-            if "judge_config" in rank_data:
-                judge_key = f"{kg}/{benchmark}"
-                judge_configs[judge_key] = rank_data["judge_config"]
-
-            # Collect and validate prediction file paths
-            if "summary" in rank_data:
-                prediction_files = set()
-                for key in rank_data["summary"].keys():
-                    if key != "tie":
-                        # Extract basename for comparison
-                        file_path = Path(key)
-                        prediction_files.add(file_path.stem)
-
-                        # Check if prediction file path matches the KG/benchmark context
-                        # The key should be a relative path like "outputs/model.jsonl"
-                        # We need to verify it's from the same kg/benchmark
-                        if "../" in key or key.startswith("/"):
-                            path_issues.append(
-                                f"{kg}/{benchmark}: Prediction file '{key}' uses absolute or parent directory path"
-                            )
-
-                benchmark_key = f"{kg}/{benchmark}"
-                prediction_file_sets[benchmark_key] = prediction_files
-
-        except Exception as e:
-            st.warning(f"Error loading ranking file {rank_file}: {e}")
+        rank_data = rank_data_by_path.get(entry["filepath"])
+        if not rank_data:
             continue
+
+        if "judge_config" in rank_data:
+            judge_configs[f"{kg}/{benchmark}"] = rank_data["judge_config"]
+
+        if "summary" in rank_data:
+            prediction_files = set()
+            for key in rank_data["summary"].keys():
+                if key == "tie":
+                    continue
+                prediction_files.add(Path(key).stem)
+                if "../" in key or key.startswith("/"):
+                    path_issues.append(
+                        f"{kg}/{benchmark}: Prediction file '{key}' uses "
+                        "absolute or parent directory path"
+                    )
+            prediction_file_sets[f"{kg}/{benchmark}"] = prediction_files
 
     # Check 1: Judge model consistency
     if judge_configs:
@@ -970,7 +767,7 @@ def validate_ranking_consistency(benchmark_entries):
             st.warning(warning_msg)
 
 
-def show_ranking_view(ranking_data):
+def show_ranking_view(ranking_data: dict) -> None:
     """Show a view for ranking evaluations across multiple benchmarks."""
     st.title("Ranking View - Cross-Benchmark Comparison")
 
@@ -990,17 +787,28 @@ def show_ranking_view(ranking_data):
         st.warning("No ranking files found.")
         return
 
+    # Regex filter for ranking comparisons
+    ranking_regex = st.sidebar.text_input(
+        "Filter rankings by regex pattern", key="ranking_regex"
+    )
+    filtered_ranking_options = ranking_options
+    if ranking_regex:
+        try:
+            regex = re.compile(ranking_regex)
+            filtered = [r for r in ranking_options if regex.search(r)]
+            if filtered:
+                filtered_ranking_options = filtered
+            else:
+                st.sidebar.warning(f"No rankings match the pattern '{ranking_regex}'")
+        except re.error as e:
+            st.sidebar.error(f"Invalid regex pattern: {e}")
+
     # Select ranking comparison to view
     selected_ranking = st.sidebar.selectbox(
-        "Select Ranking Comparison", ranking_options, index=0
+        "Select Ranking Comparison", filtered_ranking_options, index=0
     )
 
-    # Parse and display the ranking name nicely
-    model_name, additional_info = parse_model_name(selected_ranking)
-    display_name = (
-        f"{model_name} ({additional_info})" if additional_info else model_name
-    )
-
+    display_name = display_name_from_file(selected_ranking)
     st.subheader(f"Comparison: {display_name}")
 
     # Get all benchmarks for this ranking
@@ -1010,8 +818,14 @@ def show_ranking_view(ranking_data):
         st.warning(f"No benchmark data found for {selected_ranking}.")
         return
 
+    # Load each rank file at most once per rerun (cache hits across reruns)
+    rank_data_by_path = {
+        entry["filepath"]: try_load_rank_json(entry["filepath"])
+        for entry in benchmark_entries
+    }
+
     # Validate consistency across all ranking files
-    validate_ranking_consistency(benchmark_entries)
+    validate_ranking_consistency(benchmark_entries, rank_data_by_path)
 
     # Organize benchmarks by knowledge graph for selection
     entries_by_kg = defaultdict(list)
@@ -1057,44 +871,31 @@ def show_ranking_view(ranking_data):
     # Extract judge model information from the first available ranking file
     judge_model_info = None
     for entry in benchmark_entries:
-        try:
-            rank_data = load_json(entry["filepath"])
-            if "judge_config" in rank_data and "model" in rank_data["judge_config"]:
-                judge_model_info = rank_data["judge_config"]["model"]
-                break
-        except Exception:
-            continue
+        rank_data = rank_data_by_path.get(entry["filepath"], {})
+        model = rank_data.get("judge_config", {}).get("model")
+        if model:
+            judge_model_info = model
+            break
 
-    # Display judge model if found
     if judge_model_info:
         st.caption(f"**Judge Model:** {judge_model_info}")
 
     # First pass: collect all unique models across all benchmarks to establish global ordering
     sorted_models = None
     for entry in benchmark_entries:
-        try:
-            rank_data = load_json(entry["filepath"])
-
-            prediction_models = []
-            for file in rank_data["prediction_files"]:
-                file_path = Path(file)
-                model_name_parsed, additional_info_parsed = parse_model_name(
-                    file_path.stem
-                )
-                model_display_name = (
-                    f"{model_name_parsed} ({additional_info_parsed})"
-                    if additional_info_parsed
-                    else model_name_parsed
-                )
-                prediction_models.append(model_display_name)
-
-            if sorted_models is None:
-                sorted_models = prediction_models
-            elif sorted(sorted_models) != sorted(prediction_models):
-                sorted_models = None
-                break
-        except Exception:
+        rank_data = rank_data_by_path.get(entry["filepath"])
+        if not rank_data or "prediction_files" not in rank_data:
             continue
+
+        prediction_models = [
+            display_name_from_file(f) for f in rank_data["prediction_files"]
+        ]
+
+        if sorted_models is None:
+            sorted_models = prediction_models
+        elif sorted(sorted_models) != sorted(prediction_models):
+            sorted_models = None
+            break
 
     if sorted_models is None:
         st.warning(
@@ -1117,6 +918,7 @@ def show_ranking_view(ranking_data):
 
     # Process all benchmarks to build comprehensive table (one row per benchmark)
     table_rows = []
+    any_scores_anywhere = False
 
     for entry in benchmark_entries:
         kg = entry["kg"]
@@ -1124,8 +926,7 @@ def show_ranking_view(ranking_data):
         rank_file = entry["filepath"]
 
         try:
-            rank_data = load_json(rank_file)
-
+            rank_data = rank_data_by_path.get(rank_file, {})
             if "summary" not in rank_data:
                 continue
 
@@ -1133,19 +934,12 @@ def show_ranking_view(ranking_data):
 
             # Load model outputs to calculate additional metrics
             rank_dir = Path(rank_file).parent
-            model_outputs_cache = {}
+            model_outputs_cache = {
+                key: try_load_model_outputs(rank_dir.parent / "outputs" / Path(key).name)
+                for key in summary.keys()
+                if key != "tie"
+            }
 
-            for key in summary.keys():
-                if key != "tie":
-                    # Key is a path relative to the data root, resolve it relative to rank_dir
-                    output_file = rank_dir.parent / "outputs" / Path(key).name
-                    try:
-                        model_outputs_cache[key] = load_model_outputs(str(output_file))
-                    except Exception as e:
-                        print(f"Failed to load {output_file}: {e}")
-                        model_outputs_cache[key] = {}
-
-            # Get evaluation counts
             total_evals = len(rank_data.get("evaluations", {}))
             valid_evals = sum(
                 1
@@ -1153,43 +947,42 @@ def show_ranking_view(ranking_data):
                 if eval_data.get("err") is None
             )
 
-            # Build a single row for this benchmark
             row_data = {
                 "KG": kg,
                 "Benchmark": benchmark,
                 "Valid Evals": f"{valid_evals}/{total_evals}",
             }
 
-            # Initialize wins, steps, and time for each model
             model_wins = {}
             model_steps = {}
             model_time = {}
+            model_avg_score = {}
+            model_score_n = {}
+            has_any_score = False
             tie_count = 0
 
-            # Process each model in the summary
             for key, value in summary.items():
                 if key == "tie":
                     tie_count = value["count"]
-                else:
-                    # Parse model name from the prediction file path
-                    file_path = Path(key)
-                    model_name_parsed, additional_info_parsed = parse_model_name(
-                        file_path.stem
-                    )
-                    model_display_name = (
-                        f"{model_name_parsed} ({additional_info_parsed})"
-                        if additional_info_parsed
-                        else model_name_parsed
-                    )
+                    continue
 
-                    # Calculate average metrics
-                    avg_steps, avg_time = calculate_average_steps_and_time(
-                        model_outputs_cache.get(key, {})
-                    )
+                model_display_name = display_name_from_file(key)
+                avg_steps, avg_time = calculate_average_steps_and_time(
+                    model_outputs_cache.get(key, {})
+                )
 
-                    model_wins[model_display_name] = value["count"]
-                    model_steps[model_display_name] = avg_steps
-                    model_time[model_display_name] = avg_time
+                model_wins[model_display_name] = value["count"]
+                model_steps[model_display_name] = avg_steps
+                model_time[model_display_name] = avg_time
+
+                avg_score = value.get("avg_score") if isinstance(value, dict) else None
+                model_avg_score[model_display_name] = avg_score
+                model_score_n[model_display_name] = (
+                    value.get("n_scores", 0) if isinstance(value, dict) else 0
+                )
+                if avg_score is not None:
+                    has_any_score = True
+                    any_scores_anywhere = True
 
             # Calculate total for percentages
             total_comparisons = sum(model_wins.values()) + tie_count
@@ -1204,6 +997,15 @@ def show_ranking_view(ranking_data):
                 row_data[f"{letter} Wins"] = f"{percentage:.1f}% ({wins})"
                 # Store raw value for determining winner
                 row_data[f"_{letter}_wins_raw"] = wins
+
+                avg_score = model_avg_score.get(model)
+                n_scores = model_score_n.get(model, 0)
+                row_data[f"{letter} Avg Score"] = (
+                    f"{avg_score:.2f}/10 (n={n_scores})"
+                    if avg_score is not None
+                    else "—"
+                )
+                row_data[f"_{letter}_avg_score_raw"] = avg_score
 
             # Add ties column
             tie_percentage = (
@@ -1262,6 +1064,10 @@ def show_ranking_view(ranking_data):
     for model in sorted_models:
         letter = model_to_letter[model]
         display_columns.append(f"{letter} Wins")
+    if any_scores_anywhere:
+        for model in sorted_models:
+            letter = model_to_letter[model]
+            display_columns.append(f"{letter} Avg Score")
     display_columns.extend(["Ties", "Avg Steps", "Avg Time", "Valid Evals"])
 
     df_display = df[display_columns]
@@ -1277,14 +1083,12 @@ def show_ranking_view(ranking_data):
             winner_col = f"{winner} Wins" if winner != "Ties" else "Ties"
             if winner_col in display_columns:
                 col_idx = display_columns.index(winner_col)
-                styles[col_idx] = (
-                    "background-color: #005500; color: white; font-weight: bold"
-                )
+                styles[col_idx] = STYLE_BEST
 
         return styles
 
     styled_df = df_display.style.apply(highlight_winner, axis=1)
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, width="stretch", hide_index=True)
 
     # Show summary statistics
     st.caption(f"Showing {len(benchmark_entries)} benchmark(s) for {display_name}")
@@ -1293,10 +1097,9 @@ def show_ranking_view(ranking_data):
     if not selected_entry:
         return
 
-    try:
-        selected_rank_data = load_json(selected_entry["filepath"])
-    except Exception as exc:
-        st.warning(f"Failed to load ranking data for detailed view: {exc}")
+    selected_rank_data = rank_data_by_path.get(selected_entry["filepath"])
+    if not selected_rank_data:
+        st.warning("Failed to load ranking data for detailed view.")
         return
 
     evaluations = selected_rank_data.get("evaluations", {})
@@ -1310,7 +1113,7 @@ def show_ranking_view(ranking_data):
     try:
         ground_truth_examples = load_jsonl(test_file)
     except Exception as exc:
-        print(f"Failed to load test file {test_file}: {exc}")
+        logger.warning(f"Failed to load test file {test_file}: {exc}")
         ground_truth_examples = []
 
     id_to_question = {}
@@ -1350,15 +1153,9 @@ def show_ranking_view(ranking_data):
     seen_models = set()
 
     for path in selected_rank_data["prediction_files"]:
-        file_path = Path(path)
-        model_name_parsed, additional_info_parsed = parse_model_name(file_path.stem)
-        model_display_name = (
-            f"{model_name_parsed} ({additional_info_parsed})"
-            if additional_info_parsed
-            else model_name_parsed
-        )
+        model_display_name = display_name_from_file(path)
+        output_path = outputs_dir / Path(path).name
 
-        output_path = outputs_dir / file_path.name
         summary_model_entries.append(
             {
                 "display_name": model_display_name,
@@ -1370,12 +1167,7 @@ def show_ranking_view(ranking_data):
         if model_display_name in seen_models:
             continue
 
-        try:
-            model_outputs[model_display_name] = load_model_outputs(str(output_path))
-        except Exception as exc:
-            print(f"Failed to load model outputs from {output_path}: {exc}")
-            model_outputs[model_display_name] = {}
-
+        model_outputs[model_display_name] = try_load_model_outputs(output_path)
         model_display_order.append(model_display_name)
         seen_models.add(model_display_name)
 
@@ -1421,6 +1213,26 @@ def show_ranking_view(ranking_data):
         if err_text:
             st.error(f"Judge error: {err_text}")
 
+        scores_entry = evaluation_entry.get("scores")
+        if scores_entry:
+            score_rows = []
+            for k, v in scores_entry.items():
+                try:
+                    idx = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if not (0 <= idx < len(summary_model_entries)):
+                    continue
+                score_rows.append(
+                    {
+                        "Model": summary_model_entries[idx]["display_name"],
+                        "Score": f"{v}/10",
+                    }
+                )
+            if score_rows:
+                st.markdown("**Per-candidate Scores**")
+                st.table(score_rows)
+
     st.markdown("**Model Outputs**")
     if not model_display_order:
         st.info("No model outputs available for this benchmark.")
@@ -1432,70 +1244,13 @@ def show_ranking_view(ranking_data):
             for col, model_name in zip(cols, current_models):
                 outputs = model_outputs.get(model_name, {})
                 output_entry = outputs.get(selected_id)
-                output_payload = {}
 
-                if isinstance(output_entry, dict):
-                    output_field = output_entry.get("output", output_entry)
-                    if isinstance(output_field, dict):
-                        output_payload = output_field
-
-                container_cm = None
-                try:
-                    container_cm = col.container(border=True)
-                except TypeError:
-                    container_cm = col.container()
-
-                with container_cm:
+                with col.container(border=True):
                     st.markdown(f"**{model_name}**")
-
-                    if not output_entry:
-                        st.info("No output available for this example.")
-                        continue
-
-                    rendered_any = False
-                    sparql_query = output_payload.get("sparql")
-                    if sparql_query:
-                        st.markdown("**SPARQL**")
-                        st.code(sparql_query, language="sparql")
-                        rendered_any = True
-
-                    result_data = output_payload.get("result")
-                    if result_data is not None:
-                        st.markdown("**Result**")
-                        if isinstance(result_data, (dict, list)):
-                            st.json(result_data)
-                        else:
-                            st.code(str(result_data), language="json")
-                        rendered_any = True
-
-                    selections_data = output_payload.get("selections")
-                    if selections_data:
-                        st.markdown("**Selections**")
-                        if isinstance(selections_data, (dict, list)):
-                            st.json(selections_data)
-                        else:
-                            st.write(selections_data)
-                        rendered_any = True
-
-                    answer_text = output_payload.get("answer")
-                    if answer_text:
-                        with st.expander("Answer"):
-                            st.markdown(answer_text)
-                        rendered_any = True
-
-                    if not rendered_any:
-                        fallback_data = (
-                            output_entry.get("output", output_entry)
-                            if isinstance(output_entry, dict)
-                            else output_entry
-                        )
-                        st.info(
-                            "No structured SPARQL/result/selections/answer available."
-                        )
-                        st.write(fallback_data)
+                    render_output_panel(output_entry)
 
 
-def show_comprehensive_view(available_data):
+def show_comprehensive_view(available_data: dict) -> None:
     """Show a comprehensive view with a large table of metrics across KGs and benchmarks."""
     st.title("Comprehensive Model Comparison")
 
@@ -1527,25 +1282,11 @@ def show_comprehensive_view(available_data):
         help="When checked, ground truth with size 0 (empty result sets) will be counted as valid",
     )
 
-    # We'll set up the benchmark checkboxes after gathering all the data for the table
-    # Create an empty dictionary to track selected benchmarks
-    selected_benchmarks = {}
-
     # Create a list of all available models across all benchmarks
     all_available_models = set()
     for kg_data in available_data.values():
         for benchmark_info in kg_data.values():
             all_available_models.update(benchmark_info["models"].keys())
-
-    # Group models by name (before the first dot)
-    model_groups = defaultdict(list)
-    for model_display_name in all_available_models:
-        model_name = (
-            model_display_name.split(" (")[0]
-            if " (" in model_display_name
-            else model_display_name
-        )
-        model_groups[model_name].append(model_display_name)
 
     # Add model selection
     st.sidebar.markdown("---")
@@ -1609,22 +1350,11 @@ def show_comprehensive_view(available_data):
                     if kg_name not in all_metrics[model_name]:
                         all_metrics[model_name][kg_name] = {}
 
-                    # Extract or calculate metrics values
-                    num_outputs = model_metrics["num_outputs"]
-                    num_evaluations = model_metrics["num_evaluations"]
-                    num_without_evaluation = num_outputs - num_evaluations
-                    num_invalid_outputs = model_metrics["num_invalid_outputs"]
-
                     all_metrics[model_name][kg_name][benchmark_name] = {
                         "avg_f1": model_metrics["f1"],
                         "accuracy": model_metrics["accuracy"],
-                        "predictions": num_outputs,
-                        "evaluated": num_evaluations,
-                        "without_evaluation": num_without_evaluation,
-                        "avg_time": model_metrics.get("time", 0),
-                        "invalid_targets": model_metrics["num_invalid_evaluations"],
-                        "invalid_preds": num_invalid_outputs,
-                        "invalid_evaluation": 0,  # Not tracked separately
+                        "evaluated": model_metrics["num_evaluations"],
+                        "invalid_preds": model_metrics["num_invalid_outputs"],
                     }
 
     # If there are no metrics, show a warning and return
@@ -1641,122 +1371,55 @@ def show_comprehensive_view(available_data):
     st.sidebar.markdown("---")
     st.sidebar.subheader("Select Benchmarks to Include")
 
-    # Get all benchmarks from all KGs
-    all_benchmarks = []
-    for kg, benchmarks in benchmark_by_kg.items():
-        all_benchmarks.extend([(kg, b) for b in benchmarks])
-
-    # Initialize selected benchmarks in session state if not already present
-    # Use (kg, benchmark) tuples as keys for better organization
-    if "selected_benchmarks" not in st.session_state:
-        st.session_state.selected_benchmarks = {
-            (kg, b): True for kg, b in all_benchmarks
-        }
-
-    # Initialize benchmark_regex in session state if not present
-    if "benchmark_regex" not in st.session_state:
-        st.session_state["benchmark_regex"] = ""
-
-    # Store previous regex pattern to detect changes
-    if "previous_benchmark_regex" not in st.session_state:
-        st.session_state["previous_benchmark_regex"] = ""
-
-    # Add regex filter for benchmark selection with persistent state
-    # Use stored value for initial value, but don't update directly
+    # Regex filter — widget key is the source of truth
     benchmark_regex = st.sidebar.text_input(
         "Filter benchmarks by regex pattern",
-        value=st.session_state.stored_benchmark_regex,
-        key="benchmark_regex_widget",
+        key="benchmark_regex",
         help="Enter a regex pattern to automatically select matching benchmarks and deselect non-matching ones. Example: 'wwq|lcquad' selects WWQ and LC-QuAD benchmarks.",
     )
 
-    # Update stored value for next view
-    if "benchmark_regex_widget" in st.session_state:
-        st.session_state.stored_benchmark_regex = (
-            st.session_state.benchmark_regex_widget
-        )
+    # Detect regex changes across reruns
+    regex_changed = widget_changed("previous_benchmark_regex", benchmark_regex)
 
-    # Check if regex changed
-    regex_changed = benchmark_regex != st.session_state["previous_benchmark_regex"]
+    # Compile regex once (if any)
+    compiled_regex = None
+    if benchmark_regex:
+        try:
+            compiled_regex = re.compile(benchmark_regex)
+        except re.error as e:
+            st.sidebar.error(f"Invalid regex pattern: {e}")
 
-    # Update previous regex pattern
-    st.session_state["previous_benchmark_regex"] = benchmark_regex
-
-    # No need for a separate "Select All" option as it's redundant
-    # Users can select/deselect individual benchmarks
-
-    # Create a checkbox for each benchmark, grouped by knowledge graph
-    selected_benchmarks = {}
-
-    # Process each knowledge graph
-    for kg in sorted(benchmark_by_kg.keys()):
-        benchmarks = benchmark_by_kg[kg]
-
-        # All benchmarks should be visible in the sidebar, but we'll use regex to auto-select
-        filtered_benchmarks = benchmarks
-        matching_benchmarks = set()
-
-        # If we have a regex pattern, find which benchmarks match it
-        if benchmark_regex:
-            try:
-                regex = re.compile(benchmark_regex)
-                matching_benchmarks = {b for b in benchmarks if regex.search(b)}
-                # Removed the "No benchmarks match" warning message
-            except re.error as e:
-                st.sidebar.error(f"Invalid regex pattern: {e}")
-        else:
-            # If no regex pattern, all benchmarks match (for default selection)
-            matching_benchmarks = set(benchmarks)
-
-        # If we have benchmarks to show for this KG, create a section with expander
-        if filtered_benchmarks:
-            # Create an expander for each KG
-            with st.sidebar.expander(f"**{kg}**", expanded=False):
-                for benchmark in sorted(filtered_benchmarks):
-                    # Create a unique key for the checkbox
-                    key = (kg, benchmark)
-
-                    # If regex pattern changed, auto-select checkboxes
-                    if regex_changed:
-                        if not benchmark_regex:
-                            # Empty regex means select all benchmarks
-                            should_select = True
-                        else:
-                            # If benchmark matches regex, select it; otherwise unselect
-                            should_select = benchmark in matching_benchmarks
-                        # Update the session state
-                        st.session_state.selected_benchmarks[key] = should_select
-
-                    # Get the current value from session state
-                    current_value = st.session_state.selected_benchmarks.get(key, True)
-
-                    # Create the checkbox
-                    selected = st.checkbox(
-                        benchmark,
-                        value=current_value,
-                        key=f"benchmark_{kg}_{benchmark}",
+    # On regex change, update widget state directly before widgets render.
+    if regex_changed:
+        for kg, benchmarks in benchmark_by_kg.items():
+            for benchmark in benchmarks:
+                widget_key = f"benchmark_{kg}_{benchmark}"
+                if not benchmark_regex:
+                    st.session_state[widget_key] = True
+                elif compiled_regex is not None:
+                    st.session_state[widget_key] = bool(
+                        compiled_regex.search(benchmark)
                     )
 
-                    # Store the selection
-                    selected_benchmarks[key] = selected
-                    # Update session state
-                    st.session_state.selected_benchmarks[key] = selected
+    # Render checkboxes. Widget keys are the source of truth.
+    selected_benchmarks = {}
+    for kg in sorted(benchmark_by_kg.keys()):
+        with st.sidebar.expander(f"**{kg}**", expanded=False):
+            for benchmark in sorted(benchmark_by_kg[kg]):
+                key = f"benchmark_{kg}_{benchmark}"
+                if key not in st.session_state:
+                    st.session_state[key] = (
+                        bool(compiled_regex.search(benchmark))
+                        if compiled_regex is not None
+                        else True
+                    )
+                selected = st.checkbox(benchmark, key=key)
+                selected_benchmarks[(kg, benchmark)] = selected
 
-    # For benchmarks not shown due to filtering, preserve their state
-    for kg, benchmarks in benchmark_by_kg.items():
-        for benchmark in benchmarks:
-            key = (kg, benchmark)
-            if key not in selected_benchmarks:
-                selected_benchmarks[key] = st.session_state.selected_benchmarks.get(
-                    key, True
-                )
-
-    # If no benchmarks selected, select all
+    # If no benchmarks selected, treat as all-selected for filtering
     if not any(selected_benchmarks.values()):
-        selected_benchmarks = {key: True for key in all_benchmarks}
         st.sidebar.warning("No benchmarks selected. Showing all benchmarks.")
-        # Update session state
-        st.session_state.selected_benchmarks = selected_benchmarks
+        selected_benchmarks = {key: True for key in selected_benchmarks}
 
     # Now filter benchmarks based on selected options
     filtered_kg_benchmarks = defaultdict(list)
@@ -1798,28 +1461,11 @@ def show_comprehensive_view(available_data):
                     and benchmark in all_metrics[model_name][kg]
                 ):
                     metrics_data = all_metrics[model_name][kg][benchmark]
-
-                    # Format the selected metric value
-                    if metric_key in ["avg_f1", "accuracy"]:
-                        # Format as percentage with 1 decimal
-                        value = metrics_data[metric_key] * 100
-                        # Show as 0 if predicted examples is 0
-                        if metrics_data["evaluated"] == 0 and metric_key != "evaluated":
-                            formatted_value = "0.0"
-                        else:
-                            formatted_value = f"{value:.1f}"
-                    elif metric_key == "avg_time":
-                        # Format time with 3 decimals
-                        value = metrics_data[metric_key]
-                        formatted_value = f"{value:.3f}"
-                    elif metric_key in ["evaluated", "predictions"]:
-                        # For count metrics, show as integer
-                        formatted_value = str(int(metrics_data[metric_key]))
+                    # Percentage with 1 decimal; 0.0 if nothing was evaluated
+                    if metrics_data["evaluated"] == 0:
+                        row.append("0.0")
                     else:
-                        # For any other metrics
-                        formatted_value = str(metrics_data[metric_key])
-
-                    row.append(formatted_value)
+                        row.append(f"{metrics_data[metric_key] * 100:.1f}")
                 else:
                     row.append("—")  # Em dash for missing data
 
@@ -1832,163 +1478,43 @@ def show_comprehensive_view(available_data):
     st.subheader(f"{selected_metric} Across All Knowledge Graphs and Benchmarks")
 
     # Find best and second-best models for each benchmark
-    if metric_key in ["avg_f1", "accuracy"]:
-        # Dictionary to store rankings for each KG-benchmark pair
-        rankings = {}
+    rankings = {}
+    for kg in sorted_kgs:
+        for benchmark in sorted(kg_benchmarks[kg]):
+            model_values = []
+            for model_name, per_kg in all_metrics.items():
+                metrics_data = per_kg.get(kg, {}).get(benchmark)
+                if metrics_data and metrics_data["evaluated"] > 0:
+                    model_values.append((model_name, metrics_data[metric_key]))
 
-        # For each KG-benchmark combination, find the best and second-best models
-        for kg in sorted_kgs:
-            for benchmark in sorted(kg_benchmarks[kg]):
-                # Collect all values for this benchmark
-                model_values = []
-                for model_name in all_metrics:
-                    if (
-                        kg in all_metrics[model_name]
-                        and benchmark in all_metrics[model_name][kg]
-                    ):
-                        metrics_data = all_metrics[model_name][kg][benchmark]
-                        # Only rank if there are evaluated examples
-                        if metrics_data["evaluated"] > 0:
-                            model_values.append((model_name, metrics_data[metric_key]))
+            model_values.sort(key=lambda x: x[1], reverse=True)
+            rankings[(kg, benchmark)] = {
+                model: rank for rank, (model, _) in enumerate(model_values)
+            }
 
-                # Sort by metric value in descending order
-                model_values.sort(key=lambda x: x[1], reverse=True)
+    # Build a per-cell CSS style DataFrame mirroring df's shape
+    style_df = pd.DataFrame("", index=df.index, columns=df.columns)
+    for i in range(len(df.index)):
+        model_name = df.iloc[i, 0]
+        for j, col in enumerate(df.columns[1:], 1):
+            if df.iloc[i, j] == "—":
+                style_df.iloc[i, j] = STYLE_MISSING
+                continue
 
-                # Store the rankings
-                rankings[(kg, benchmark)] = {
-                    model: rank for rank, (model, _) in enumerate(model_values)
-                }
+            kg, benchmark = col
+            cell_metrics = all_metrics.get(model_name, {}).get(kg, {}).get(benchmark)
+            if cell_metrics and cell_metrics.get("invalid_preds", 0) > 0:
+                style_df.iloc[i, j] = STYLE_INVALID
+                continue
 
-        # Create style dictionaries based on rankings
+            rank = rankings.get((kg, benchmark), {}).get(model_name)
+            if rank == 0:
+                style_df.iloc[i, j] = STYLE_BEST
+            elif rank == 1:
+                style_df.iloc[i, j] = STYLE_SECOND
 
-        # Create a style DataFrame with the same shape as our data DataFrame
-        style_df = pd.DataFrame("", index=df.index, columns=df.columns)
-
-        # Fill in the style DataFrame with CSS styles
-        for i, row_idx in enumerate(df.index):
-            model_name = df.iloc[i, 0]  # Get model name from first column
-            for j, col in enumerate(df.columns[1:], 1):  # Skip the first column (Model)
-                cell_value = df.iloc[i, j]
-                if cell_value == "—":
-                    style_df.iloc[i, j] = "background-color: #444444; color: #ffffff"
-                else:
-                    kg, benchmark = col
-                    # Check if this is an invalid model output
-                    for model_name_key, metric_data in all_metrics.items():
-                        if (
-                            model_name == model_name_key
-                            and kg in metric_data
-                            and benchmark in metric_data[kg]
-                        ):
-                            if (
-                                "invalid_preds" in metric_data[kg][benchmark]
-                                and metric_data[kg][benchmark]["invalid_preds"] > 0
-                            ):
-                                # Apply red color to indicate invalid output
-                                style_df.iloc[i, j] = (
-                                    "background-color: #990000; color: white"
-                                )
-                                break
-
-                    # Apply ranking colors if not invalid and in rankings
-                    if (
-                        not style_df.iloc[i, j]
-                        and (kg, benchmark) in rankings
-                        and model_name in rankings[(kg, benchmark)]
-                    ):
-                        rank = rankings[(kg, benchmark)][model_name]
-                        if rank == 0:  # Best model
-                            style_df.iloc[i, j] = (
-                                "background-color: #005500; color: white; font-weight: bold"
-                            )
-                        elif rank == 1:  # Second best
-                            style_df.iloc[i, j] = (
-                                "background-color: #003366; color: white"
-                            )
-
-        # Apply the styling directly
-        styled_df = df.style.apply(lambda _: style_df, axis=None)
-        st.dataframe(styled_df, use_container_width=True)
-    else:
-        # For count metrics, use similar ranking logic
-        # Dictionary to store rankings for each KG-benchmark pair
-        rankings = {}
-
-        # For each KG-benchmark combination, find the best and second-best models
-        for kg in sorted_kgs:
-            for benchmark in sorted(kg_benchmarks[kg]):
-                # Collect all values for this benchmark
-                model_values = []
-                for model_name, row_idx in zip(
-                    sorted(all_metrics.keys()), range(len(df))
-                ):
-                    cell_value = df.iloc[row_idx][kg, benchmark]
-                    if cell_value != "—":
-                        try:
-                            # Convert to number for ranking
-                            val = int(cell_value)
-                            model_values.append((model_name, val))
-                        except ValueError:
-                            continue
-
-                # Sort by metric value in descending order
-                model_values.sort(key=lambda x: x[1], reverse=True)
-
-                # Store the rankings
-                rankings[(kg, benchmark)] = {
-                    model: rank for rank, (model, _) in enumerate(model_values)
-                }
-
-        # Use direct styling with style_df instead of functions
-
-        # Create a style DataFrame with the same shape as our data DataFrame
-        style_df = pd.DataFrame("", index=df.index, columns=df.columns)
-
-        # Fill in the style DataFrame with CSS styles
-        for i, row_idx in enumerate(df.index):
-            model_name = df.iloc[i, 0]  # Get model name from first column
-            for j, col in enumerate(df.columns[1:], 1):  # Skip the first column (Model)
-                cell_value = df.iloc[i, j]
-                if cell_value == "—":
-                    style_df.iloc[i, j] = "background-color: #444444; color: #ffffff"
-                else:
-                    kg, benchmark = col
-                    # Check if this is an invalid model output
-                    for model_name_key, metric_data in all_metrics.items():
-                        if (
-                            model_name == model_name_key
-                            and kg in metric_data
-                            and benchmark in metric_data[kg]
-                        ):
-                            if (
-                                "invalid_preds" in metric_data[kg][benchmark]
-                                and metric_data[kg][benchmark]["invalid_preds"] > 0
-                            ):
-                                # Apply red color to indicate invalid output
-                                style_df.iloc[i, j] = (
-                                    "background-color: #990000; color: white"
-                                )
-                                break
-
-                    # Apply ranking colors if not invalid and in rankings
-                    if (
-                        not style_df.iloc[i, j]
-                        and (kg, benchmark) in rankings
-                        and model_name in rankings[(kg, benchmark)]
-                    ):
-                        rank = rankings[(kg, benchmark)][model_name]
-                        if rank == 0:  # Best model
-                            style_df.iloc[i, j] = (
-                                "background-color: #005500; color: white; font-weight: bold"
-                            )
-                        elif rank == 1:  # Second best
-                            style_df.iloc[i, j] = (
-                                "background-color: #003366; color: white"
-                            )
-
-        # Apply the styling directly
-        styled_df = df.style.apply(lambda _: style_df, axis=None)
-        st.dataframe(styled_df, use_container_width=True)
+    styled_df = df.style.apply(lambda _: style_df, axis=None)
+    st.dataframe(styled_df, width="stretch")
 
     # Add a note about the data and color coding
     st.caption(
@@ -2014,7 +1540,7 @@ def show_comprehensive_view(available_data):
 
 
 # Main app
-def main():
+def main() -> None:
     st.title("SPARQL Question-Answering Evaluation")
 
     # Load available benchmarks and models
@@ -2025,14 +1551,6 @@ def main():
             "No benchmarks found. Please make sure the data structure follows the expected pattern."
         )
         return
-
-    # Initialize session state variables that need to be preserved between views
-    # Use different keys for storing values vs widget keys
-    if "stored_benchmark_regex" not in st.session_state:
-        st.session_state.stored_benchmark_regex = ""
-
-    if "stored_model_regex" not in st.session_state:
-        st.session_state.stored_model_regex = ""
 
     # Create a view selector
     view_options = [
@@ -2058,31 +1576,7 @@ def main():
         # Sidebar for benchmark and model selection
         st.sidebar.title("Benchmark Settings")
 
-        kg_options = list(available_data.keys())
-        # Set Wikidata as default if available
-        default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
-        selected_kg = st.sidebar.selectbox(
-            "Select Group", kg_options, index=default_index
-        )
-
-        benchmark_options = list(available_data[selected_kg].keys())
-        # Set default benchmark based on selected knowledge graph
-        default_benchmark = (
-            "qald10"
-            if selected_kg == "wikidata"
-            else "wqsp"
-            if selected_kg == "freebase"
-            else benchmark_options[0]
-        )
-        # Make sure the default benchmark exists in the options
-        default_index = (
-            benchmark_options.index(default_benchmark)
-            if default_benchmark in benchmark_options
-            else 0
-        )
-        selected_benchmark = st.sidebar.selectbox(
-            "Select Benchmark", benchmark_options, index=default_index
-        )
+        selected_kg, selected_benchmark = select_kg_and_benchmark(available_data)
 
         # Option to restrict evaluation to common examples - moved to top, without heading
         restrict_to_common = st.sidebar.checkbox(
@@ -2179,7 +1673,7 @@ def main():
             }
         )
 
-        st.dataframe(metrics_df, use_container_width=True)
+        st.dataframe(metrics_df, width="stretch")
 
         # Add explanation for the info column
         empty_ground_truth_text = (

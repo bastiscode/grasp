@@ -1,11 +1,12 @@
 import os
-import time
 import random
+import time
+import uuid
 from logging import Logger
 
 import yaml
 from tqdm import tqdm, trange
-from universal_ml_utils.io import dump_json, load_jsonl
+from universal_ml_utils.io import dump_json, dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import consume_generator
 
@@ -15,13 +16,14 @@ from grasp.configs import (
     NotesFromExplorationConfig,
     NotesFromOutputsConfig,
     NotesFromSamplesConfig,
+    NotesGenerateQuestionsConfig,
     NoteTakingConfig,
 )
 from grasp.core import generate, load_notes, setup
 from grasp.functions import find_manager
 from grasp.manager import KgManager
 from grasp.model import Message, get_model
-from grasp.notes.utils import format_output, link
+from grasp.notes.utils import format_output
 from grasp.tasks import get_task
 from grasp.tasks.cea import AnnotationState, CeaSample, prepare_annotation
 from grasp.tasks.exploration import (
@@ -29,6 +31,7 @@ from grasp.tasks.exploration import (
     StructuralExplorationState,
 )
 from grasp.tasks.exploration.functions import call_function, note_function_definitions
+from grasp.tasks.question_generation import QuestionGenerationState
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.tasks.utils import Sample, format_sparql_result, prepare_sparql_result
 from grasp.utils import (
@@ -37,6 +40,7 @@ from grasp.utils import (
     format_message,
     format_notes,
     format_response,
+    link,
 )
 
 
@@ -220,10 +224,14 @@ def take_notes_from_exploration(
     assert isinstance(config, NotesFromExplorationConfig)
     if config.mode == "functional":
         task_name = "exploration_functional"
-        state = FunctionalExplorationState(notes=notes, kg_notes=kg_notes)
+        state = FunctionalExplorationState(notes=notes)
+        # rebind
+        notes = state.notes
     elif config.mode == "structural":
         task_name = "exploration_structural"
-        state = StructuralExplorationState(notes=notes, kg_notes=kg_notes)
+        state = StructuralExplorationState(kg_notes=kg_notes)
+        # rebind
+        kg_notes = state.kg_notes
     else:
         raise ValueError(f"Unknown exploration mode: {config.mode}")
 
@@ -234,22 +242,77 @@ def take_notes_from_exploration(
                 state,
                 config,
                 managers,
-                state.kg_notes,
-                state.notes,
+                kg_notes,
+                notes,
                 logger=agent_logger,
             )
         )
 
         dump_json(output, os.path.join(out_dir, f"output.exploration.round_{r}.json"))
 
-        for kg, kg_specific_notes in state.kg_notes.items():
-            out_file = os.path.join(out_dir, f"notes.exploration.{kg}.round_{r}.json")
-            dump_json(kg_specific_notes, out_file, indent=2)
-            link(out_file, os.path.join(out_dir, f"notes.exploration.{kg}.json"))
+        if config.mode == "structural":
+            for kg, kg_specific_notes in kg_notes.items():
+                out_file = os.path.join(
+                    out_dir, f"notes.exploration.{kg}.round_{r}.json"
+                )
+                dump_json(kg_specific_notes, out_file, indent=2)
+                link(out_file, os.path.join(out_dir, f"notes.exploration.{kg}.json"))
+        else:
+            out_file = os.path.join(out_dir, f"notes.exploration.round_{r}.json")
+            dump_json(notes, out_file, indent=2)
+            link(out_file, os.path.join(out_dir, "notes.exploration.json"))
 
-        out_file = os.path.join(out_dir, f"notes.exploration.round_{r}.json")
-        dump_json(state.notes, out_file, indent=2)
-        link(out_file, os.path.join(out_dir, "notes.exploration.json"))
+
+def generate_questions(
+    config: NotesGenerateQuestionsConfig,
+    out_dir: str,
+    overwrite: bool = False,
+    log_level: str | int | None = None,
+) -> None:
+    if os.path.exists(out_dir) and not overwrite:
+        raise FileExistsError(f"Output directory {out_dir} already exists")
+
+    agent_logger = get_logger("GRASP AGENT", log_level)
+
+    managers, _ = setup(config)
+    notes, kg_notes = load_notes(config)
+
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "config.yaml"), "w") as f:
+        yaml.dump(config.model_dump(), f)
+
+    state = QuestionGenerationState()
+
+    for r in trange(config.num_rounds, desc="Generating questions"):
+        output = consume_generator(
+            generate(
+                "question_generation",
+                state,
+                config,
+                managers,
+                kg_notes,
+                notes,
+                logger=agent_logger,
+            )
+        )
+
+        dump_json(
+            output,
+            os.path.join(out_dir, f"output.question_generation.round_{r}.json"),
+        )
+
+        for kg, kg_questions in state.questions.items():
+            samples = [
+                SparqlQaSample(
+                    id=uuid.uuid4().hex,
+                    question=q,
+                    sparql="",
+                ).model_dump()
+                for q in kg_questions
+            ]
+            out_file = os.path.join(out_dir, f"samples.{kg}.round_{r}.jsonl")
+            dump_jsonl(samples, out_file)
+            link(out_file, os.path.join(out_dir, f"samples.{kg}.jsonl"))
 
 
 def rules() -> list[str]:

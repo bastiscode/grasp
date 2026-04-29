@@ -7,7 +7,6 @@ from io import BytesIO
 import numpy as np
 import requests
 from PIL import Image
-from pydantic import BaseModel
 from search_rdf import Data, EmbeddingIndex, FuzzyIndex, KeywordIndex
 from search_rdf.model import (
     HuggingFaceImageModel,

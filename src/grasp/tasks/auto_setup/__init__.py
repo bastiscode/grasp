@@ -3,7 +3,7 @@ import os
 from pydantic import BaseModel
 
 from grasp.configs import KgInfo
-from grasp.functions import check_known
+from grasp.functions import check_known, update_known_from_alts
 from grasp.manager import DEFAULT_DESCRIPTIONS, KgManager
 from grasp.manager.utils import (
     get_common_sparql_prefixes,
@@ -14,10 +14,14 @@ from grasp.manager.utils import (
     merge_prefixes,
 )
 from grasp.model import Message
+from grasp.sparql.item import extract_sparql_items
+from grasp.sparql.types import ObjType
 from grasp.sparql.utils import (
     get_qlever_endpoint,
     load_entity_index_sparql,
     load_entity_info_sparql,
+    load_literal_index_sparql,
+    load_literal_info_sparql,
     load_property_index_sparql,
     load_property_info_sparql,
 )
@@ -35,6 +39,7 @@ from grasp.utils import FunctionCallException, format_prefixes, get_index_dir
 REFERENCE_SPARQLS = {
     "entities": (load_entity_index_sparql(), load_entity_info_sparql()),
     "properties": (load_property_index_sparql(), load_property_info_sparql()),
+    "literals": (load_literal_index_sparql(), load_literal_info_sparql()),
 }
 
 
@@ -49,11 +54,31 @@ class InfoState(BaseModel):
     description: str | None = None
 
 
-def load_index_state(manager: KgManager, name: str) -> IndexState:
+def update_known_from_sparql(sparql: str, known: set[str], manager: KgManager) -> None:
+    try:
+        _, items = extract_sparql_items(sparql, manager)
+        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY]:
+            normalizer = manager.get_normalizer(obj_type.index_name)
+            update_known_from_alts(
+                known,
+                (item.alternative for item in items if not item.is_literal),
+                normalizer,
+            )
+    except Exception:
+        pass
+
+
+def load_index_state(manager: KgManager, name: str, known: set[str]) -> IndexState:
     index_dir = get_index_dir(manager.kg)
     sub_index_dir = os.path.join(index_dir, name)
     index_sparql = load_index_sparql(sub_index_dir, manager.logger)
+    if index_sparql is not None:
+        update_known_from_sparql(index_sparql, known, manager)
+
     info_sparql = load_info_sparql(sub_index_dir, manager.logger)
+    if info_sparql is not None:
+        update_known_from_sparql(info_sparql, known, manager)
+
     description = load_index_description(sub_index_dir, manager.logger)
     return IndexState(
         index_sparql=index_sparql,
@@ -121,25 +146,32 @@ of the {name} index.
 The index SPARQL query is used to build a search index over {name}. \
 It must be a SELECT query returning:
 - ?id: the IRI
-- ?value: a string literal (typically label or alias) or the IRI itself \
-(if should be searchable)
-- ?tags: "main" for the primary label, unbound for secondary values (aliases)
-Results should be ordered descending by a relevance score and then by ?id, \
-to break ties in search results. A sensible relevant score that can always be \
-computed is the total number of occurrences of an IRI in all triples, but some \
-knowledge graphs might provide other measures of relevance that you can use \
-instead (e.g., Wikidata's "sitelinks").
+- ?value: the string literal to index for search (e.g., a label or alias)
+- ?tags: "main" for the preferred indexed literal for an IRI, unbound \
+for other indexed literals of the same IRI
+Results should be ordered by relevance score descending, then by ?id and ?tags descending. \
+Default to the total number of occurrences of an IRI as its relevance score. \
+If a knowledge graph provides another measure of relevance you can use that instead \
+(e.g., wikibase:sitelinks for Wikidata). When choosing literals to include in the \
+index SPARQL, make sure that they uniquely or near-uniquely identify the corresponding \
+IRI, as each indexed literal for an IRI is treated individually during search. Any \
+descriptive information shared by many IRIs (e.g., their type or common properties) \
+should rather be included in the info SPARQL for disambiguation. A good rule of thumb: \
+if searching for the literal is likely to return the target IRI among the top results, \
+include it. For example, for Angela Merkel include "Angela Merkel" or "Merkel", but not \
+"politician" or "human".
 
 The info SPARQL query retrieves additional context for {name} retrieved \
 via search. It must be a SELECT query returning:
 - ?id: the IRI
-- ?value: a string literal (label, alias, description, type, etc.)
-- ?type: one of "label", "alias", or "other"
-It must contain the placeholder {{IDS}} which will be replaced with a list \
-of IRIs at query time. The infos retrieved per IRI should be limited to the \
-most important ones (10 or fewer) to keep the query efficient and the search \
-results concise. The goal is to help to characterize and distinguish different \
-IRIs, and not to list all their associated information.
+- ?value: a descriptive string literal (e.g., a label, alias, description, or type)
+- ?type: one of "label" or "alias" (similar to ?tags in the index SPARQL), \
+or "other" for any additional descriptive information
+It must contain the placeholder {{IDS}} which will be replaced with a \
+space-separated list of IRIs at query time. The information retrieved per IRI should \
+be limited to the most important ones (10 or fewer) to keep the query efficient \
+and the search results concise. The goal is to help to characterize and distinguish \
+different IRIs, and not to list all their associated information.
 
 The description should be a concise summary of what the {name} index is \
 about and what data it contains.
@@ -204,23 +236,49 @@ and repeat, otherwise stop."""
         name = self.input["name"]
         rules = [
             "If the user provides additional notes about the desired setup, make sure to follow them.",
-            "When developing the SPARQL queries, try to make them as efficient as possible. For example, "
-            "put VALUES { {IDS} } clauses in the info SPARQL inside each UNION, and avoid string operations "
-            "and filters for the index SPARQL wherever possible.",
-            "Do not use different scores for the same IRI in the index SPARQL, as the IRIs are required to be "
-            "returned in contiguous blocks for the indexing process.",
-            f"To include {name} in the index and make them searchable even if they do not have "
-            "have any associated literals, use their IRIs as values by binding ?id to ?value directly "
-            "in the index SPARQL. During indexing the local part of the IRI (after a known prefix, "
-            "or the last slash or hash) will be extracted and indexed as the value, so make sure it is "
-            "meaningful for search. This also means you do not need to extract the local part in the SPARQL "
-            "yourself.",
+            "Make the SPARQL queries as efficient as possible. For example, put VALUES { {IDS} } clauses "
+            "in the info SPARQL inside each UNION, and avoid heavy string operations and string filters for the index "
+            "SPARQL. You also don't need to handle duplicates yourself in the SPARQL (e.g., via DISTINCT or GROUP BY), "
+            "as the indexing and info retrieval processes will take care of that. "
+            "The info SPARQL should run in a fraction of a second, whereas "
+            "the index SPARQL is allowed to take many minutes or even hours on the full knowledge graph. "
+            "The latter should be tested on a subset of the data (e.g., using VALUES) to stay "
+            "within the lower time limits during development.",
+            f"Do not use different scores for the same id in the {name} index SPARQL, as the ids are "
+            "required to be returned in contiguous blocks for the indexing process.",
         ]
+
+        if name in ("entities", "properties"):
+            rules.append(
+                f"To include {name} in the index and make them searchable even if they do not have "
+                "have any associated literals, use their IRIs as values by binding ?id to ?value directly "
+                "in the index SPARQL. During indexing the local part of the IRI (after a known prefix, "
+                "or the last slash or hash) will be extracted and indexed as the value, so make sure it is "
+                "meaningful for search. This also means you do not need to extract the local part in the SPARQL "
+                "yourself."
+            )
+
         if name == "entities":
             rules.append(
                 f"Not all {name} in the knowledge graph need to be searchable and should be covered by the index. "
                 f"Typical examples are identifier-like, internal, or intermediate {name} "
                 "without any descriptive associated literals."
+            )
+
+        if name == "literals":
+            rules.append(
+                "Only index standalone literals - string values that appear as objects in the knowledge graph "
+                "(e.g., enumerations like amenity types, status codes, license names). Do not index IRIs (use "
+                "the entity / property indices for those) and do not index literals that the entity index "
+                "already covers as entity-associated literals (literals indexed under their owning entity, "
+                "searchable via that entity). Inspect the entity-index setup to see which entity-associated literals "
+                "the entity index already covers in this knowledge graph and avoid duplicating them in the "
+                "literals index."
+            )
+            rules.append(
+                "If you cannot find a meaningful set of standalone literals to index, skip both the index "
+                "SPARQL and the info SPARQL - leaving them unset is the right outcome and is preferred over "
+                "a low-quality index."
             )
 
         return rules
@@ -236,7 +294,7 @@ and repeat, otherwise stop."""
         kgs = [m.kg for m in self.managers]
         functions = [find_frequent_function_definition(kgs, self.config.list_k)]
         if self.input["phase"] == "index":
-            functions.extend(index_functions())
+            functions.extend(index_functions(self.input["name"]))
         else:
             functions.extend(info_functions())
         return functions
@@ -269,6 +327,12 @@ and repeat, otherwise stop."""
         elif fn_name == "show_setup":
             return self.show_setup()
 
+        elif fn_name == "show_entity_setup":
+            # use a fresh empty `known` so the running self.known set
+            # is not polluted by IRIs from the entity index sparql
+            entity_state = load_index_state(manager, "entities", set())
+            return format_index_state(entity_state, manager)
+
         elif fn_name == "set_query":
             return self.set_query(manager, **fn_args, known=known)
 
@@ -298,21 +362,32 @@ and repeat, otherwise stop."""
         self,
         manager: KgManager,
         type: str,
-        sparql: str,
+        sparql: str | None,
         known: set[str],
     ) -> str:
         assert isinstance(self.state, IndexState)
         name = self.input["name"]
 
-        if self.config.know_before_use:
-            check_known(manager, sparql, known)
+        # null clears / unsets the query
+        if sparql is None:
+            index = manager.try_get(name)
+            if type == "info":
+                self.state.info_sparql = None
+                if index is not None:
+                    index.info_sparql = None
+            else:
+                self.state.index_sparql = None
+            return f"Cleared the {name} {type} SPARQL"
+
+        # always check whether the query contains only known IRIs
+        check_known(manager, sparql, known)
 
         validation_fn = (
             validate_index_sparql if type == "index" else validate_info_sparql
         )
 
         try:
-            validation_fn(manager, sparql)
+            validation_fn(manager.sparql_parser, sparql)
             sparql = manager.fix_prefixes(sparql)
         except ValueError as e:
             raise FunctionCallException(
@@ -404,19 +479,19 @@ and repeat, otherwise stop."""
 
         manager = self.managers[0]
         if self.input["phase"] == "index":
-            self.state = load_index_state(manager, self.input["name"])
+            self.state = load_index_state(manager, self.input["name"], self.known)
             if self.input.get("notes"):
                 return input["notes"]
             else:
-                return f"Set up the index and info SPARQLs for {self.input['name']} \
-of the {manager.kg} knowledge graph."
+                return f'Set up the index and info SPARQLs for {self.input["name"]} \
+of the "{manager.kg}" knowledge graph.'
 
         # info phase
         self.state = load_info_state(manager)
         if self.input.get("notes"):
             return input["notes"]
         else:
-            return f"Set up the prefixes and description for the {manager.kg} knowledge graph."
+            return f'Set up the prefixes and description for the "{manager.kg}" knowledge graph.'
 
     def output(self, messages: list[Message]) -> dict:
         if self.input["phase"] == "index":

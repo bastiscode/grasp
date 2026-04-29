@@ -66,7 +66,7 @@ def find_longest_prefix(iri: str, prefixes: dict[str, str]) -> tuple[str, str] |
     return longest
 
 
-def format_literal(s: str) -> str:
+def strip_literal(s: str) -> str:
     if s.startswith('"') and s.endswith('"'):
         s = s.strip('"')
     elif s.startswith("'") and s.endswith("'"):
@@ -90,6 +90,13 @@ def parse_into_binding(
         return None
 
     match parse["name"]:
+        case "BLANK_NODE_LABEL":
+            return Binding(
+                typ="bnode",
+                # strip leading "_:" from blank node label
+                value=input[2:],
+            )
+
         case "IRIREF":
             return Binding(
                 typ="uri",
@@ -113,7 +120,7 @@ def parse_into_binding(
             # string literal -> strip quotes
             return Binding(
                 typ="literal",
-                value=format_literal(parse["value"]),
+                value=strip_literal(parse["value"]),
             )
 
         case lit if lit.startswith("INTEGER"):
@@ -140,7 +147,7 @@ def parse_into_binding(
                 datatype="http://www.w3.org/2001/XMLSchema#double",
             )
 
-        case lit if lit in ["true", "false"]:
+        case lit if lit in ("true", "false"):
             # boolean literal
             return Binding(
                 typ="literal",
@@ -155,7 +162,7 @@ def parse_into_binding(
 
                 return Binding(
                     typ="literal",
-                    value=format_literal(lit["value"]),
+                    value=strip_literal(lit["value"]),
                     lang=langtag["value"][1:],
                 )
 
@@ -173,7 +180,7 @@ def parse_into_binding(
 
                 return Binding(
                     typ="literal",
-                    value=format_literal(lit["value"]),
+                    value=strip_literal(lit["value"]),
                     datatype=datatype,
                 )
 
@@ -201,24 +208,24 @@ def parse_to_string(parse: dict) -> str:
 
 
 def parse_to_string_with_whitespace(parse: dict, encoded: bytes) -> str:
-    # rebuild string from parse tree, preserving original whitespace
-    # between terminals using byte_span from the encoded input
-    parts = []
-    pos = 0
+    # rebuild string from (sub-)parse tree, preserving original whitespace
+    # between terminals using byte_span from the encoded input. only emits
+    # bytes that lie between the first and last surviving terminal, so the
+    # function is safe to call on a subtree as well as on the root parse.
+    parts: list[str] = []
+    pos: int | None = None
     for terminal in find_terminals(parse):
         byte_span = terminal.get("byte_span")
         if byte_span is not None:
             start, end = byte_span
-            # copy original bytes (whitespace) between previous and this terminal
-            parts.append(encoded[pos:start].decode(errors="replace"))
+            if pos is not None:
+                # copy original bytes (whitespace) between previous and this terminal
+                parts.append(encoded[pos:start].decode(errors="replace"))
             pos = end
         elif parts:
             # newly created terminal without byte_span, add a space separator
             parts.append(" ")
         parts.append(terminal["value"])
-    # copy any remaining bytes after the last terminal
-    if pos < len(encoded):
-        parts.append(encoded[pos:].decode(errors="replace"))
     return "".join(parts)
 
 
@@ -339,11 +346,10 @@ def normalize(sparql: str, parser: LR1Parser, is_prefix: bool = False) -> str:
     return parse_to_string(parse) + rest
 
 
-def autocomplete_prefix(
+def complete_prefix(
     prefix: str,
     parser: LR1Parser,
-    limit: int | None = None,
-) -> tuple[str, str, Position]:
+) -> tuple[dict, Position, str]:
     # autocomplete by adding 1 to 3 variables to the query,
     # completing and then parsing it to find the current position
     # in the query triple block
@@ -382,18 +388,9 @@ def autocomplete_prefix(
                 s += " )"
         return s
 
-    def find_top_level_triples(parse: dict) -> list[str]:
-        blocks = []
-        for triples in find_all(
-            parse,
-            "TriplesSameSubjectPath",
-            skip={"GraphPatternNotTriples"},
-        ):
-            blocks.append(parse_to_string(triples))
-        return blocks
-
     for i, position in enumerate(Position):
         vars = [uuid.uuid4().hex for _ in range(3 - i)]
+        current_var = f"?{vars[0]}"
 
         full_query = prefix.strip() + " " + " ".join(f"?{v}" for v in vars)
         full_query = close_brackets(full_query)
@@ -401,50 +398,129 @@ def autocomplete_prefix(
         # check if query is valid now
         try:
             parse, _ = parse_string(full_query, parser)
-            query_type = find(parse, "QueryType")
-            assert query_type is not None
-            query_type = query_type["children"][0]
-            # strip "Query" suffix
-            query_type = query_type["name"][:-5].lower()
         except Exception:
             continue
 
-        select_var = vars[0]
+        if var_in_triple(parse, current_var):
+            return parse, position, current_var
 
-        triple_blocks = find_top_level_triples(parse)
-        if not any(select_var in block for block in triple_blocks):
-            # reset to empty query if selected var is not in triple blocks
-            # because then the result wouuld always be empty
-            triple_blocks = []
+    raise SPARQLException("Failed to complete SPARQL prefix", prefix)
 
-        final_query = (
-            "SELECT DISTINCT ?"
-            + select_var
-            + " WHERE { "
-            + " . ".join(triple_blocks)
-            + " }"
+
+def var_in_triple(parse: dict, var: str) -> bool:
+    return any(
+        any(
+            child.get("value") == var
+            for v in find_all(triple, "Var")
+            for child in v.get("children", [])
         )
-        if limit is not None:
-            final_query += f" LIMIT {limit}"
-
-        return final_query, query_type, position
-
-    raise SPARQLException("Failed to autocomplete prefix", prefix)
+        for triple in find_all(parse, "TriplesSameSubjectPath")
+    )
 
 
-def query_type(sparql: str, parser: LR1Parser, is_prefix: bool = False) -> str:
+def var_only_triple(triple: dict) -> bool:
+    return len(list(find_all(triple, "Var"))) == 3
+
+
+def infer_position_from_prefix(prefix: str, parser: LR1Parser) -> Position:
+    _, position, _ = complete_prefix(prefix, parser)
+    return position
+
+
+def find_connected_top_level_triple_nodes(parse: dict, select_var: str) -> list[dict]:
+    triple_blocks = list(
+        find_all(
+            parse,
+            "TriplesSameSubjectPath",
+            skip={"GraphPatternNotTriples"},
+        )
+    )
+
+    def find_vars(sub_parse: dict) -> set[str]:
+        variables = set()
+        for var in find_all(sub_parse, "Var"):
+            children = var.get("children", [])
+            assert len(children) == 1, "Expected Var node to have exactly one child"
+            token = children[0]
+            value = token.get("value")
+            assert isinstance(value, str) and value.startswith("?"), (
+                f"Expected variable token value, got {value!r}"
+            )
+            variables.add(value)
+        return variables
+
+    triple_var_sets = [find_vars(block) for block in triple_blocks]
+    if select_var not in set().union(*triple_var_sets):
+        return []
+
+    keep = set()
+    reachable_vars = {select_var}
+    changed = True
+    while changed:
+        changed = False
+        for i, var_set in enumerate(triple_var_sets):
+            if i in keep or not reachable_vars.intersection(var_set):
+                continue
+
+            keep.add(i)
+            reachable_vars.update(var_set)
+            changed = True
+
+    return [triple_blocks[i] for i in sorted(keep)]
+
+
+def find_connected_top_level_triples(parse: dict, select_var: str) -> list[str]:
+    return [
+        parse_to_string(node)
+        for node in find_connected_top_level_triple_nodes(parse, select_var)
+    ]
+
+
+def derive_constraint_query_from_prefix(
+    prefix: str,
+    parser: LR1Parser,
+    limit: int | None = None,
+) -> tuple[str | None, Position]:
+    parse, position, select_var = complete_prefix(prefix, parser)
+
+    triple_nodes = find_connected_top_level_triple_nodes(parse, select_var)
+
+    if not triple_nodes:
+        return None, position
+
+    if len(triple_nodes) == 1 and var_only_triple(triple_nodes[0]):
+        return None, position
+
+    triple_blocks = [parse_to_string(node) for node in triple_nodes]
+    final_query = (
+        f"SELECT DISTINCT {select_var} WHERE {{ " + " . ".join(triple_blocks) + " }"
+    )
+    if limit is not None:
+        final_query += f" LIMIT {limit}"
+
+    return final_query, position
+
+
+def query_type(sparql: str, parser: LR1Parser, is_prefix: bool = False) -> str | None:
     try:
         parse, _ = parse_string(sparql + " " * is_prefix, parser, is_prefix=is_prefix)
     except Exception:
-        # if query is not parsable, return select as default
-        return "select"
+        return None
 
     query_type = find(parse, "QueryType")
-    assert query_type is not None, "Cannot find query type of SPARQL query"
+    if query_type is not None:
+        name = query_type["children"][0]["name"]
+        return name[:-5].lower()  # remove "Query" suffix
 
-    query_type = query_type["children"][0]
-    name = query_type["name"]
-    return name[:-5].lower()  # remove "Query" suffix
+    # Prefix parse trees don't build the QueryType wrapper node; infer from the
+    # outermost keyword token (CONSTRUCT/DESCRIBE/ASK can't appear in subselects)
+    if find(parse, "CONSTRUCT") is not None:
+        return "construct"
+    if find(parse, "DESCRIBE") is not None:
+        return "describe"
+    if find(parse, "ASK") is not None:
+        return "ask"
+    return "select"
 
 
 def ask_to_select(
@@ -931,6 +1007,63 @@ def format_iri(
         return wrap_iri(iri) if wrap else iri
 
 
+def prepare_identifier_for_sparql(identifier: str, parser: LR1Parser) -> str:
+    binding = parse_into_binding(identifier, parser)
+    if binding is None and has_scheme(identifier):
+        binding = parse_into_binding(wrap_iri(identifier), parser)
+    if binding is None:
+        return identifier
+    return binding.sparql()
+
+
+def format_literal(
+    literal: str,
+    parser: LR1Parser,
+    prefixes: dict[str, str],
+    base_uri: str | None = None,
+) -> str:
+    binding = parse_into_binding(literal, parser, prefixes)
+
+    if binding is None:
+        return literal
+
+    if binding.typ == "literal" and binding.datatype is not None:
+        formatted_dt = format_iri(
+            binding.datatype,
+            parser,
+            prefixes,
+            base_uri,
+            wrap=True,
+        )
+        return f'"{binding.value}"^^{formatted_dt}'
+
+    return binding.identifier()
+
+
+def format_identifier(
+    identifier: str,
+    parser: LR1Parser,
+    prefixes: dict[str, str],
+    base_uri: str | None = None,
+    wrap: bool = False,
+) -> str:
+    binding = parse_into_binding(identifier, parser, prefixes)
+
+    if binding is None and has_scheme(identifier):
+        binding = parse_into_binding(wrap_iri(identifier), parser, prefixes)
+
+    if binding is None:
+        return identifier
+
+    if binding.typ == "uri":
+        return format_iri(identifier, parser, prefixes, base_uri, wrap)
+
+    elif binding.typ == "literal":
+        return format_literal(identifier, parser, prefixes, base_uri)
+
+    return binding.identifier()
+
+
 def load_qlever_prefixes(endpoint: str) -> dict[str, str]:
     parse = urlparse(endpoint)
     parse.encode()
@@ -966,9 +1099,17 @@ def load_property_index_sparql() -> str:
     return read_resource("grasp.sparql.queries", "property.index.sparql")
 
 
+def load_literal_index_sparql() -> str:
+    return read_resource("grasp.sparql.queries", "literal.index.sparql")
+
+
 def load_entity_info_sparql() -> str:
     return read_resource("grasp.sparql.queries", "entity.info.sparql")
 
 
 def load_property_info_sparql() -> str:
     return read_resource("grasp.sparql.queries", "property.info.sparql")
+
+
+def load_literal_info_sparql() -> str:
+    return read_resource("grasp.sparql.queries", "literal.info.sparql")

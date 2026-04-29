@@ -71,7 +71,7 @@ Each line contains a JSON object like this, with optional additional fields:
 ### Evaluation (outputs/*.evaluation.json)
 
 Model output evaluated against ground truth, as
-produced by the `scripts/evaluate.py` script, in the format:
+produced by the `grasp evaluate f1` command, in the format:
 
 ```jsonc
 {

@@ -21,11 +21,18 @@ class FeedbackTask(ABC):
 
 class GraspTask(ABC):
     name: str
+    known: set[str]
 
-    def __init__(self, managers: list[KgManager], config: GraspConfig) -> None:
+    def __init__(
+        self,
+        managers: list[KgManager],
+        config: GraspConfig,
+        known: set[str] | None = None,
+    ) -> None:
         self.managers = managers
         self.config = config
         self.state: Any = None
+        self.known = known or set()
 
     @abstractmethod
     def system_information(self) -> str: ...

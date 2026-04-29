@@ -1,13 +1,12 @@
 from grasp.functions import (
     find_manager,
-    format_verification_error,
-    update_known_from_rows,
+    format_iri_or_literal_error,
     parse_iri_or_literal,
+    update_known_from_rows,
 )
 from grasp.manager import KgManager
 from grasp.sparql.types import Position, SelectResult
-from grasp.sparql.utils import wrap_iri
-from grasp.utils import FunctionCallException
+from grasp.utils import FunctionCallException, format_enumerate
 
 
 def find_frequent_function_definition(kgs: list[str], k: int) -> dict:
@@ -83,8 +82,8 @@ def find_frequent(
 
     if constraints.get(position) is not None:
         raise FunctionCallException(
-            f'Cannot find common values at the "{position}" position '
-            f"while also constraining it."
+            f"Cannot look for {position} values and constrain them "
+            f'to "{constraints[position]}" at the same time.'
         )
 
     pos_values = []
@@ -99,7 +98,7 @@ def find_frequent(
             manager.prefixes,
         )
         if ver_const is None or (pos != Position.OBJECT and ver_const.typ != "uri"):
-            raise FunctionCallException(format_verification_error(const, pos))
+            raise FunctionCallException(format_iri_or_literal_error(const, pos))
 
         pos_values.append(ver_const.sparql())
 
@@ -125,16 +124,41 @@ LIMIT {page * k}"""
     end = page * k
     result.data = result.data[start:end]
 
-    # update known
-    update_known_from_rows(known, result.rows(), manager.get_normalizer("entities"))
-    update_known_from_rows(known, result.rows(), manager.get_normalizer("properties"))
+    plural = "properties" if position == "property" else f"{position}s"
+    if len(result) == 0:
+        return f"No {plural} (page {page})"
 
-    return manager.format_sparql_result(
-        result,
-        show_top_rows=k,
-        show_bottom_rows=0,
-        show_left_columns=2,
-        show_right_columns=0,
-        column_names=[position, "frequency"],
-        clip_literals=False,
+    # update known
+    update_known_from_rows(
+        known,
+        result.rows(),
+        manager.get_normalizer("entities"),
+    )
+    update_known_from_rows(
+        known,
+        result.rows(),
+        manager.get_normalizer("properties"),
+    )
+
+    target_var = position[0]
+    items = []
+    for row in result.rows():
+        val = row[target_var]
+        freq = row["freq"].value
+        identifier = val.identifier()
+        formatted = manager.format_identifier(identifier)
+
+        if val.typ == "uri":
+            label = manager.get_label(
+                identifier,
+                "entities",
+            ) or manager.get_label(identifier, "properties")
+
+            if label is not None:
+                formatted = f"{label} ({formatted})"
+
+        items.append(f"{formatted} - {freq} occurrences")
+
+    return f"Most frequent {plural} (page {page}):\n" + format_enumerate(
+        items, start=(page - 1) * k
     )

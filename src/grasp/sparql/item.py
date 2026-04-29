@@ -7,8 +7,8 @@ from grasp.manager import KgManager
 from grasp.manager.utils import find_obj_type_from_prefixes, get_common_sparql_prefixes
 from grasp.sparql.types import Alternative, ObjType, Position, Selection
 from grasp.sparql.utils import (
-    autocomplete_prefix,
     find_all,
+    infer_position_from_prefix,
     parse_into_binding,
     parse_string,
 )
@@ -142,7 +142,7 @@ def _get_item(
     iri = binding.identifier()
 
     try:
-        *_, position = autocomplete_prefix(prefix, manager.sparql_parser)
+        position = infer_position_from_prefix(prefix, manager.sparql_parser)
         if position in [Position.SUBJECT, Position.OBJECT]:
             obj_types = [ObjType.ENTITY]
         else:
@@ -268,16 +268,16 @@ def extract_sparql_items(
                 _get_item(iri, manager, sparql_encoded)
                 for iri in find_all(parse, name="iri", skip={"Prologue"})
             ),
-            (
-                # only literals in triples are searchable in addition to IRIs
-                # rest should be predicted directly
-                _get_item(lit, manager, sparql_encoded)
-                for triple in find_all(parse, name="TriplesSameSubject")
-                for lit in find_all(
-                    triple,
-                    name={"RDFLiteral", "NumericLiteral", "BooleanLiteral"},
-                )
-            ),
+            # commented out for now, since not used anywhere
+            # (
+            #     # get literals in triples
+            #     _get_item(lit, manager, sparql_encoded)
+            #     for triple in find_all(parse, name="TriplesSameSubject")
+            #     for lit in find_all(
+            #         triple,
+            #         name={"RDFLiteral", "NumericLiteral", "BooleanLiteral"},
+            #     )
+            # ),
         ),
     )
 

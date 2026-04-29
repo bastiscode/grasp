@@ -1,5 +1,10 @@
-from grasp.manager import KgManager
-from grasp.sparql.utils import find, find_all, parse_string, parse_to_string
+from grammar_utils.parse import LR1Parser  # type: ignore
+
+from grasp.sparql.utils import (
+    find,
+    parse_string,
+    parse_to_string_with_whitespace,
+)
 
 STOP_FUNCTION = {
     "name": "stop",
@@ -26,15 +31,15 @@ def set_description_function(description: str) -> dict:
     }
 
 
-def index_functions() -> list[dict]:
-    return [
+def index_functions(index_name: str = "entities") -> list[dict]:
+    fns: list[dict] = [
         {
             "name": "show_setup",
             "description": "Show the current index and info SPARQL queries for the knowledge graph.",
         },
         {
             "name": "set_query",
-            "description": "Set the index or info SPARQL query for the knowledge graph",
+            "description": "Set or clear the index or info SPARQL query for the knowledge graph.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -44,8 +49,8 @@ def index_functions() -> list[dict]:
                         "description": "Whether this is an index query or an info query",
                     },
                     "sparql": {
-                        "type": "string",
-                        "description": "The SPARQL query",
+                        "type": ["string", "null"],
+                        "description": "The SPARQL query, or null to clear / unset the current query.",
                     },
                 },
                 "required": ["type", "sparql"],
@@ -57,8 +62,25 @@ def index_functions() -> list[dict]:
             "Set a concise description of what this index contains and how it is built. "
             "Typically a single sentence is sufficient."
         ),
-        STOP_FUNCTION,
     ]
+
+    # show_entity_setup is only useful while authoring the literals index,
+    # where the agent may want to inspect the entity index to avoid
+    # duplicating the literals it already covers as entity-associated labels.
+    if index_name == "literals":
+        fns.append(
+            {
+                "name": "show_entity_setup",
+                "description": "Show the current entity index setup (index SPARQL, info "
+                "SPARQL, and description) for this knowledge graph. Use this while "
+                "authoring the literals index to see which literals the entity index "
+                "already covers, and avoid duplicating that coverage in the literals "
+                "index.",
+            }
+        )
+
+    fns.append(STOP_FUNCTION)
+    return fns
 
 
 def info_functions() -> list[dict]:
@@ -136,57 +158,55 @@ def info_functions() -> list[dict]:
     ]
 
 
-def find_select_vars(parse: dict) -> set[str]:
-    clause = find(parse, "SelectClause")
+def clean(s: str) -> str:
+    return "".join(s.split())
+
+
+def find_select_clause(parse: dict, enc: bytes) -> str:
+    clause = find(parse, "SelectClause", skip={"SubSelect"})
     if clause is None:
         raise ValueError("No SELECT clause found in query")
-
-    used = set()
-    for var in find_all(clause, "Var"):
-        used.add(var["children"][0]["value"].lstrip("?").lstrip("$"))
-
-    return used
+    return parse_to_string_with_whitespace(clause, enc)
 
 
-def find_order_by(parse: dict) -> str:
-    order_by = find(parse, "OrderClause")
-    if order_by is None:
-        raise ValueError("No ORDER BY clause found in query")
-    return parse_to_string(order_by)
+def find_solution_modifier(parse: dict, enc: bytes) -> str:
+    sol_mod = find(parse, "SolutionModifier", skip={"SubSelect"})
+    if sol_mod is None:
+        raise ValueError("No solution modifier found in query")
+    return parse_to_string_with_whitespace(sol_mod, enc)
 
 
-def validate_sparql_vars(parse: dict, required: set[str]):
-    used = find_select_vars(parse)
-
-    missing = required - used
-    if missing:
-        missing_str = ", ".join(f"?{v}" for v in sorted(missing))
-        raise ValueError(f"Missing required variables {missing_str} in SELECT clause.")
+def validate_select_clause(parse: dict, enc: bytes, target: str):
+    select = find_select_clause(parse, enc)
+    if clean(select) != clean(target):
+        raise ValueError(f"SELECT clause must be '{target}', but got '{select}'")
 
 
-def validate_order_by(parse: dict, target: str):
-    order_by = find_order_by(parse)
-    if order_by.replace(" ", "") != target.replace(" ", ""):
-        raise ValueError(f"ORDER BY clause must be '{target}'")
+def validate_solution_modifier(parse: dict, enc: bytes, target: str):
+    sol_mod = find_solution_modifier(parse, enc)
+    if clean(sol_mod) != clean(target):
+        raise ValueError(f"Solution modifier must be '{target}', but got '{sol_mod}'")
 
 
-INDEX_SPARQL_VARS = {"id", "value", "tags"}
-INDEX_SPARQL_ORDER_BY = "ORDER BY DESC(?score) ?id DESC(?tags)"
+INDEX_SPARQL_SELECT = "SELECT DISTINCT ?id ?value ?tags"
+INDEX_SPARQL_SOL_MOD = "ORDER BY DESC(?score) ?id DESC(?tags)"
 
 
-def validate_index_sparql(manager: KgManager, sparql: str):
-    parse, _ = parse_string(sparql, manager.sparql_parser)
+def validate_index_sparql(parser: LR1Parser, sparql: str):
+    parse, _ = parse_string(sparql, parser)
+    enc = sparql.encode()
 
-    validate_sparql_vars(parse, INDEX_SPARQL_VARS)
-    validate_order_by(parse, INDEX_SPARQL_ORDER_BY)
-
-
-INFO_SPARQL_VARS = {"id", "value", "type"}
-INFO_SPARQL_ORDER_BY = "ORDER BY ?id ?type ?value"
+    validate_select_clause(parse, enc, INDEX_SPARQL_SELECT)
+    validate_solution_modifier(parse, enc, INDEX_SPARQL_SOL_MOD)
 
 
-def validate_info_sparql(manager: KgManager, sparql: str):
-    parse, _ = parse_string(sparql, manager.sparql_parser)
+INFO_SPARQL_SELECT = "SELECT DISTINCT ?id ?value ?type"
+INFO_SPARQL_SOL_MOD = "ORDER BY ?id ?type ?value"
 
-    validate_sparql_vars(parse, INFO_SPARQL_VARS)
-    validate_order_by(parse, INFO_SPARQL_ORDER_BY)
+
+def validate_info_sparql(parser: LR1Parser, sparql: str):
+    parse, _ = parse_string(sparql, parser)
+    enc = sparql.encode()
+
+    validate_select_clause(parse, enc, INFO_SPARQL_SELECT)
+    validate_solution_modifier(parse, enc, INFO_SPARQL_SOL_MOD)

@@ -15,6 +15,7 @@ class KgConfig(BaseModel):
     kg: str
     entities_type: Literal["fuzzy", "embedding", "keyword"] = "fuzzy"
     properties_type: Literal["fuzzy", "embedding", "keyword"] = "embedding"
+    literals_type: Literal["fuzzy", "embedding", "keyword"] = "embedding"
     notes_file: str | None = None
     example_index: str | None = None
 
@@ -85,7 +86,9 @@ class GraspConfig(ModelConfig):
     sparql_read_timeout: float = 10.0
 
     # kg function parameters
-    search_top_k: int = 10
+    search_k: int = 10
+    # maximum page number allowed for search pagination
+    search_max_pages: int = 10
     # 10 total rows, 5 top and 5 bottom
     result_max_rows: int = 10
     # same for columns
@@ -177,4 +180,12 @@ class NotesFromOutputsConfig(NoteTakingConfig):
 
 class NotesFromExplorationConfig(NotesConfig):
     mode: Literal["functional", "structural"] = "structural"
-    questions_per_round: int = 3
+    questions_per_round: int = 1
+
+
+class NotesGenerateQuestionsConfig(NotesConfig):
+    # soft per-round target, surfaced in the system prompt only;
+    # generation only stops on the agent's stop call. With num_rounds
+    # already on NotesConfig, this implicitly bounds the total via
+    # num_rounds * questions_per_round.
+    questions_per_round: int = 1

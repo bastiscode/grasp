@@ -31,7 +31,7 @@ def main(args: argparse.Namespace):
     input_mapping = load_input_mapping(args.input)
 
     cfg = KgConfig(kg="wikidata")
-    manager = load_kg_manager("sparql-qa", cfg)
+    manager = load_kg_manager(cfg)
 
     with open(args.input) as f:
         input = [json.loads(line) for line in f]

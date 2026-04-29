@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from dataclasses import replace
 from typing import Any, Iterable
 
 from search_rdf import Data, EmbeddingIndex
@@ -45,17 +46,19 @@ from grasp.sparql.utils import (
     REQUEST_TIMEOUT,
     SPARQLException,
     ask_to_select,
-    autocomplete_prefix,
+    derive_constraint_query_from_prefix,
     execute,
     find_longest_prefix,
     fix_prefixes,
+    format_identifier,
     format_iri,
+    format_literal,
     get_qlever_endpoint,
     load_iri_and_literal_parser,
     load_sparql_parser,
+    prepare_identifier_for_sparql,
     prettify,
     query_type,
-    wrap_iri,
 )
 from grasp.utils import (
     clip,
@@ -157,6 +160,7 @@ class KgManager:
         show_right_columns: int = 5,
         column_names: list[str] | None = None,
         clip_literals: bool = True,
+        table_only: bool = False,
         time: float | None = None,
     ) -> str:
         tmf = ""
@@ -168,7 +172,10 @@ class KgManager:
             return f"Got result{tmf}:\n{result.boolean}"
 
         if result.num_rows == 0:
-            return f"Got no rows and {result.num_columns:,} columns" + tmf
+            if table_only:
+                return ""
+
+            return f"Got 0 rows and {result.num_columns:,} columns" + tmf
 
         assert column_names is None or len(column_names) == result.num_columns, (
             f"Expected {result.num_columns:,} column names"
@@ -198,41 +205,32 @@ class KgManager:
                 val = row.get(var, None)
                 if val is None:
                     formatted_row.append("")
+                    continue
 
-                elif val.typ == "bnode":
+                if val.typ == "bnode":
                     formatted_row.append(val.identifier())
 
                 elif val.typ == "literal":
-                    formatted = clip(val.value) if clip_literals else val.value
-                    if val.lang is not None:
-                        formatted += f" (lang:{val.lang})"
-                    elif val.datatype is not None:
-                        datatype = self.format_iri(val.datatype)
-                        formatted += f" ({datatype})"
+                    if clip_literals:
+                        # replace to modify value
+                        # without messing up original result
+                        val = replace(val, value=clip(val.value))
 
-                    formatted_row.append(formatted)
+                    formatted_row.append(self.format_literal(val.identifier()))
 
                 else:
                     assert val.typ == "uri"
                     identifier = val.identifier()
                     formatted = self.format_iri(identifier)
 
-                    # for uri check whether it is in one of the datasets
-                    index = "entities"
-                    norm = self.normalize(identifier, index)
+                    label = self.get_label(
+                        identifier,
+                        "entities",
+                    ) or self.get_label(identifier, "properties")
 
-                    if norm is None or self.get_label(norm[0], index) is None:
-                        index = "properties"
-                        norm = self.normalize(identifier, index)
+                    if label is not None:
+                        formatted = f"{clip(label)} ({formatted})"
 
-                    # still not found, just output the formatted iri
-                    if norm is None or self.get_label(norm[0], index) is None:
-                        formatted_row.append(formatted)
-                        continue
-
-                    label = self.get_label(norm[0], index)
-                    assert label is not None, "should not happen"
-                    formatted = f"{clip(label)} ({formatted})"
                     formatted_row.append(formatted)
 
             return formatted_row
@@ -258,6 +256,9 @@ class KgManager:
             alignments=["left"] * len(header),
             max_column_width=sys.maxsize,
         )
+
+        if table_only:
+            return table
 
         comp = "" if result.complete else "more than "
         formatted = (
@@ -296,13 +297,45 @@ class KgManager:
     def find_longest_prefix(self, iri: str) -> tuple[str, str] | None:
         return find_longest_prefix(iri, self.prefixes)
 
+    def format_identifier(
+        self,
+        identifier: str,
+        base_uri: str | None = None,
+        wrap: bool = False,
+    ) -> str:
+        return format_identifier(
+            identifier,
+            self.iri_literal_parser,
+            self.prefixes,
+            base_uri,
+            wrap,
+        )
+
     def format_iri(
         self,
         iri: str,
         base_uri: str | None = None,
         wrap: bool = False,
     ) -> str:
-        return format_iri(iri, self.iri_literal_parser, self.prefixes, base_uri, wrap)
+        return format_iri(
+            iri,
+            self.iri_literal_parser,
+            self.prefixes,
+            base_uri,
+            wrap,
+        )
+
+    def format_literal(
+        self,
+        literal: str,
+        base_uri: str | None = None,
+    ) -> str:
+        return format_literal(
+            literal,
+            self.iri_literal_parser,
+            self.prefixes,
+            base_uri,
+        )
 
     def fix_prefixes(
         self,
@@ -390,6 +423,10 @@ class KgManager:
         if data is None:
             return None
 
+        norm = self.normalize(identifier, index_name)
+        if norm is not None:
+            identifier = norm[0]
+
         id = data.id_from_identifier(identifier)
         if id is None:
             return None
@@ -441,7 +478,7 @@ class KgManager:
 
         return Alternative(
             identifier=identifier,
-            short_identifier=self.format_iri(identifier),
+            short_identifier=self.format_identifier(identifier),
             label=label,
             variants=variants,
             aliases=aliases,
@@ -573,25 +610,26 @@ class KgManager:
     ) -> dict[str, list[str]]:
         typ = query_type(sparql, self.sparql_parser)
         if typ != "select":
-            raise SPARQLException("SPARQL query is not a SELECT query")
+            raise SPARQLException("SPARQL query is not a SELECT query", sparql)
 
         self.logger.debug(
-            f"Getting candidate IDs for index '{index_name}' with {sparql}"
+            f'Getting candidate IDs for index "{index_name}" with {sparql}'
         )
         result = self.execute_sparql(sparql, request_timeout, read_timeout, max_retries)
 
         if not isinstance(result, SelectResult):
-            raise SPARQLException("SPARQL query is not a SELECT query")
+            raise SPARQLException("SPARQL query is not a SELECT query", sparql)
         if result.num_columns != 1:
-            raise SPARQLException("SPARQL query must return a single column")
+            raise SPARQLException("SPARQL query must return a single column", sparql)
         if max_candidates is not None and len(result) > max_candidates:
             raise SPARQLException(
                 f"Got more than the maximum supported number of "
-                f"candidates ({max_candidates:,})"
+                f"candidates ({max_candidates:,})",
+                sparql,
             )
 
         self.logger.debug(
-            f"Got {len(result):,} candidate items for index '{index_name}'"
+            f'Got {len(result):,} candidate items for index "{index_name}"'
         )
 
         normalizer = self.get_normalizer(index_name)
@@ -600,15 +638,15 @@ class KgManager:
         identifier_map: dict[str, list[str]] = {}
         for bindings in result.bindings():
             binding = next(iter(bindings), None)
-            if binding is None or binding.typ != "uri":
+            if binding is None:
                 continue
 
-            iri = binding.identifier()
+            identifier = binding.identifier()
 
-            norm = normalizer.normalize(iri)
+            norm = normalizer.normalize(identifier)
             if norm is not None:
                 normalized_iri, variant = norm
-                if data.id_from_identifier(normalized_iri) is not None:
+                if data.id_from_identifier(normalized_iri) is None:
                     if normalized_iri not in identifier_map:
                         identifier_map[normalized_iri] = []
                     if variant is not None:
@@ -616,9 +654,9 @@ class KgManager:
                     continue
 
             # direct match fallback
-            if data.id_from_identifier(iri) is not None:
-                if iri not in identifier_map:
-                    identifier_map[iri] = []
+            if data.id_from_identifier(identifier) is not None:
+                if identifier not in identifier_map:
+                    identifier_map[identifier] = []
 
         return identifier_map
 
@@ -634,7 +672,11 @@ class KgManager:
                 "SPARQL must contain {IDS} placeholder for identifiers"
             )
             info_sparql = info_sparql.replace(
-                "{IDS}", " ".join(wrap_iri(id) for id in identifiers)
+                "{IDS}",
+                " ".join(
+                    prepare_identifier_for_sparql(identifier, self.iri_literal_parser)
+                    for identifier in identifiers
+                ),
             )
             self.logger.debug(f"Retrieving infos with SPARQL:\n{info_sparql}")
             result = self.execute_sparql(
@@ -651,7 +693,7 @@ class KgManager:
             type_var = result.variables[2]
             for row in result.rows():
                 assert id_var in row, "Identifier column not found in result row"
-                assert row[id_var].typ == "uri"
+                assert row[id_var].typ in ("uri", "literal")
                 assert row[text_var].typ == "literal"
                 assert row[type_var].typ == "literal"
 
@@ -726,12 +768,16 @@ class KgManager:
 
         return info
 
-    def autocomplete_prefix(
+    def derive_constraint_query_from_prefix(
         self,
         prefix: str,
         limit: int | None = None,
-    ) -> tuple[str, str, Position]:
-        return autocomplete_prefix(prefix, self.sparql_parser, limit)
+    ) -> tuple[str | None, Position]:
+        return derive_constraint_query_from_prefix(
+            prefix,
+            self.sparql_parser,
+            limit,
+        )
 
     def format_selections(self, selections: list[Selection]) -> str:
         rename_obj_type = [
@@ -756,6 +802,8 @@ class KgManager:
 DEFAULT_DESCRIPTIONS = {
     "entities": "Entities indexed by their labels and synonyms",
     "properties": "Properties indexed by their labels, synonyms, and IRIs",
+    "literals": "Free-floating literal values (e.g., enumerable string values "
+    "used as objects which are not entity-associated labels)",
 }
 
 
@@ -805,7 +853,7 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     ent_index = try_load_index(
         cfg.kg,
         "entities",
-        cfg.entities_type or "fuzzy",
+        cfg.entities_type,
         logger,
     )
     if ent_index is not None:
@@ -814,11 +862,25 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     prop_index = try_load_index(
         cfg.kg,
         "properties",
-        cfg.properties_type or "embedding",
+        cfg.properties_type,
         logger,
     )
     if prop_index is not None:
         indices["properties"] = prop_index
+
+    # Auto-load the literals index whenever it was built (i.e. the data
+    # dir exists); only attempt if explicitly opted in or auto-detected
+    # so we don't log spurious warnings for KGs that never had literals.
+    literals_dir = os.path.join(get_index_dir(cfg.kg), "literals")
+    if cfg.literals_type is not None or os.path.exists(literals_dir):
+        lit_index = try_load_index(
+            cfg.kg,
+            "literals",
+            cfg.literals_type,
+            logger,
+        )
+        if lit_index is not None:
+            indices["literals"] = lit_index
 
     others = load_other_indices(cfg.kg, cfg.indices)
     for name, index in others.items():

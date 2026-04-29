@@ -85,7 +85,6 @@ python -m grasp.baselines.grisp.materialize \
 4: Train the model
 
 Adapt the training config to your setup, then run the training command.
-Most
 If you have materialized the data, you should set the `materialized`
 option to `true` and point the train and validation data paths
 to the materialized data.
@@ -181,7 +180,7 @@ subcommand of GRASP to evaluate.
 
 ```bash
 # to evaluate the test predictions with f1 score
-grasp evaluate f1 \
+grasp evaluate f1 wikidata \
   data/benchmark/wikidata/wwq/test.jsonl \
   data/grisp/runs/my-wikidata-wwq-model/predictions.jsonl
 ```

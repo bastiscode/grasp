@@ -45,7 +45,13 @@ MODALITY_QUERY_TYPES = {
 }
 
 
-def kg_functions(managers: list[KgManager], fn_set: str, list_k: int) -> list[dict]:
+def kg_functions(
+    managers: list[KgManager],
+    fn_set: str,
+    list_k: int,
+    search_k: int,
+    search_max_pages: int,
+) -> list[dict]:
     assert fn_set in [
         "base",
         "search",
@@ -139,7 +145,8 @@ list(kg="wikidata", property="wdt:P19")""",
                     },
                     "unclipped": {
                         "type": "boolean",
-                        "description": "Whether to show full unclipped literal values (default should be false, typically only needed to inspect very long string literals)",
+                        "description": "Whether to show full unclipped literal values "
+                        "(default should be false, typically only needed to inspect very long string literals)",
                     },
                 },
                 "required": [
@@ -161,6 +168,12 @@ list(kg="wikidata", property="wdt:P19")""",
 
     has_entity_index = "entities" in known_indices
     has_property_index = "properties" in known_indices
+    has_literal_index = "literals" in known_indices
+
+    page_prop = {
+        "type": "integer",
+        "description": "Page number (1-indexed) for paginating results (default should be 1)",
+    }
 
     if fn_set in ["search", "search_extended", "all"]:
         search_entity_props = {
@@ -173,8 +186,9 @@ list(kg="wikidata", property="wdt:P19")""",
                 "type": "string",
                 "description": "The search query",
             },
+            "page": page_prop,
         }
-        search_entity_required = ["kg", "query"]
+        search_entity_required = ["kg", "query", "page"]
 
         search_property_props = {
             "kg": {
@@ -186,19 +200,22 @@ list(kg="wikidata", property="wdt:P19")""",
                 "type": "string",
                 "description": "The search query",
             },
+            "page": page_prop,
         }
-        search_property_required = ["kg", "query"]
+        search_property_required = ["kg", "query", "page"]
 
         if has_entity_index:
             fns.append(
                 {
                     "name": "search_entity",
-                    "description": """\
-Search for entities in the knowledge graph with a search query.
+                    "description": f"""\
+Search for entities in the knowledge graph with a search query. \
+At most {search_k} results are returned per page (use pagination \
+up to page {search_max_pages} to see more results).
 
 For example, to search for the entity Albert Einstein in Wikidata, \
 do the following:
-search_entity(kg="wikidata", query="albert einstein")""",
+search_entity(kg="wikidata", query="albert einstein", page=1)""",
                     "parameters": {
                         "type": "object",
                         "properties": search_entity_props,
@@ -213,11 +230,13 @@ search_entity(kg="wikidata", query="albert einstein")""",
             fns.append(
                 {
                     "name": "search_property",
-                    "description": """\
-Search for properties in the knowledge graph with a search query.
+                    "description": f"""\
+Search for properties in the knowledge graph with a search query. \
+At most {search_k} results are returned per page (use pagination \
+up to page {search_max_pages} to see more results).
 
 For example, to search for properties related to birth in Wikidata, do the following:
-search_property(kg="wikidata", query="birth")""",
+search_property(kg="wikidata", query="birth", page=1)""",
                     "parameters": {
                         "type": "object",
                         "properties": search_property_props,
@@ -228,74 +247,130 @@ search_property(kg="wikidata", query="birth")""",
                 },
             )
 
-    if fn_set in ["search_extended", "all"]:
-        search_prop_of_ent_props = {
-            "kg": {
-                "type": "string",
-                "enum": kgs,
-                "description": "The knowledge graph to search",
-            },
-            "entity": {
-                "type": "string",
-                "description": "The entity to search properties for",
-            },
-            "query": {
-                "type": "string",
-                "description": "The search query",
-            },
-        }
-        search_prop_of_ent_required = ["kg", "entity", "query"]
-
-        search_obj_of_prop_props = {
-            "kg": {
-                "type": "string",
-                "enum": kgs,
-                "description": "The knowledge graph to search",
-            },
-            "property": {
-                "type": "string",
-                "description": "The property to search objects for",
-            },
-            "query": {
-                "type": "string",
-                "description": "The search query",
-            },
-        }
-        search_obj_of_prop_required = ["kg", "property", "query"]
-
-        if has_property_index:
+        if has_literal_index:
+            search_literal_props = {
+                "kg": {
+                    "type": "string",
+                    "enum": kgs,
+                    "description": "The knowledge graph to search",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "The search query",
+                },
+                "page": page_prop,
+            }
             fns.append(
                 {
-                    "name": "search_property_of_entity",
-                    "description": """\
-Search for properties of a given entity in the knowledge graph.
+                    "name": "search_literal",
+                    "description": f"""\
+Search for literal values (e.g. enumerable string values used as objects, \
+not entity labels) in the knowledge graph with a search query. \
+At most {search_k} results are returned per page (use pagination \
+up to page {search_max_pages} to see more results). Results are \
+shown as quoted strings, e.g. "restaurant", and can be pasted directly \
+into a SPARQL filter.
 
-For example, to search for properties related to birth for Albert Einstein \
-in Wikidata, do the following:
-search_property_of_entity(kg="wikidata", entity="wd:Q937", query="birth")""",
+For example, to search for the literal value "restaurant" used as an \
+amenity in OSM, do the following:
+search_literal(kg="osm-planet", query="restaurant", page=1)""",
                     "parameters": {
                         "type": "object",
-                        "properties": search_prop_of_ent_props,
-                        "required": search_prop_of_ent_required,
+                        "properties": search_literal_props,
+                        "required": ["kg", "query", "page"],
                         "additionalProperties": False,
                     },
                     "strict": True,
                 },
             )
 
+    if fn_set in ["search_extended", "all"]:
+        if has_property_index:
+            fns.append(
+                {
+                    "name": "search_property_of_entity",
+                    "description": f"""\
+Search for properties of a given entity in the knowledge graph. \
+At most {search_k} results are returned per page (use pagination \
+up to page {search_max_pages} to see more results).
+
+For example, to search for properties related to birth for Albert Einstein \
+in Wikidata, do the following:
+search_property_of_entity(kg="wikidata", entity="wd:Q937", query="birth", page=1)""",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "kg": {
+                                "type": "string",
+                                "enum": kgs,
+                                "description": "The knowledge graph to search",
+                            },
+                            "entity": {
+                                "type": "string",
+                                "description": "The entity to search properties for",
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "The search query",
+                            },
+                            "page": page_prop,
+                        },
+                        "required": ["kg", "entity", "query", "page"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                },
+            )
+
+        object_indices = []
         if has_entity_index:
+            object_indices.append("entities")
+        if has_literal_index:
+            object_indices.append("literals")
+
+        if object_indices:
+            obj_indices = " or ".join(f'"{idx}"' for idx in object_indices)
+
             fns.append(
                 {
                     "name": "search_object_of_property",
-                    "description": """\
-Search for entities at the object position for a given property in the knowledge graph.
+                    "description": f"""\
+Search for {obj_indices} at the object position for a given \
+property in the knowledge graph. At most {search_k} results are returned \
+per page (use pagination up to page {search_max_pages} to see more \
+results).
 
-For example, to search for football jobs in Wikidata, do the following:
-search_object_of_property(kg="wikidata", property="wdt:P106", query="football")""",
+For example, to search for football-related jobs in Wikidata, do the following:
+search_object_of_property(kg="wikidata", property="wdt:P106", \
+query="football", index="entities", page=1)
+
+Or to search for restaurant-related amenities in OSM, do the following:
+search_object_of_property(kg="osm", property="osmkey:amenity", \
+query="restaurant", index="literals", page=1)""",
                     "parameters": {
                         "type": "object",
-                        "properties": search_obj_of_prop_props,
-                        "required": search_obj_of_prop_required,
+                        "properties": {
+                            "kg": {
+                                "type": "string",
+                                "enum": kgs,
+                                "description": "The knowledge graph to search",
+                            },
+                            "property": {
+                                "type": "string",
+                                "description": "The property to search objects for",
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "The search query",
+                            },
+                            "index": {
+                                "type": "string",
+                                "enum": object_indices,
+                                "description": "Which index to search for the property's objects",
+                            },
+                            "page": page_prop,
+                        },
+                        "required": ["kg", "property", "query", "index", "page"],
                         "additionalProperties": False,
                     },
                     "strict": True,
@@ -331,8 +406,9 @@ search_object_of_property(kg="wikidata", property="wdt:P106", query="football")"
                 "type": "string",
                 "description": "The search query",
             },
+            "page": page_prop,
         }
-        search_filter_required = ["kg", "index", "sparql", "query"]
+        search_filter_required = ["kg", "index", "sparql", "query", "page"]
 
         if len(query_types) > 1:
             search_filter_props["query_type"] = query_type_prop
@@ -346,17 +422,19 @@ search_object_of_property(kg="wikidata", property="wdt:P106", query="football")"
                 "name": search_filter_name,
                 "description": f"""\
 Search for knowledge graph items in a context-sensitive way by specifying a filter \
-SPARQL query together with a search query. The SPARQL query must be a SELECT query \
-returning a single column of IRIs. The search is then restricted to knowledge graph items \
-matching those IRIs in the specified index. The SPARQL query can be null, in which case \
-a search over the full index is performed.
+SPARQL query together with a search query. The SPARQL query must be a single-column SELECT \
+query returning knowledge graph identifiers (IRIs or literals). The search is then restricted \
+to the items matching those identifiers in the specified index. The SPARQL query can be null, in which case \
+a search over the full index is performed. At most {search_k} results are returned per \
+page (use pagination up to page {search_max_pages} to see more results).
 
 For example, to search for Albert Einstein in Wikidata, do the following:
-{search_filter_name}(kg="wikidata", index="entities", query="albert einstein")
+{search_filter_name}(kg="wikidata", index="entities", query="albert einstein", page=1)
 
 Or to search for properties of Albert Einstein related to his birth in \
 Wikidata, do the following:
-{search_filter_name}(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p WHERE {{ wd:Q937 ?p ?o }}", query="birth")""",
+{search_filter_name}(kg="wikidata", index="properties", sparql="SELECT DISTINCT ?p WHERE {{ wd:Q937 ?p ?o }}", \
+query="birth", page=1)""",
                 "parameters": {
                     "type": "object",
                     "properties": search_filter_props,
@@ -408,6 +486,7 @@ Wikidata, do the following:
                 "required": ["subject", "property", "object"],
                 "additionalProperties": False,
             },
+            "page": page_prop,
         }
         search_constraints_required = [
             "kg",
@@ -415,6 +494,7 @@ Wikidata, do the following:
             "position",
             "query",
             "constraints",
+            "page",
         ]
 
         if len(query_types) > 1:
@@ -430,15 +510,16 @@ Wikidata, do the following:
                 "description": f"""\
 Search for knowledge graph items at a particular position (subject, property, or object) \
 with optional constraints. If constraints are provided, they are used to limit the search \
-space accordingly.
+space accordingly. At most {search_k} results are returned per page (use pagination \
+up to page {search_max_pages} to see more results).
 
 For example, to search for the subject Albert Einstein in Wikidata, do the following:
-{search_constraints_name}(kg="wikidata", index="entities", position="subject", query="albert einstein")
+{search_constraints_name}(kg="wikidata", index="entities", position="subject", query="albert einstein", page=1)
 
 Or to search for properties of Albert Einstein related to his birth in Wikidata, \
 do the following:
 {search_constraints_name}(kg="wikidata", index="properties", position="property", query="birth", \
-constraints={{"subject": "wd:Q937"}})""",
+constraints={{"subject": "wd:Q937"}}, page=1)""",
                 "parameters": {
                     "type": "object",
                     "properties": search_constraints_props,
@@ -506,9 +587,11 @@ def call_function(
             managers,
             fn_args["kg"],
             fn_args["query"],
-            config.search_top_k,
+            config.search_k,
             known,
             fn_args.get("query_type", "text"),
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
         )
 
     elif fn_name == "search_property":
@@ -516,9 +599,23 @@ def call_function(
             managers,
             fn_args["kg"],
             fn_args["query"],
-            config.search_top_k,
+            config.search_k,
             known,
             fn_args.get("query_type", "text"),
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
+        )
+
+    elif fn_name == "search_literal":
+        return search_literal(
+            managers,
+            fn_args["kg"],
+            fn_args["query"],
+            config.search_k,
+            known,
+            fn_args.get("query_type", "text"),
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
         )
 
     elif fn_name == "search_property_of_entity":
@@ -529,26 +626,54 @@ def call_function(
             "property",
             fn_args["query"],
             {"subject": fn_args["entity"]},
-            config.search_top_k,
+            config.search_k,
             known,
             fn_args.get("query_type", "text"),
             config.sparql_request_timeout,
             config.sparql_read_timeout,
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
         )
 
     elif fn_name == "search_object_of_property":
+        manager, _ = find_manager(managers, fn_args["kg"])
+        has_entities = "entities" in manager.indices
+        has_literals = "literals" in manager.indices
+        requested = fn_args.get("index")
+        if has_entities and has_literals:
+            if requested is None:
+                raise FunctionCallException(
+                    "index must be 'entities' or 'literals' when both indices "
+                    "are available for this knowledge graph"
+                )
+            if requested not in ("entities", "literals"):
+                raise FunctionCallException(
+                    f"index must be 'entities' or 'literals', got {requested!r}"
+                )
+            target_index = requested
+        elif has_entities:
+            target_index = "entities"
+        elif has_literals:
+            target_index = "literals"
+        else:
+            raise FunctionCallException(
+                f"Knowledge graph {fn_args['kg']} has neither an entity nor a "
+                f"literal index — cannot search objects of a property"
+            )
         return search_with_constraints(
             managers,
             fn_args["kg"],
-            "entities",
+            target_index,
             "object",
             fn_args["query"],
             {"property": fn_args["property"]},
-            config.search_top_k,
+            config.search_k,
             known,
             fn_args.get("query_type", "text"),
             config.sparql_request_timeout,
             config.sparql_read_timeout,
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
         )
 
     elif fn_name == "search_with_constraints" or (
@@ -561,11 +686,13 @@ def call_function(
             fn_args["position"],
             fn_args["query"],
             fn_args.get("constraints"),
-            config.search_top_k,
+            config.search_k,
             known,
             fn_args.get("query_type", "text"),
             config.sparql_request_timeout,
             config.sparql_read_timeout,
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
         )
 
     elif fn_name == "search_with_filter" or (
@@ -577,12 +704,14 @@ def call_function(
             fn_args["index"],
             fn_args["sparql"],
             fn_args["query"],
-            config.search_top_k,
+            config.search_k,
             known,
             fn_args.get("query_type", "text"),
             config.know_before_use,
             config.sparql_request_timeout,
             config.sparql_read_timeout,
+            page=fn_args.get("page") or 1,
+            max_pages=config.search_max_pages,
         )
 
     elif task is not None:
@@ -592,6 +721,13 @@ def call_function(
         raise ValueError(f"Unknown function {fn_name}")
 
 
+def _validate_page(page: int, max_pages: int | None = None) -> None:
+    if page < 1:
+        raise FunctionCallException("Page number must be at least 1")
+    elif max_pages is not None and page > max_pages:
+        raise FunctionCallException(f"Page number must be at most {max_pages}")
+
+
 def search_entity(
     managers: list[KgManager],
     kg: str,
@@ -599,23 +735,27 @@ def search_entity(
     k: int,
     known: set[str],
     query_type: str = "text",
+    page: int = 1,
+    max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    _validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
     alts = manager.search_index(
         "entities",
         query=query,
-        k=k,
+        k=k * page,
         query_type=query_type,
         **search_kwargs,
     )
+    alts = alts[(page - 1) * k : page * k]
 
     # update known items
     normalizer = manager.get_normalizer("entities")
     update_known_from_alts(known, alts, normalizer)
 
-    return format_index_alternatives(alts, "entities", k)
+    return format_index_alternatives(alts, k, page)
 
 
 def search_property(
@@ -625,23 +765,58 @@ def search_property(
     k: int,
     known: set[str],
     query_type: str = "text",
+    page: int = 1,
+    max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    _validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
     alts = manager.search_index(
         "properties",
         query=query,
-        k=k,
+        k=k * page,
         query_type=query_type,
         **search_kwargs,
     )
+    alts = alts[(page - 1) * k : page * k]
 
     # update known items
     normalizer = manager.get_normalizer("properties")
     update_known_from_alts(known, alts, normalizer)
 
-    return format_index_alternatives(alts, "properties", k)
+    return format_index_alternatives(alts, k, page)
+
+
+def search_literal(
+    managers: list[KgManager],
+    kg: str,
+    query: str,
+    k: int,
+    known: set[str],
+    query_type: str = "text",
+    page: int = 1,
+    max_pages: int = 10,
+    **search_kwargs: Any,
+) -> str:
+    _validate_page(page, max_pages)
+    manager, _ = find_manager(managers, kg)
+
+    alts = manager.search_index(
+        "literals",
+        query=query,
+        k=k * page,
+        query_type=query_type,
+        **search_kwargs,
+    )
+    alts = alts[(page - 1) * k : page * k]
+
+    # update known items so the LLM can paste these quoted literals
+    # straight into a SPARQL filter
+    normalizer = manager.get_normalizer("literals")
+    update_known_from_alts(known, alts, normalizer)
+
+    return format_index_alternatives(alts, k, page)
 
 
 COMMON_PREFIXES = get_common_sparql_prefixes()
@@ -858,7 +1033,6 @@ def parse_iri_or_literal(
     parser: LR1Parser,
     prefixes: dict[str, str] | None = None,
 ) -> Binding | None:
-    # parse and resolve percent encoding in IRIs
     binding = parse_into_binding(input, parser, prefixes)
 
     if binding is None and has_scheme(input):
@@ -873,9 +1047,17 @@ def parse_iri_or_literal(
     return binding
 
 
-def format_verification_error(value: str, position: Position) -> str:
-    expected = "IRI" if position != Position.OBJECT else "IRI or literal"
-    return f'Value "{value}" for {position} is not a valid {expected}. \
+def format_bnode_error(value: str) -> str:
+    return (
+        f'Value "{value}" is a blank node. Blank nodes cannot be used as constraints '
+        "because they behave like variables in SPARQL and do not refer to a specific node."
+    )
+
+
+def format_iri_or_literal_error(value: str, position: Position | None = None) -> str:
+    expected = "IRI or literal" if position == Position.OBJECT else "IRI"
+    pos_str = f" for {position}" if position is not None else ""
+    return f'Value "{value}"{pos_str} is not a valid {expected}. \
 IRIs can be given in prefixed form, like wd:Q937, or in full form, \
 like <http://www.wikidata.org/entity/Q937> or \
 http://www.wikidata.org/entity/Q937. Be aware that not all IRIs can be \
@@ -897,8 +1079,7 @@ def list_triples(
     request_timeout: float | tuple[float, float] | None = None,
     read_timeout: float | None = None,
 ) -> str:
-    if page < 1:
-        raise FunctionCallException("Page number must be at least 1")
+    _validate_page(page)
 
     manager, _ = find_manager(managers, kg)
 
@@ -914,8 +1095,10 @@ def list_triples(
             manager.iri_literal_parser,
             manager.prefixes,
         )
+        if ver_const is not None and ver_const.typ == "bnode":
+            raise FunctionCallException(format_bnode_error(const))
         if ver_const is None or (pos != Position.OBJECT and ver_const.typ != "uri"):
-            raise FunctionCallException(format_verification_error(const, pos))
+            raise FunctionCallException(format_iri_or_literal_error(const, pos))
 
         bindings.append(f"BIND({ver_const.sparql()} AS ?{pos.value[0]})")
         triple.append(ver_const.sparql())
@@ -1031,7 +1214,7 @@ SELECT ?s ?p ?o WHERE {{
     update_known_from_rows(known, result.rows(), ent_norm)
     update_known_from_rows(known, result.rows(), prop_norm)
 
-    return manager.format_sparql_result(
+    table = manager.format_sparql_result(
         result,
         show_top_rows=k,
         show_bottom_rows=0,
@@ -1040,7 +1223,12 @@ SELECT ?s ?p ?o WHERE {{
         # override column names
         column_names=["subject", "property", "object"],
         clip_literals=not unclipped,
+        table_only=True,
     )
+    if not table:
+        return f"No triples (page {page})"
+
+    return f"Triples (page {page}):\n{table}"
 
 
 def search_with_constraints(
@@ -1055,8 +1243,11 @@ def search_with_constraints(
     query_type: str = "text",
     request_timeout: float | tuple[float, float] | None = None,
     read_timeout: float | None = None,
+    page: int = 1,
+    max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    _validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
     if constraints is None:
@@ -1065,15 +1256,15 @@ def search_with_constraints(
     target_constr = constraints.get(position)
     if target_constr is not None:
         raise FunctionCallException(
-            f'Cannot look for {position} and constrain it to \
-"{target_constr}" at the same time.'
+            f"Cannot look for {position} and constrain it to "
+            f'"{target_constr}" at the same time.'
         )
 
     num_constraints = sum(c is not None for c in constraints.values())
     if num_constraints > 2:
         raise FunctionCallException(
-            "At most two of subject, property, and \
-object should be constrained at once."
+            "At most two of subject, property, and "
+            "object should be constrained at once."
         )
 
     identifier_map = None
@@ -1095,8 +1286,10 @@ object should be constrained at once."
                 manager.iri_literal_parser,
                 manager.prefixes,
             )
+            if ver_const is not None and ver_const.typ == "bnode":
+                raise FunctionCallException(format_bnode_error(const))
             if ver_const is None or (pos != Position.OBJECT and ver_const.typ != "uri"):
-                raise FunctionCallException(format_verification_error(const, pos))
+                raise FunctionCallException(format_iri_or_literal_error(const, pos))
 
             pos_values[pos] = ver_const.sparql()
 
@@ -1128,31 +1321,34 @@ search index due to:
     alternatives = manager.search_index(
         index,
         query,
-        k,
+        k * page,
         identifier_map,
         query_type=query_type,
         **search_kwargs,
     )
+    alternatives = alternatives[(page - 1) * k : page * k]
 
     # update known items
     normalizer = manager.get_normalizer(index)
     update_known_from_alts(known, alternatives, normalizer)
 
-    return info + format_index_alternatives(alternatives, index, k)
+    return info + format_index_alternatives(alternatives, k, page)
 
 
 def format_index_alternatives(
     alternatives: list[Alternative],
-    index_name: str,
     k: int,
+    page: int = 1,
 ) -> str:
     if not alternatives:
-        return f"No {index_name} alternatives found"
+        return f"No results (page {page})"
 
-    top_k_string = "\n".join(
-        f"{i + 1}. {alt.get_selection_string()}" for i, alt in enumerate(alternatives)
+    start_index = (page - 1) * k
+    lines = "\n".join(
+        f"{start_index + i + 1}. {alt.get_selection_string()}"
+        for i, alt in enumerate(alternatives)
     )
-    return f"Top {k} {index_name} alternatives:\n{top_k_string}"
+    return f"Results (page {page}):\n{lines}"
 
 
 def search_with_filter(
@@ -1167,8 +1363,11 @@ def search_with_filter(
     know_before_use: bool = False,
     request_timeout: float | tuple[float, float] | None = None,
     read_timeout: float | None = None,
+    page: int = 1,
+    max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    _validate_page(page, max_pages)
     manager, others = find_manager(managers, kg)
 
     identifier_map = None
@@ -1192,23 +1391,24 @@ def search_with_filter(
             )
         except Exception as e:
             info = f"""\
-    Falling back to an unconstrained search on the full \
-    search index due to:
-    {e}
+Falling back to an unconstrained search on the full \
+search index due to:
+{e}
 
-    """
+"""
 
     alternatives = manager.search_index(
         index,
         query,
-        k=k,
+        k=k * page,
         identifier_map=identifier_map,
         query_type=query_type,
         **search_kwargs,
     )
+    alternatives = alternatives[(page - 1) * k : page * k]
 
     # update known items
     normalizer = manager.get_normalizer(index)
     update_known_from_alts(known, alternatives, normalizer)
 
-    return info + format_index_alternatives(alternatives, index, k)
+    return info + format_index_alternatives(alternatives, k, page)
