@@ -384,6 +384,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional port for the Streamlit server",
     )
+    eval_expert_parser.add_argument(
+        "--base-url-path",
+        type=str,
+        default="/expert",
+        help="Base URL path for the Streamlit app; defaults to /expert",
+    )
 
     eval_parser.add_argument(
         "--retry-failed",
@@ -883,6 +889,7 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             args.evaluation_file,
             args.kg_config,
             args.port,
+            args.base_url_path,
             args.log_level,
         )
 

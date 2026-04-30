@@ -236,13 +236,21 @@ def main() -> None:
         or st.session_state["current_id"] not in id_pool
     ):
         st.session_state["current_id"] = id_pool[0]
+    if (
+        "example_selectbox" not in st.session_state
+        or st.session_state["example_selectbox"] not in id_pool
+    ):
+        st.session_state["example_selectbox"] = st.session_state["current_id"]
+
+    if "pending_selected_id" in st.session_state:
+        pending_selected_id = st.session_state.pop("pending_selected_id")
+        if pending_selected_id in id_pool:
+            st.session_state["current_id"] = pending_selected_id
+            st.session_state["example_selectbox"] = pending_selected_id
 
     selected_id = st.sidebar.selectbox(
         "Example",
         id_pool,
-        index=id_pool.index(st.session_state["current_id"])
-        if st.session_state["current_id"] in id_pool
-        else 0,
         format_func=_format_id,
         key="example_selectbox",
     )
@@ -257,7 +265,6 @@ def main() -> None:
     )
 
     sample = input_by_id[selected_id]
-    st.title("Blind Expert Evaluation")
     st.markdown(f"**Question:** {sample.get('question', '(no question)')}")
 
     # Blind candidate ordering (stable per id)
@@ -286,12 +293,11 @@ def main() -> None:
     gt_col, verdict_col = st.columns(2)
 
     with gt_col:
-        st.markdown("### Ground Truth")
-        gt_sparql = sample.get("sparql")
-        if not gt_sparql:
-            st.info("No ground-truth SPARQL available for this example.")
-        else:
-            with st.container(border=True):
+        with st.expander("Ground Truth", expanded=False):
+            gt_sparql = sample.get("sparql")
+            if not gt_sparql:
+                st.info("No ground-truth SPARQL available for this example.")
+            else:
                 st.markdown("**SPARQL**")
                 st.code(gt_sparql, language="sparql")
                 if args.kg_config:
@@ -326,19 +332,25 @@ def main() -> None:
                             )
 
     with verdict_col:
-        st.markdown("### Your Verdict")
         with st.container(border=True):
             with st.form(key=f"verdict_form::{selected_id}"):
-                choice = st.segmented_control(
-                    "Best candidate",
-                    options=choice_options,
-                    default=default_choice,
-                    selection_mode="single",
-                )
+                selector_col, explanation_col = st.columns([2, 5])
+                with selector_col:
+                    choice = st.segmented_control(
+                        "Best candidate",
+                        options=choice_options,
+                        default=default_choice,
+                        selection_mode="single",
+                    )
+                with explanation_col:
+                    explanation = st.text_input(
+                        "Notes / explanation (optional)",
+                        value=existing.get("explanation") or "",
+                        width="stretch",
+                    )
 
                 letter_scores: dict[str, int] = {}
                 if rate_each:
-                    st.markdown("**Scores (1-10)**")
                     score_cols = st.columns(len(prediction_files))
                     for score_col, (letter, canonical_idx, _) in zip(
                         score_cols, candidate_entries
@@ -347,22 +359,22 @@ def main() -> None:
                         if existing.get("scores"):
                             prev = existing["scores"].get(str(canonical_idx))
                         letter_scores[letter] = score_col.slider(
-                            f"Candidate {letter}",
+                            f"Candidate {letter} Score",
                             min_value=1,
                             max_value=10,
                             value=int(prev) if prev is not None else 5,
                             key=f"score::{selected_id}::{letter}",
                         )
 
-                explanation = st.text_area(
-                    "Notes / explanation (optional)",
-                    value=existing.get("explanation") or "",
-                    height=100,
-                )
-
-                submitted = st.form_submit_button(
-                    "Save", type="primary", use_container_width=True
-                )
+                save_col, save_next_col = st.columns(2)
+                with save_col:
+                    submitted = st.form_submit_button(
+                        "Save", type="primary", use_container_width=True
+                    )
+                with save_next_col:
+                    submitted_next = st.form_submit_button(
+                        "Save & Next", use_container_width=True
+                    )
 
     # Blind candidate columns (trace expander on top)
     st.markdown("### Candidates")
@@ -377,11 +389,17 @@ def main() -> None:
                 if invalid and output_entry is not None:
                     st.warning("Invalid output.")
                 if output_entry and "messages" in output_entry:
-                    with st.expander("Trace", expanded=False):
+                    elapsed = output_entry.get("elapsed")
+                    num_steps = len(output_entry["messages"])
+                    if isinstance(elapsed, (int, float)):
+                        trace_label = f"Trace ({elapsed:.1f} seconds, {num_steps} steps)"
+                    else:
+                        trace_label = f"Trace ({num_steps} steps)"
+                    with st.expander(trace_label, expanded=False):
                         render_messages(output_entry)
                 render_output_panel(output_entry, show_answer=False)
 
-    if submitted:
+    if submitted or submitted_next:
         if choice == "Tie":
             canonical_verdict = None
         else:
@@ -407,6 +425,18 @@ def main() -> None:
             st.error(f"Failed to save evaluation: {e}")
         else:
             st.success(f"Saved evaluation for {selected_id}.")
+
+            if submitted_next:
+                try:
+                    current_idx = id_pool.index(selected_id)
+                except ValueError:
+                    current_idx = -1
+                if current_idx + 1 < len(id_pool):
+                    next_id = id_pool[current_idx + 1]
+                else:
+                    next_id = id_pool[0]
+                st.session_state["pending_selected_id"] = next_id
+                st.rerun()
 
             # reveal identity after save
             with st.expander("Reveal candidate identities", expanded=True):

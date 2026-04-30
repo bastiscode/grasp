@@ -202,6 +202,13 @@ grasp evaluate expert \
   data/benchmark/wikidata/qald10/outputs/model2.jsonl \
   data/benchmark/wikidata/qald10/outputs/expert.evaluation.json
 
+# By default the app is served under /expert; override it if needed:
+grasp evaluate expert --base-url-path /custom-expert \
+  data/benchmark/wikidata/qald10/test.jsonl \
+  data/benchmark/wikidata/qald10/outputs/model1.jsonl \
+  data/benchmark/wikidata/qald10/outputs/model2.jsonl \
+  data/benchmark/wikidata/qald10/outputs/expert.evaluation.json
+
 # Show all available options:
 grasp evaluate f1 -h
 grasp evaluate judge -h

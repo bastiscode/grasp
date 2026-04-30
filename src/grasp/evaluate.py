@@ -512,12 +512,9 @@ def evaluate_with_expert(
     evaluation_file: str,
     kg_config: str | None = None,
     port: int | None = None,
+    base_url_path: str = "/expert",
     log_level: str | int | None = None,
 ) -> int:
-    """Launch the blind expert evaluation Streamlit app.
-
-    Blocks until the Streamlit server exits and returns its exit code.
-    """
     logger = get_logger("GRASP EVALUATION", log_level)
 
     expert_app = Path(__file__).resolve().parent / "apps" / "expert.py"
@@ -537,7 +534,11 @@ def evaluate_with_expert(
     cmd: list[str] = [streamlit, "run", str(expert_app)]
     if port is not None:
         cmd += ["--server.port", str(port)]
+    normalized_base_url_path = base_url_path.strip("/")
     cmd.append("--browser.gatherUsageStats=false")
+    cmd.append(f"--server.baseUrlPath={normalized_base_url_path}")
+    cmd.append("--server.enableCORS=false")
+    cmd.append("--server.enableXsrfProtection=false")
     cmd.append("--")
     cmd.append(input_file)
     cmd.extend(prediction_files)
