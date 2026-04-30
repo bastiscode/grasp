@@ -1,5 +1,3 @@
-"""Shared helpers used by the evaluation and expert Streamlit apps."""
-
 import json
 import os
 import re
@@ -17,7 +15,6 @@ logger = get_logger("EVALUATION SHARED")
 
 
 def parse_model_name(filename: str) -> tuple[str, str]:
-    """Parse model name and additional info from filename."""
     basename = os.path.basename(filename)
     if basename.endswith(".jsonl"):
         basename = basename[:-6]
@@ -30,13 +27,11 @@ def parse_model_name(filename: str) -> tuple[str, str]:
 
 
 def display_name_from_file(path) -> str:
-    """Build the canonical display name (`name` or `name (info)`) from a file path."""
     name, info = parse_model_name(Path(path).stem)
     return f"{name} ({info})" if info else name
 
 
 def _mtime(path) -> float:
-    """Return mtime for cache keying; 0.0 if missing."""
     try:
         return os.path.getmtime(path)
     except OSError:
@@ -44,12 +39,7 @@ def _mtime(path) -> float:
 
 
 @st.cache_data
-def load_model_outputs(output_file: str, mtime: float) -> dict:
-    """Load model outputs from a JSONL file and convert to dictionary by ID.
-
-    Cached on (path, mtime) so repeated reruns hit the cache and file edits
-    invalidate it automatically.
-    """
+def load_model_outputs(output_file: str, _mtime: float) -> dict:
     outputs_list = load_jsonl(output_file)
     outputs_dict = {}
 
@@ -66,7 +56,6 @@ def load_model_outputs(output_file: str, mtime: float) -> dict:
 
 
 def try_load_model_outputs(path) -> dict:
-    """Load model outputs; return {} on failure and log the reason."""
     try:
         return load_model_outputs(str(path), _mtime(path))
     except Exception as e:
@@ -75,7 +64,6 @@ def try_load_model_outputs(path) -> dict:
 
 
 def try_load_json(path, default=None):
-    """Load a JSON file; return `default` on failure and log the reason."""
     try:
         return load_json(str(path))
     except Exception as e:
@@ -84,13 +72,11 @@ def try_load_json(path, default=None):
 
 
 @st.cache_data
-def load_rank_json(path: str, mtime: float) -> dict:
-    """Cached load of a ranking JSON file, keyed by path + mtime."""
+def load_rank_json(path: str, _mtime: float) -> dict:
     return load_json(path)
 
 
 def try_load_rank_json(path) -> dict:
-    """Load a ranking JSON via cache; return {} on failure and log the reason."""
     try:
         return load_rank_json(str(path), _mtime(path))
     except Exception as e:
@@ -99,7 +85,6 @@ def try_load_rank_json(path) -> dict:
 
 
 def render_messages(output: dict, new_format: bool = True) -> None:
-    """Render the generation process (messages/tool calls) for one output."""
     if "messages" not in output:
         st.info("No generation process (messages) available for this output.")
         return
@@ -132,9 +117,7 @@ def render_messages(output: dict, new_format: bool = True) -> None:
 
                     for tool_call in message.content.tool_calls:
                         st.markdown(f"**Tool: {tool_call.name}**")
-                        st.code(
-                            json.dumps(tool_call.args, indent=2), language="json"
-                        )
+                        st.code(json.dumps(tool_call.args, indent=2), language="json")
                         st.markdown("**Result:**")
                         st.markdown(tool_call.result)
 
@@ -203,11 +186,6 @@ _TABLE_SEP_RE = re.compile(r"^\s*\|(\s*:?-+:?\s*\|)+\s*$")
 
 
 def _parse_markdown_table(text: str) -> pd.DataFrame | None:
-    """Parse a pipe-delimited markdown table out of `text`.
-
-    Returns a DataFrame if a header + separator + at least one data row
-    can be located, otherwise None. Preserves any prefix/suffix lines.
-    """
     if not isinstance(text, str) or "|" not in text:
         return None
 
@@ -244,7 +222,6 @@ def _parse_markdown_table(text: str) -> pd.DataFrame | None:
 
 
 def render_sparql_result(result_data) -> None:
-    """Render a SPARQL result. Parses pipe-table text into a DataFrame when possible."""
     if result_data is None:
         return
     if isinstance(result_data, (dict, list)):
@@ -263,10 +240,6 @@ def render_sparql_result(result_data) -> None:
 
 
 def render_output_panel(output_entry: dict | None, *, show_answer: bool = True) -> None:
-    """Render SPARQL / Result / Selections / Answer for one output entry.
-
-    Mirrors the candidate-column layout from the ranking view's sample explorer.
-    """
     if not output_entry:
         st.info("No output available for this example.")
         return

@@ -1,4 +1,3 @@
-import os
 import re
 import sys
 from collections import defaultdict
@@ -12,20 +11,15 @@ from streamlit_autorefresh import st_autorefresh
 from universal_ml_utils.io import load_jsonl
 from universal_ml_utils.logging import get_logger
 
-from grasp.utils import is_invalid_evaluation, is_invalid_output
-
 from grasp.apps.shared import (
-    _mtime,
     display_name_from_file,
-    load_model_outputs,
-    load_rank_json,
-    parse_model_name,
     render_messages,
     render_output_panel,
     try_load_json,
     try_load_model_outputs,
     try_load_rank_json,
 )
+from grasp.utils import is_invalid_evaluation, is_invalid_output
 
 logger = get_logger("EVALUATION APP")
 
@@ -288,9 +282,7 @@ def load_and_process_data(
         eval_data = try_load_json(eval_file, default={})
         # Restrict to ids for which we have model outputs
         model_eval_data[model_name] = {
-            id: ev
-            for id, ev in eval_data.items()
-            if id in model_outputs[model_name]
+            id: ev for id, ev in eval_data.items() if id in model_outputs[model_name]
         }
 
     # Find common ids that are valid (output and evaluation) across
@@ -700,7 +692,6 @@ def validate_ranking_consistency(
     """
     judge_configs = {}
     prediction_file_sets = {}
-    path_issues = []
 
     for entry in benchmark_entries:
         kg = entry["kg"]
@@ -718,11 +709,6 @@ def validate_ranking_consistency(
                 if key == "tie":
                     continue
                 prediction_files.add(Path(key).stem)
-                if "../" in key or key.startswith("/"):
-                    path_issues.append(
-                        f"{kg}/{benchmark}: Prediction file '{key}' uses "
-                        "absolute or parent directory path"
-                    )
             prediction_file_sets[f"{kg}/{benchmark}"] = prediction_files
 
     # Check 1: Judge model consistency
@@ -741,14 +727,7 @@ def validate_ranking_consistency(
                 warning_msg += f"\n  {model_name} (used by {', '.join(benchmarks)})"
             st.warning(warning_msg)
 
-    # Check 2: Prediction file path issues
-    if path_issues:
-        warning_msg = "⚠️ **Prediction file path issues detected!**\n"
-        for issue in path_issues:
-            warning_msg += f"\n  - {issue}"
-        st.warning(warning_msg)
-
-    # Check 3: Same set of models compared
+    # Check 2: Same set of models compared
     if prediction_file_sets:
         # Get all unique sets of prediction files
         unique_sets = {}
@@ -935,7 +914,9 @@ def show_ranking_view(ranking_data: dict) -> None:
             # Load model outputs to calculate additional metrics
             rank_dir = Path(rank_file).parent
             model_outputs_cache = {
-                key: try_load_model_outputs(rank_dir.parent / "outputs" / Path(key).name)
+                key: try_load_model_outputs(
+                    rank_dir.parent / "outputs" / Path(key).name
+                )
                 for key in summary.keys()
                 if key != "tie"
             }

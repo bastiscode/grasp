@@ -1,36 +1,7 @@
-"""Blind expert evaluation Streamlit app.
-
-Launch via:
-    streamlit run expert.py -- <input_jsonl> <pred_file>... \
-        --evaluation <out.json> [--kg-config <yaml>]
-
-Candidates are presented anonymously (A, B, C, ...) in an order that is
-deterministic per example id (seeded by hash(id)) so the mapping stays
-stable across reloads but is blind to the underlying prediction-file order.
-
-The saved evaluation JSON is compatible with the ranking view in app.py:
-    {
-      "prediction_files": [...],
-      "expert_config": {"kg_config": <path | null>, "evaluator": <str | null>},
-      "evaluations": {
-         "<id>": {
-             "verdict": int | null,            # index into prediction_files
-             "scores": {"<pred_idx>": int 1-10, ...} | null,
-             "explanation": str,
-             "err": null
-         }
-      },
-      "summary": {
-         "<pred_file>": {"count": int, "ratio": float,
-                          "avg_score": float | null, "n_scores": int},
-         "tie": {"count": int, "ratio": float}
-      }
-    }
-"""
-
 import argparse
 import hashlib
 import os
+import random
 import sys
 from collections import Counter
 
@@ -39,17 +10,15 @@ from universal_ml_utils.configuration import load_config
 from universal_ml_utils.io import dump_json, load_json, load_jsonl
 from universal_ml_utils.logging import get_logger
 
-from grasp.configs import KgConfig
-from grasp.manager import load_kg_manager
-from grasp.utils import is_invalid_output
-
 from grasp.apps.shared import (
     display_name_from_file,
     render_messages,
     render_output_panel,
     render_sparql_result,
-    try_load_model_outputs,
 )
+from grasp.configs import KgConfig
+from grasp.manager import load_kg_manager
+from grasp.utils import is_invalid_output
 
 logger = get_logger("EXPERT APP")
 
@@ -84,7 +53,7 @@ def _load_kg_manager_cached(kg_config_path: str):
 
 
 @st.cache_data
-def _load_jsonl_cached(path: str, mtime: float) -> list:
+def _load_jsonl_cached(path: str, _mtime: float) -> list:
     return load_jsonl(path)
 
 
@@ -93,25 +62,6 @@ def _mtime(p: str) -> float:
         return os.path.getmtime(p)
     except OSError:
         return 0.0
-
-
-def _candidate_permutation(example_id: str, n: int) -> list[int]:
-    """Deterministic per-id permutation of [0..n).
-
-    Stable across restarts so the expert always sees the same letter -> file
-    mapping for a given example.
-    """
-    h = hashlib.sha256(str(example_id).encode("utf-8")).digest()
-    # rank each prediction-file index by a per-id hash-derived key
-    keys = [(int.from_bytes(h[i * 4 : i * 4 + 4] or b"\x00", "big"), i) for i in range(n)]
-    # if n > 16, extend by hashing id+i (unlikely for expert eval, but safe)
-    if n > len(h) // 4:
-        keys = []
-        for i in range(n):
-            hh = hashlib.sha256(f"{example_id}::{i}".encode("utf-8")).digest()
-            keys.append((int.from_bytes(hh[:8], "big"), i))
-    keys.sort()
-    return [idx for _, idx in keys]
 
 
 def _letter(i: int) -> str:
@@ -219,7 +169,9 @@ def main() -> None:
         st.error(f"Failed to load input file {args.input_file}: {e}")
         return
 
-    input_by_id = {row["id"]: row for row in inputs if isinstance(row, dict) and "id" in row}
+    input_by_id = {
+        row["id"]: row for row in inputs if isinstance(row, dict) and "id" in row
+    }
     if not input_by_id:
         st.error("Input file contains no valid rows with an 'id' field.")
         return
@@ -232,12 +184,16 @@ def main() -> None:
         except Exception as e:
             st.error(f"Failed to load prediction file {pf}: {e}")
             return
-        pred_by_file.append({row["id"]: row for row in rows if isinstance(row, dict) and "id" in row})
+        pred_by_file.append(
+            {row["id"]: row for row in rows if isinstance(row, dict) and "id" in row}
+        )
 
     # Evaluation state in session (persisted on each save)
     state_key = f"expert_eval::{args.evaluation}"
     if state_key not in st.session_state:
-        st.session_state[state_key] = _load_evaluation(args.evaluation, prediction_files)
+        st.session_state[state_key] = _load_evaluation(
+            args.evaluation, prediction_files
+        )
     evaluation_state: dict = st.session_state[state_key]
     evaluation_state["expert_config"]["kg_config"] = args.kg_config
     evaluations: dict = evaluation_state["evaluations"]
@@ -247,7 +203,9 @@ def main() -> None:
     st.sidebar.caption(f"Evaluation file: `{args.evaluation}`")
     st.sidebar.caption(f"{len(prediction_files)} candidate file(s)")
 
-    example_ids = [i for i in input_by_id.keys() if all(i in preds for preds in pred_by_file)]
+    example_ids = [
+        i for i in input_by_id.keys() if all(i in preds for preds in pred_by_file)
+    ]
     if not example_ids:
         st.error("No example id is present in every prediction file.")
         return
@@ -259,7 +217,11 @@ def main() -> None:
         help="When enabled, shows sliders inside the verdict box so you can also "
         "rate each candidate individually in addition to picking a winner.",
     )
-    id_pool = [i for i in example_ids if not evaluations.get(i)] if show_only_unrated else example_ids
+    id_pool = (
+        [i for i in example_ids if not evaluations.get(i)]
+        if show_only_unrated
+        else example_ids
+    )
     if not id_pool:
         st.sidebar.success("All examples have been evaluated 🎉")
         id_pool = example_ids
@@ -269,7 +231,10 @@ def main() -> None:
         q = input_by_id[i].get("question", "")
         return f"{marker} {i} — {q[:60]}"
 
-    if "current_id" not in st.session_state or st.session_state["current_id"] not in id_pool:
+    if (
+        "current_id" not in st.session_state
+        or st.session_state["current_id"] not in id_pool
+    ):
         st.session_state["current_id"] = id_pool[0]
 
     selected_id = st.sidebar.selectbox(
@@ -284,15 +249,21 @@ def main() -> None:
     st.session_state["current_id"] = selected_id
 
     # progress
-    n_done = sum(1 for i in example_ids if evaluations.get(i) and not evaluations[i].get("err"))
-    st.sidebar.progress(n_done / max(1, len(example_ids)), text=f"{n_done}/{len(example_ids)} rated")
+    n_done = sum(
+        1 for i in example_ids if evaluations.get(i) and not evaluations[i].get("err")
+    )
+    st.sidebar.progress(
+        n_done / max(1, len(example_ids)), text=f"{n_done}/{len(example_ids)} rated"
+    )
 
     sample = input_by_id[selected_id]
     st.title("Blind Expert Evaluation")
     st.markdown(f"**Question:** {sample.get('question', '(no question)')}")
 
     # Blind candidate ordering (stable per id)
-    perm = _candidate_permutation(selected_id, len(prediction_files))
+    perm = list(range(len(prediction_files)))
+    random.seed(hashlib.sha256(selected_id.encode()).hexdigest())
+    random.shuffle(perm)
     candidate_entries = []  # list[(letter, canonical_idx, output_entry)]
     for letter_i, canonical_idx in enumerate(perm):
         output_entry = pred_by_file[canonical_idx].get(selected_id)
@@ -327,7 +298,9 @@ def main() -> None:
                     try:
                         manager = _load_kg_manager_cached(args.kg_config)
                     except Exception as e:
-                        st.error(f"Failed to load KG manager from {args.kg_config}: {e}")
+                        st.error(
+                            f"Failed to load KG manager from {args.kg_config}: {e}"
+                        )
                     else:
                         gt_key = f"gt_result::{args.kg_config}::{selected_id}"
                         if gt_key not in st.session_state:
@@ -338,7 +311,10 @@ def main() -> None:
                                     "formatted": manager.format_sparql_result(result),
                                 }
                             except Exception as e:
-                                st.session_state[gt_key] = {"ok": False, "error": str(e)}
+                                st.session_state[gt_key] = {
+                                    "ok": False,
+                                    "error": str(e),
+                                }
 
                         gt = st.session_state[gt_key]
                         if gt["ok"]:
@@ -445,7 +421,7 @@ def main() -> None:
         st.markdown("---")
         st.markdown("### Running Summary")
         rows = []
-        for idx, pred_file in enumerate(prediction_files):
+        for pred_file in prediction_files:
             entry = evaluation_state["summary"].get(pred_file, {})
             rows.append(
                 {
@@ -472,4 +448,5 @@ def main() -> None:
         st.table(rows)
 
 
-main()
+if __name__ == "__main__":
+    main()
