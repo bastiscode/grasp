@@ -982,7 +982,7 @@ def show_ranking_view(ranking_data: dict) -> None:
                 avg_score = model_avg_score.get(model)
                 n_scores = model_score_n.get(model, 0)
                 row_data[f"{letter} Avg Score"] = (
-                    f"{avg_score:.2f}/10 (n={n_scores})"
+                    f"{avg_score:.2f}/5 (n={n_scores})"
                     if avg_score is not None
                     else "—"
                 )
@@ -1207,7 +1207,7 @@ def show_ranking_view(ranking_data: dict) -> None:
                 score_rows.append(
                     {
                         "Model": summary_model_entries[idx]["display_name"],
-                        "Score": f"{v}/10",
+                        "Score": f"{v}/5",
                     }
                 )
             if score_rows:

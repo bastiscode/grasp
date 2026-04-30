@@ -4,6 +4,7 @@ import os
 import random
 import sys
 from collections import Counter
+from pathlib import Path
 
 import streamlit as st
 from universal_ml_utils.configuration import load_config
@@ -23,6 +24,24 @@ from grasp.utils import is_invalid_output
 logger = get_logger("EXPERT APP")
 
 st.set_page_config(page_title="Blind Expert Evaluation", page_icon="🧑‍⚖️", layout="wide")
+st.markdown(
+    """
+    <style>
+    div[data-baseweb="select"] > div {
+        height: auto !important;
+        min-height: 2.5rem;
+    }
+
+    div[data-baseweb="select"] span {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        word-break: break-word !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -66,6 +85,19 @@ def _mtime(p: str) -> float:
 
 def _letter(i: int) -> str:
     return chr(ord("A") + i)
+
+
+def _evaluation_label(path: str) -> dict[str, str]:
+    p = Path(path)
+    filename = p.stem
+    benchmark = p.parent.name if p.parent.name else "?"
+    group = p.parent.parent.name if p.parent.parent.name else "?"
+
+    if p.parent.name == "rank":
+        benchmark = p.parent.parent.name if p.parent.parent.name else "?"
+        group = p.parent.parent.parent.name if p.parent.parent.parent.name else "?"
+
+    return {"group": group, "benchmark": benchmark, "evaluation": filename}
 
 
 def _load_evaluation(path: str, prediction_files: list[str]) -> dict:
@@ -200,8 +232,12 @@ def main() -> None:
 
     # Sidebar: example picker
     st.sidebar.title("Blind Expert Evaluation")
-    st.sidebar.caption(f"Evaluation file: `{args.evaluation}`")
+    evaluation_label = _evaluation_label(args.evaluation)
+    st.sidebar.markdown(f"**Group:** `{evaluation_label['group']}`")
+    st.sidebar.markdown(f"**Benchmark:** `{evaluation_label['benchmark']}`")
+    st.sidebar.markdown(f"**Evaluation:** `{evaluation_label['evaluation']}`")
     st.sidebar.caption(f"{len(prediction_files)} candidate file(s)")
+    sidebar_judgement_placeholder = st.sidebar.empty()
 
     example_ids = [
         i for i in input_by_id.keys() if all(i in preds for preds in pred_by_file)
@@ -211,11 +247,16 @@ def main() -> None:
         return
 
     show_only_unrated = st.sidebar.checkbox("Only show unrated", value=False)
-    rate_each = st.sidebar.checkbox(
-        "Collect 1-10 scores per candidate",
+    show_judgement_in_sidebar = st.sidebar.checkbox(
+        "Show judgement panel in sidebar",
         value=False,
+    )
+    rate_each = st.sidebar.checkbox(
+        "Collect 1-5 scores per candidate",
+        value=True,
         help="When enabled, shows sliders inside the verdict box so you can also "
-        "rate each candidate individually in addition to picking a winner.",
+        "rate each candidate individually in addition to picking a winner. "
+        "A score of 5 is best, and 1 is worst.",
     )
     id_pool = (
         [i for i in example_ids if not evaluations.get(i)]
@@ -229,7 +270,7 @@ def main() -> None:
     def _format_id(i: str) -> str:
         marker = _status_marker(evaluations, i)
         q = input_by_id[i].get("question", "")
-        return f"{marker} {i} — {q[:60]}"
+        return f"{marker} {i} — {q}"
 
     if (
         "current_id" not in st.session_state
@@ -265,7 +306,8 @@ def main() -> None:
     )
 
     sample = input_by_id[selected_id]
-    st.markdown(f"**Question:** {sample.get('question', '(no question)')}")
+    st.markdown("### Question")
+    st.markdown(sample.get("question", "(no question)"))
 
     # Blind candidate ordering (stable per id)
     perm = list(range(len(prediction_files)))
@@ -277,6 +319,7 @@ def main() -> None:
         candidate_entries.append((_letter(letter_i), canonical_idx, output_entry))
 
     existing = evaluations.get(selected_id) or {}
+    has_existing_evaluation = selected_id in evaluations
     letters = [_letter(i) for i in range(len(prediction_files))]
     choice_options = letters + ["Tie"]
 
@@ -289,8 +332,103 @@ def main() -> None:
         except (ValueError, IndexError):
             default_choice = "Tie"
 
-    # Top row: ground truth (left) and verdict box (right), 50/50.
-    gt_col, verdict_col = st.columns(2)
+    def _render_judgement_panel(
+        panel, in_sidebar: bool
+    ) -> tuple[str, str, dict[str, int], bool, bool, bool]:
+        with panel:
+            with st.container(border=not in_sidebar):
+                with st.form(key=f"verdict_form::{selected_id}"):
+                    if in_sidebar:
+                        choice = st.segmented_control(
+                            "Best candidate",
+                            options=choice_options,
+                            default=default_choice,
+                            selection_mode="single",
+                        )
+                        explanation = st.text_input(
+                            "Notes / explanation (optional)",
+                            value=existing.get("explanation") or "",
+                            width="stretch",
+                        )
+                    else:
+                        selector_col, explanation_col = st.columns([2, 5])
+                        with selector_col:
+                            choice = st.segmented_control(
+                                "Best candidate",
+                                options=choice_options,
+                                default=default_choice,
+                                selection_mode="single",
+                            )
+                        with explanation_col:
+                            explanation = st.text_input(
+                                "Notes / explanation (optional)",
+                                value=existing.get("explanation") or "",
+                                width="stretch",
+                            )
+
+                    letter_scores: dict[str, int] = {}
+                    if rate_each:
+                        score_cols = st.columns(len(prediction_files))
+                        for score_col, (letter, canonical_idx, _) in zip(
+                            score_cols, candidate_entries
+                        ):
+                            prev = None
+                            if existing.get("scores"):
+                                prev = existing["scores"].get(str(canonical_idx))
+                            letter_scores[letter] = score_col.slider(
+                                f"Candidate {letter} Score",
+                                min_value=1,
+                                max_value=5,
+                                value=int(prev) if prev is not None else 3,
+                                key=f"score::{selected_id}::{letter}",
+                            )
+
+                    save_col, save_next_col, clear_col = st.columns(3)
+                    with save_col:
+                        submitted = st.form_submit_button(
+                            "Save", type="primary", use_container_width=True
+                        )
+                    with save_next_col:
+                        submitted_next = st.form_submit_button(
+                            "Save & Next", use_container_width=True
+                        )
+                    with clear_col:
+                        submitted_clear = st.form_submit_button(
+                            "Clear",
+                            use_container_width=True,
+                            disabled=not has_existing_evaluation,
+                        )
+
+        return (
+            choice,
+            explanation,
+            letter_scores,
+            submitted,
+            submitted_next,
+            submitted_clear,
+        )
+
+    if show_judgement_in_sidebar:
+        gt_col = st.container()
+        (
+            choice,
+            explanation,
+            letter_scores,
+            submitted,
+            submitted_next,
+            submitted_clear,
+        ) = _render_judgement_panel(sidebar_judgement_placeholder.container(), in_sidebar=True)
+    else:
+        # Top row: ground truth (left) and verdict box (right), 50/50.
+        gt_col, verdict_col = st.columns(2)
+        (
+            choice,
+            explanation,
+            letter_scores,
+            submitted,
+            submitted_next,
+            submitted_clear,
+        ) = _render_judgement_panel(verdict_col, in_sidebar=False)
 
     with gt_col:
         with st.expander("Ground Truth", expanded=False):
@@ -331,51 +469,6 @@ def main() -> None:
                                 f"Failed to execute ground-truth SPARQL: {gt['error']}"
                             )
 
-    with verdict_col:
-        with st.container(border=True):
-            with st.form(key=f"verdict_form::{selected_id}"):
-                selector_col, explanation_col = st.columns([2, 5])
-                with selector_col:
-                    choice = st.segmented_control(
-                        "Best candidate",
-                        options=choice_options,
-                        default=default_choice,
-                        selection_mode="single",
-                    )
-                with explanation_col:
-                    explanation = st.text_input(
-                        "Notes / explanation (optional)",
-                        value=existing.get("explanation") or "",
-                        width="stretch",
-                    )
-
-                letter_scores: dict[str, int] = {}
-                if rate_each:
-                    score_cols = st.columns(len(prediction_files))
-                    for score_col, (letter, canonical_idx, _) in zip(
-                        score_cols, candidate_entries
-                    ):
-                        prev = None
-                        if existing.get("scores"):
-                            prev = existing["scores"].get(str(canonical_idx))
-                        letter_scores[letter] = score_col.slider(
-                            f"Candidate {letter} Score",
-                            min_value=1,
-                            max_value=10,
-                            value=int(prev) if prev is not None else 5,
-                            key=f"score::{selected_id}::{letter}",
-                        )
-
-                save_col, save_next_col = st.columns(2)
-                with save_col:
-                    submitted = st.form_submit_button(
-                        "Save", type="primary", use_container_width=True
-                    )
-                with save_next_col:
-                    submitted_next = st.form_submit_button(
-                        "Save & Next", use_container_width=True
-                    )
-
     # Blind candidate columns (trace expander on top)
     st.markdown("### Candidates")
     columns_per_row = 3
@@ -399,7 +492,17 @@ def main() -> None:
                         render_messages(output_entry)
                 render_output_panel(output_entry, show_answer=False)
 
-    if submitted or submitted_next:
+    if submitted_clear:
+        if has_existing_evaluation:
+            del evaluations[selected_id]
+            try:
+                _save_evaluation(evaluation_state, args.evaluation)
+            except Exception as e:
+                st.error(f"Failed to clear evaluation: {e}")
+            else:
+                st.success(f"Cleared evaluation for {selected_id}.")
+                st.rerun()
+    elif submitted or submitted_next:
         if choice == "Tie":
             canonical_verdict = None
         else:
