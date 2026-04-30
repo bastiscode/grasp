@@ -14,6 +14,7 @@ from universal_ml_utils.io import (
     dump_json,
     dump_jsonl,
     dump_text,
+    load_json,
     load_jsonl,
     load_text,
 )
@@ -609,12 +610,24 @@ def parse_args() -> argparse.Namespace:
     # visualize trace from GRASP output
     show_parser = subparsers.add_parser(
         "show",
-        help="Visualize the interaction trace from GRASP output (reads JSONL from stdin)",
+        help="Visualize the interaction trace from GRASP output",
+    )
+    show_parser.add_argument(
+        "file",
+        nargs="?",
+        type=str,
+        help="File with GRASP output to visualize, if not given, read from stdin",
     )
     show_parser.add_argument(
         "--skip-system",
         action="store_true",
         help="Skip system, config, and functions messages",
+    )
+    show_parser.add_argument(
+        "--format",
+        choices=["json", "jsonl"],
+        default="json",
+        help="Format of the output (JSON or JSONL)",
     )
 
     parser.add_argument(
@@ -875,19 +888,23 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
 
 
 def show_grasp(args: argparse.Namespace) -> None:
+    if args.file is not None:
+        if args.format == "jsonl":
+            inputs = load_jsonl(args.file)
+        else:
+            inputs = [load_json(args.file)]
+    elif args.format == "jsonl":
+        inputs = (json.loads(line) for line in sys.stdin if line.strip())
+    else:
+        inputs = [json.loads(sys.stdin.read())]
+
     separator = colored("=" * 80, "cyan")
     first = True
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-
+    for trace in inputs:
         if not first:
             print(f"\n{separator}\n")
         first = False
-
-        output = json.loads(line)
-        print(format_trace(output, skip_system=args.skip_system))
+        print(format_trace(trace, skip_system=args.skip_system))
 
 
 def auto_setup_grasp(args: argparse.Namespace) -> None:
@@ -1010,7 +1027,9 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
             if sparql is None:
                 if os.path.lexists(path):
                     os.unlink(path)
-                    logger.info(f"Unlinked {name} {typ} SPARQL (query set to None; previous timestamped queries are retained)")
+                    logger.info(
+                        f"Unlinked {name} {typ} SPARQL (query set to None; previous timestamped queries are retained)"
+                    )
                 continue
 
             stamped = dump_latest(path, sparql, text=True)
