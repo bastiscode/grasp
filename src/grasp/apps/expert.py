@@ -23,7 +23,12 @@ from grasp.utils import is_invalid_output
 
 logger = get_logger("EXPERT APP")
 
-st.set_page_config(page_title="Blind Expert Evaluation", page_icon="🧑‍⚖️", layout="wide")
+st.set_page_config(
+    page_title="Blind Expert Evaluation",
+    page_icon="🧑‍⚖️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 st.markdown(
     """
     <style>
@@ -249,7 +254,7 @@ def main() -> None:
     show_only_unrated = st.sidebar.checkbox("Only show unrated", value=False)
     show_judgement_in_sidebar = st.sidebar.checkbox(
         "Show judgement panel in sidebar",
-        value=False,
+        value=True,
     )
     rate_each = st.sidebar.checkbox(
         "Collect 1-5 scores per candidate",
@@ -290,7 +295,7 @@ def main() -> None:
             st.session_state["example_selectbox"] = pending_selected_id
 
     selected_id = st.sidebar.selectbox(
-        "Example",
+        "Sample",
         id_pool,
         format_func=_format_id,
         key="example_selectbox",
@@ -311,7 +316,7 @@ def main() -> None:
 
     # Blind candidate ordering (stable per id)
     perm = list(range(len(prediction_files)))
-    random.seed(hashlib.sha256(selected_id.encode()).hexdigest())
+    random.seed(hashlib.sha256(selected_id.encode()).hexdigest())  # type: ignore
     random.shuffle(perm)
     candidate_entries = []  # list[(letter, canonical_idx, output_entry)]
     for letter_i, canonical_idx in enumerate(perm):
@@ -334,7 +339,7 @@ def main() -> None:
 
     def _render_judgement_panel(
         panel, in_sidebar: bool
-    ) -> tuple[str, str, dict[str, int], bool, bool, bool]:
+    ) -> tuple[str, str, dict[str, int], bool, bool]:
         with panel:
             with st.container(border=not in_sidebar):
                 with st.form(key=f"verdict_form::{selected_id}"):
@@ -383,29 +388,25 @@ def main() -> None:
                                 key=f"score::{selected_id}::{letter}",
                             )
 
-                    save_col, save_next_col, clear_col = st.columns(3)
-                    with save_col:
-                        submitted = st.form_submit_button(
-                            "Save", type="primary", use_container_width=True
-                        )
+                    save_next_col, secondary_col = st.columns(2)
                     with save_next_col:
                         submitted_next = st.form_submit_button(
-                            "Save & Next", use_container_width=True
-                        )
-                    with clear_col:
-                        submitted_clear = st.form_submit_button(
-                            "Clear",
+                            "Save & Next",
+                            type="primary",
                             use_container_width=True,
-                            disabled=not has_existing_evaluation,
+                        )
+                    with secondary_col:
+                        submitted_secondary = st.form_submit_button(
+                            "Clear" if has_existing_evaluation else "Save",
+                            use_container_width=True,
                         )
 
         return (
-            choice,
+            choice,  # type: ignore
             explanation,
             letter_scores,
-            submitted,
             submitted_next,
-            submitted_clear,
+            submitted_secondary,
         )
 
     if show_judgement_in_sidebar:
@@ -414,10 +415,11 @@ def main() -> None:
             choice,
             explanation,
             letter_scores,
-            submitted,
             submitted_next,
-            submitted_clear,
-        ) = _render_judgement_panel(sidebar_judgement_placeholder.container(), in_sidebar=True)
+            submitted_secondary,
+        ) = _render_judgement_panel(
+            sidebar_judgement_placeholder.container(), in_sidebar=True
+        )
     else:
         # Top row: ground truth (left) and verdict box (right), 50/50.
         gt_col, verdict_col = st.columns(2)
@@ -425,9 +427,8 @@ def main() -> None:
             choice,
             explanation,
             letter_scores,
-            submitted,
             submitted_next,
-            submitted_clear,
+            submitted_secondary,
         ) = _render_judgement_panel(verdict_col, in_sidebar=False)
 
     with gt_col:
@@ -475,7 +476,7 @@ def main() -> None:
     for i in range(0, len(candidate_entries), columns_per_row):
         chunk = candidate_entries[i : i + columns_per_row]
         cols = st.columns(len(chunk))
-        for col, (letter, _canonical_idx, output_entry) in zip(cols, chunk):
+        for col, (letter, _, output_entry) in zip(cols, chunk):
             with col.container(border=True):
                 st.markdown(f"### Candidate {letter}")
                 invalid = output_entry is None or is_invalid_output(output_entry)
@@ -485,14 +486,16 @@ def main() -> None:
                     elapsed = output_entry.get("elapsed")
                     num_steps = len(output_entry["messages"])
                     if isinstance(elapsed, (int, float)):
-                        trace_label = f"Trace ({elapsed:.1f} seconds, {num_steps} steps)"
+                        trace_label = (
+                            f"Trace ({elapsed:.1f} seconds, {num_steps} steps)"
+                        )
                     else:
                         trace_label = f"Trace ({num_steps} steps)"
                     with st.expander(trace_label, expanded=False):
                         render_messages(output_entry)
                 render_output_panel(output_entry, show_answer=False)
 
-    if submitted_clear:
+    if has_existing_evaluation and submitted_secondary:
         if has_existing_evaluation:
             del evaluations[selected_id]
             try:
@@ -501,8 +504,10 @@ def main() -> None:
                 st.error(f"Failed to clear evaluation: {e}")
             else:
                 st.success(f"Cleared evaluation for {selected_id}.")
+                st.session_state.pop("example_selectbox", None)
+                st.session_state["current_id"] = selected_id
                 st.rerun()
-    elif submitted or submitted_next:
+    elif submitted_secondary or submitted_next:
         if choice == "Tie":
             canonical_verdict = None
         else:
@@ -528,6 +533,8 @@ def main() -> None:
             st.error(f"Failed to save evaluation: {e}")
         else:
             st.success(f"Saved evaluation for {selected_id}.")
+            st.session_state.pop("example_selectbox", None)
+            st.session_state["current_id"] = selected_id
 
             if submitted_next:
                 try:
@@ -539,15 +546,7 @@ def main() -> None:
                 else:
                     next_id = id_pool[0]
                 st.session_state["pending_selected_id"] = next_id
-                st.rerun()
-
-            # reveal identity after save
-            with st.expander("Reveal candidate identities", expanded=True):
-                for letter, canonical_idx, _ in candidate_entries:
-                    st.markdown(
-                        f"- **{letter}** → `{display_name_from_file(prediction_files[canonical_idx])}`"
-                        f" ({prediction_files[canonical_idx]})"
-                    )
+            st.rerun()
 
     # Always show running summary at the bottom
     if evaluation_state.get("summary"):
