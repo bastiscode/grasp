@@ -5,11 +5,12 @@ PREFIX dct:    <http://purl.org/dc/terms/>
 
 # In an actual literal index query, you most likely want to
 # to explicitly set the properties to be considered
+# via VALUES or UNION clauses, and not exclude typical
+# entity-related properties like we do here for demonstration
 
 SELECT DISTINCT ?id ?value ?tags WHERE {
   {
     SELECT ?id (COUNT(*) AS ?score) WHERE {
-      SELECT DISTINCT ?id ?p ?s WHERE {
         ?s ?p ?id .
         FILTER(ISLITERAL(?id))
         FILTER(?p NOT IN (
@@ -18,8 +19,9 @@ SELECT DISTINCT ?id ?value ?tags WHERE {
           schema:name, schema:description,
           dct:title, dct:description
         ))
-      }
     }
+    # only look for literals that occur at least
+    # 10 times, to avoid noisy ones
     GROUP BY ?id
     HAVING (?score >= 10)
   }

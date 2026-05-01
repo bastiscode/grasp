@@ -272,6 +272,11 @@ and repeat, otherwise stop."""
 
         if name == "literals":
             rules.append(
+                "For a literals index, ?id and ?value are typically the same: bind ?id to the literal itself "
+                "and bind ?value to STR(?id). Since literals are their own identifiers, there is no separate "
+                "IRI to use as ?id."
+            )
+            rules.append(
                 "Only index standalone literals - string values that appear as objects in the knowledge graph "
                 "(e.g., enumerations like amenity types, status codes, license names). Do not index IRIs (use "
                 "the entity / property indices for those) and do not index literals that the entity index "
