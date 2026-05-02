@@ -53,6 +53,24 @@ def get_index_type_from_data(data: Data) -> str:
         return "embedding"
 
 
+def get_auto_index_type(
+    index_name: str,
+    data: Data | None = None,
+) -> str:
+    if index_name == "entities":
+        return "fuzzy"
+    elif index_name == "properties":
+        return "embedding"
+    elif index_name == "literals":
+        if data is not None:
+            return get_index_type_from_data(data)
+        else:
+            # default to embedding for literals if we don't have data to check
+            return "embedding"
+    else:
+        raise ValueError(f'Auto index type not supported for index "{index_name}"')
+
+
 def try_load_search_index(
     index_dir: str,
     index_type: str,
@@ -69,7 +87,7 @@ def try_load_search_index(
 
     # resolve auto index type depending on the size of the data
     if index_type == "auto":
-        index_type = get_index_type_from_data(data)
+        index_type = get_auto_index_type(os.path.basename(index_dir), data)
 
         if logger is not None:
             logger.debug(

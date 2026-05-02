@@ -7,7 +7,7 @@ from search_rdf.model import SentenceTransformerModel
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import flatten
 
-from grasp.manager.utils import get_index_type_from_data, load_data
+from grasp.manager.utils import get_auto_index_type, load_data
 from grasp.utils import get_index_dir
 
 
@@ -29,10 +29,8 @@ def build_index(
 
     data = load_data(data_dir)
     if index_type == "auto":
-        assert index_name == "literals", (
-            "Auto index type selection is only supported for literals index"
-        )
-        index_type = get_index_type_from_data(data)
+        index_type = get_auto_index_type(index_name, data)
+
         logger.info(f'Auto-selected index type {index_type} for index "{index_name}"')
 
     if os.path.exists(index_dir) and not overwrite:
