@@ -25,13 +25,13 @@ def build_index(
     logger = get_logger("GRASP INDEX", log_level)
 
     data_dir = os.path.join(get_index_dir(kg), index_name)
-    index_dir = os.path.join(data_dir, index_type)
-
     data = load_data(data_dir)
+
     if index_type == "auto":
         index_type = get_auto_index_type(index_name, data)
-
         logger.info(f'Auto-selected index type {index_type} for index "{index_name}"')
+
+    index_dir = os.path.join(data_dir, index_type)
 
     if os.path.exists(index_dir) and not overwrite:
         logger.info(

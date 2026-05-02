@@ -1,26 +1,26 @@
-# For each literal id, return the three predicates that most frequently
+# For each literal, return the three properties that most frequently
 # link to it, with occurrence counts.
+# Ranking counts properties with strictly higher frequency, plus the property
+# itself (?p2 = ?p), so the top property gets rank=1 instead of being dropped.
 
 SELECT DISTINCT ?id ?value ?type WHERE {
   {
-    SELECT ?id ?p ?freq (COUNT(DISTINCT ?p2) AS ?better) WHERE {
+    SELECT ?id ?p ?freq (COUNT(DISTINCT ?p2) AS ?rank) WHERE {
       {
         SELECT ?id ?p (COUNT(*) AS ?freq) WHERE {
           VALUES ?id { {IDS} }
           ?s ?p ?id .
         } GROUP BY ?id ?p
       }
-      OPTIONAL {
-        {
-          SELECT ?id ?p2 (COUNT(*) AS ?freq2) WHERE {
-            VALUES ?id { {IDS} }
-            ?s2 ?p2 ?id .
-          } GROUP BY ?id ?p2
-        }
-        FILTER (?freq2 > ?freq)
+      {
+        SELECT ?id ?p2 (COUNT(*) AS ?freq2) WHERE {
+          VALUES ?id { {IDS} }
+          ?s2 ?p2 ?id .
+        } GROUP BY ?id ?p2
       }
+      FILTER(?freq2 > ?freq || ?p2 = ?p)
     } GROUP BY ?id ?p ?freq
-    HAVING (?better < 3)
+    HAVING (?rank <= 3)
   }
   BIND(CONCAT("appears as value of ", STR(?p), " (", STR(?freq), " occurrences)") AS ?value)
   BIND("other" AS ?type)
