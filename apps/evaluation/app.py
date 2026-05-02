@@ -1334,6 +1334,7 @@ def show_comprehensive_view(available_data: dict) -> None:
                     all_metrics[model_name][kg_name][benchmark_name] = {
                         "avg_f1": model_metrics["f1"],
                         "accuracy": model_metrics["accuracy"],
+                        "outputs": model_metrics["num_outputs"],
                         "evaluated": model_metrics["num_evaluations"],
                         "invalid_preds": model_metrics["num_invalid_outputs"],
                     }
@@ -1351,6 +1352,35 @@ def show_comprehensive_view(available_data: dict) -> None:
     # Setup benchmark selection in its own section in sidebar
     st.sidebar.markdown("---")
     st.sidebar.subheader("Select Benchmarks to Include")
+
+    # Optional group regex filter before benchmark selection.
+    group_regex = st.sidebar.text_input(
+        "Filter groups by regex pattern",
+        key="group_regex",
+        help="Enter a regex pattern to automatically select matching groups and deselect non-matching ones. Example: 'wikidata|freebase' selects Wikidata and Freebase groups.",
+    )
+
+    compiled_group_regex = None
+    if group_regex:
+        try:
+            compiled_group_regex = re.compile(group_regex)
+        except re.error as e:
+            st.sidebar.error(f"Invalid group regex pattern: {e}")
+
+    selected_group_names = set(benchmark_by_kg)
+    if compiled_group_regex is not None:
+        selected_group_names = {
+            kg for kg in benchmark_by_kg if compiled_group_regex.search(kg)
+        }
+        if not selected_group_names:
+            st.sidebar.warning("No groups match the pattern. Showing all groups.")
+            selected_group_names = set(benchmark_by_kg)
+
+    benchmark_by_kg = {
+        kg: benchmarks
+        for kg, benchmarks in benchmark_by_kg.items()
+        if kg in selected_group_names
+    }
 
     # Regex filter — widget key is the source of truth
     benchmark_regex = st.sidebar.text_input(
@@ -1402,9 +1432,11 @@ def show_comprehensive_view(available_data: dict) -> None:
         st.sidebar.warning("No benchmarks selected. Showing all benchmarks.")
         selected_benchmarks = {key: True for key in selected_benchmarks}
 
-    # Now filter benchmarks based on selected options
+    # Now filter benchmarks based on selected group and benchmark options
     filtered_kg_benchmarks = defaultdict(list)
     for kg, benchmarks in kg_benchmarks.items():
+        if kg not in selected_group_names:
+            continue
         for benchmark in benchmarks:
             # Check if this (kg, benchmark) tuple is selected
             if selected_benchmarks.get((kg, benchmark), True):
@@ -1416,6 +1448,24 @@ def show_comprehensive_view(available_data: dict) -> None:
     # Prepare data for a pandas MultiIndex DataFrame
     # Sort knowledge graphs and benchmarks for consistent display
     sorted_kgs = sorted(kg_benchmarks.keys())
+
+    selected_benchmark_keys = {
+        (kg, benchmark)
+        for kg in sorted_kgs
+        for benchmark in kg_benchmarks[kg]
+    }
+    displayed_model_names = [
+        model_name
+        for model_name, per_kg in all_metrics.items()
+        if any(
+            per_kg.get(kg, {}).get(benchmark, {}).get("outputs", 0) > 0
+            for kg, benchmark in selected_benchmark_keys
+        )
+    ]
+
+    if not displayed_model_names:
+        st.warning("No models have outputs for the selected benchmarks.")
+        return
 
     # Create a list of tuples for the MultiIndex columns
     column_tuples = [("Model", "")]  # First column is just the model name
@@ -1430,7 +1480,7 @@ def show_comprehensive_view(available_data: dict) -> None:
 
     # Prepare data rows
     data_rows = []
-    for model_name in sorted(all_metrics.keys()):
+    for model_name in sorted(displayed_model_names):
         row = [model_name]  # Start with model name
 
         # Add data for each KG and benchmark
@@ -1463,7 +1513,8 @@ def show_comprehensive_view(available_data: dict) -> None:
     for kg in sorted_kgs:
         for benchmark in sorted(kg_benchmarks[kg]):
             model_values = []
-            for model_name, per_kg in all_metrics.items():
+            for model_name in displayed_model_names:
+                per_kg = all_metrics[model_name]
                 metrics_data = per_kg.get(kg, {}).get(benchmark)
                 if metrics_data and metrics_data["evaluated"] > 0:
                     model_values.append((model_name, metrics_data[metric_key]))
@@ -1506,7 +1557,7 @@ def show_comprehensive_view(available_data: dict) -> None:
     st.subheader("Summary Statistics")
 
     # Count total models and benchmarks
-    total_models = len(all_metrics)
+    total_models = len(displayed_model_names)
     total_kgs = len(sorted_kgs)
     total_benchmarks = sum(len(benchmarks) for benchmarks in kg_benchmarks.values())
 
