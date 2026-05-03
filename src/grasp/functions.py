@@ -722,7 +722,7 @@ def call_function(
         raise ValueError(f"Unknown function {fn_name}")
 
 
-def _validate_page(page: int, max_pages: int | None = None) -> None:
+def validate_page(page: int, max_pages: int | None = None) -> None:
     if page < 1:
         raise FunctionCallException("Page number must be at least 1")
     elif max_pages is not None and page > max_pages:
@@ -740,7 +740,7 @@ def search_entity(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
-    _validate_page(page, max_pages)
+    validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
     alts = manager.search_index(
@@ -770,7 +770,7 @@ def search_property(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
-    _validate_page(page, max_pages)
+    validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
     alts = manager.search_index(
@@ -800,7 +800,7 @@ def search_literal(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
-    _validate_page(page, max_pages)
+    validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
     alts = manager.search_index(
@@ -1086,7 +1086,7 @@ def list_triples(
     request_timeout: float | tuple[float, float] | None = None,
     read_timeout: float | None = None,
 ) -> str:
-    _validate_page(page)
+    validate_page(page)
 
     manager, _ = find_manager(managers, kg)
 
@@ -1254,7 +1254,7 @@ def search_with_constraints(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
-    _validate_page(page, max_pages)
+    validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
     if constraints is None:
@@ -1374,7 +1374,7 @@ def search_with_filter(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
-    _validate_page(page, max_pages)
+    validate_page(page, max_pages)
     manager, others = find_manager(managers, kg)
 
     identifier_map = None

@@ -232,7 +232,7 @@ def generate(
         )
 
         name = "find_random_examples"
-        args = {"kg": config.force_examples}
+        args = {"kg": config.force_examples, "page": 1}
         if not config.random_examples:
             name = "find_similar_examples"
             args["question"] = input

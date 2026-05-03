@@ -2,10 +2,11 @@ import random
 from typing import Any
 
 from grasp.configs import GraspConfig
-from grasp.functions import find_manager
+from grasp.functions import validate_page, find_manager
 from grasp.manager import KgManager
 from grasp.tasks.examples import ExampleIndex
 from grasp.tasks.utils import Sample, format_sparql_result, prepare_sparql_result
+from grasp.utils import format_list
 
 
 class SparqlQaSample(Sample):
@@ -34,18 +35,18 @@ def functions(config: GraspConfig) -> list[dict]:
         return []
 
     example_kgs = list(example_indices)
-    example_info = "\n".join(example_kgs)
+    example_info = format_list(f'"{kg}"' for kg in example_indices)
 
     if config.random_examples:
         fn = {
             "name": "find_examples",
             "description": f"""\
 Find examples of SPARQL-question-pairs over the specified knowledge graph. \
-At most {config.num_examples} examples are returned. The examples may help you \
-with generating your own SPARQL query.
+At most {config.num_examples} examples are returned per page (use pagination \
+up to page {config.search_max_pages} to see more examples).
 
 For example, to find examples of SPARQL-question-pairs over Wikidata, do the following:
-find_examples(kg="wikidata")
+find_examples(kg="wikidata", page=1)
 
 Currently, examples are available for the following knowledge graphs:
 {example_info}""",
@@ -57,24 +58,32 @@ Currently, examples are available for the following knowledge graphs:
                         "enum": example_kgs,
                         "description": "The knowledge graph to find examples for",
                     },
+                    "page": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": config.search_max_pages,
+                        "description": "The page number to return. Use pagination "
+                        "to see more examples.",
+                    },
                 },
-                "required": ["kg"],
+                "required": ["kg", "page"],
                 "additionalProperties": False,
             },
             "strict": True,
         }
+
     else:
         fn = {
             "name": "find_similar_examples",
             "description": f"""\
 Find SPARQL-question-pairs over the specified knowledge graph that \
 try to answer a similar question to the one provided. At most {config.num_examples} \
-examples are returned. The examples may help you with generating \
-your own SPARQL query.
+examples are returned per page (use pagination up to page {config.search_max_pages} \
+to see more examples).
 
 For example, to find similar SPARQL-question-pairs to the question \
 "What is the capital of France?" over Wikidata, do the following:
-find_similar_examples(kg="wikidata", question="What is the capital of France?")
+find_similar_examples(kg="wikidata", question="What is the capital of France?", page=1)
 
 Currently, examples are available for the following knowledge graphs:
 {example_info}""",
@@ -90,8 +99,15 @@ Currently, examples are available for the following knowledge graphs:
                         "type": "string",
                         "description": "The question to find examples for",
                     },
+                    "page": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": config.search_max_pages,
+                        "description": "The page number to return. Use pagination "
+                        "to see more examples.",
+                    },
                 },
-                "required": ["kg", "question"],
+                "required": ["kg", "question", "page"],
                 "additionalProperties": False,
             },
             "strict": True,
@@ -117,6 +133,9 @@ def call_function(
             known,
             config.result_max_rows,
             config.result_max_columns,
+            fn_args.get("page") or 1,
+            config.search_max_pages,
+            config.seed,
         )
 
     elif fn_name == "find_similar_examples" and example_indices is not None:
@@ -129,6 +148,8 @@ def call_function(
             known,
             config.result_max_rows,
             config.result_max_columns,
+            fn_args.get("page") or 1,
+            config.search_max_pages,
         )
 
     else:
@@ -142,31 +163,31 @@ def format_examples(
     known: set[str],
     max_rows: int,
     max_cols: int,
+    page: int = 1,
+    start_index: int = 0,
 ) -> str:
     manager, _ = find_manager(managers, kg)
     exs = []
 
-    for example in examples:
-        try:
-            result, selections = prepare_sparql_result(
-                example.sparql,
-                kg,
-                managers,
-                max_rows,
-                max_cols,
-                known,
-            )
-        except Exception:
-            continue
+    for i, example in enumerate(examples, start_index):
+        result, selections = prepare_sparql_result(
+            example.sparql,
+            kg,
+            managers,
+            max_rows,
+            max_cols,
+            known,
+        )
 
         exs.append(
-            f"Question:\n{example.question}\n\n{format_sparql_result(manager, result, selections)}"
+            f"Example {i + 1}:\n{example.question}\n\n"
+            + format_sparql_result(manager, result, selections)
         )
 
     if not exs:
-        return "No examples found"
+        return f"No examples found (page {page})"
 
-    return "\n\n".join(f"Example {i + 1}:\n{ex}" for i, ex in enumerate(exs))
+    return f"Examples (page {page})\n" + "\n\n".join(exs)
 
 
 def find_random_examples(
@@ -177,15 +198,23 @@ def find_random_examples(
     known: set[str],
     max_rows: int,
     max_cols: int,
+    page: int = 1,
+    max_pages: int = 10,
+    seed: int | None = None,
 ) -> str:
+    validate_page(page, max_pages)
+
     if kg not in example_indices:
         return f"No example index for knowledge graph {kg}"
 
     example_index = example_indices[kg]
-    examples = random.sample(
-        example_index.samples,
-        min(num_examples, len(example_index)),
-    )
+    start = (page - 1) * num_examples
+    end = page * num_examples
+
+    rand = random.Random(seed if seed is not None else len(example_index))
+    perm = list(range(len(example_index)))
+    rand.shuffle(perm)
+    examples = [example_index[i] for i in perm[start:end]]
 
     return format_examples(
         kg,
@@ -194,6 +223,8 @@ def find_random_examples(
         known,
         max_rows,
         max_cols,
+        page,
+        start,
     )
 
 
@@ -206,13 +237,19 @@ def find_similar_examples(
     known: set[str],
     max_rows: int,
     max_cols: int,
+    page: int = 1,
+    max_pages: int = 10,
 ) -> str:
+    validate_page(page, max_pages)
+
     if kg not in example_indices:
         return f"No example index for knowledge graph {kg}"
 
     example_index = example_indices[kg]
 
-    examples = example_index.search(question, num_examples)
+    start = (page - 1) * num_examples
+    end = page * num_examples
+    examples = example_index.search(question, end)[start:end]
 
     return format_examples(
         kg,
@@ -221,6 +258,8 @@ def find_similar_examples(
         known,
         max_rows,
         max_cols,
+        page,
+        start,
     )
 
 
@@ -234,6 +273,8 @@ def find_examples(
     known: set[str],
     max_rows: int,
     max_cols: int,
+    page: int = 1,
+    max_pages: int = 10,
 ) -> str:
     if random_examples:
         return find_random_examples(
@@ -244,6 +285,8 @@ def find_examples(
             known,
             max_rows,
             max_cols,
+            page,
+            max_pages,
         )
 
     else:
@@ -256,4 +299,6 @@ def find_examples(
             known,
             max_rows,
             max_cols,
+            page,
+            max_pages,
         )

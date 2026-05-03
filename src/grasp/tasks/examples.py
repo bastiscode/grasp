@@ -31,15 +31,15 @@ class ExampleIndex:
     def __len__(self) -> int:
         return len(self.samples)
 
+    def __getitem__(self, index: int) -> Sample:
+        return self.samples[index]
+
     def search(
         self,
         question: str,
         k: int = 3,
         **kwargs: Any,
     ) -> list:
-        """
-        Find the top-k matching samples for a given question.
-        """
         embedding = self.model.embed([question])[0]
         matches = self.index.search(embedding, k, **kwargs)
         return [self.samples[id] for id, *_ in matches]
