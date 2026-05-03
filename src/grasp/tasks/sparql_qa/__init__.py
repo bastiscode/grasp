@@ -371,6 +371,7 @@ def prepare_formatted_output(
     max_cols: int = 10,
     request_timeout: float | tuple[float, float] = (6.0, 30.0),
     read_timeout: float = 10.0,
+    sparql_result_max_rows: int | None = None,
 ) -> dict:
     if kg is None:
         kg = managers[0].kg
@@ -383,6 +384,7 @@ def prepare_formatted_output(
         max_cols,
         request_timeout=request_timeout,
         read_timeout=read_timeout,
+        sparql_result_max_rows=sparql_result_max_rows,
     )
     manager, _ = find_manager(managers, kg)
 

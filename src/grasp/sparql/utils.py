@@ -1,12 +1,13 @@
-import json
 import time
 import uuid
 from copy import deepcopy
 from typing import Any, Iterator
 from urllib.parse import urlparse, urlunparse
 
+import ijson
 import requests
 from grammar_utils.parse import LR1Parser  # type: ignore
+from ijson.common import ObjectBuilder
 from requests.exceptions import JSONDecodeError
 
 from grasp.sparql.types import AskResult, Binding, Position, SelectResult
@@ -810,22 +811,74 @@ def _stream_with_timeout(
     sparql: str,
     response: requests.Response,
     seconds: float | None = None,
+    sparql_result_max_rows: int | None = None,
 ) -> Any:
     start = time.monotonic()
-    chunks: list[bytes] = []
-    for chunk in response.iter_content(chunk_size=8192):
-        if not chunk:
-            continue
-        chunks.append(chunk)
-        if seconds and time.monotonic() - start > seconds:
-            raise SPARQLExecuteException(
-                f"Took longer than {seconds} seconds to read SPARQL result",
-                sparql,
-            )
 
-    full = b"".join(chunks)
-    decoded = full.decode(response.encoding or "utf-8")
-    return json.loads(decoded)
+    class Stream:
+        def __init__(self, response: requests.Response) -> None:
+            self.stream = response.iter_content(chunk_size=None)
+
+        def read(self, n: int) -> bytes:
+            if n == 0:
+                return b""
+
+            chunk = next(self.stream, b"")
+            if chunk and seconds and time.monotonic() - start > seconds:
+                raise SPARQLExecuteException(
+                    f"Took longer than {seconds} seconds to read SPARQL result",
+                    sparql,
+                )
+            return chunk
+
+    variables: list[str] = []
+    bindings: list[dict] = []
+    row_count = 0
+    row_builder: ObjectBuilder | None = None
+    row_depth = 0
+
+    try:
+        for prefix, event, value in ijson.parse(Stream(response)):
+            if prefix == "head.vars.item" and event == "string":
+                variables.append(value)
+                continue
+
+            if prefix == "boolean" and event == "boolean":
+                return {"boolean": value}
+
+            if prefix == "results.bindings.item" and event == "start_map":
+                row_count += 1
+                if (
+                    sparql_result_max_rows is not None
+                    and row_count > sparql_result_max_rows
+                ):
+                    raise SPARQLExecuteException(
+                        f"SPARQL result exceeded {sparql_result_max_rows:,} rows",
+                        sparql,
+                    )
+
+                row_builder = ObjectBuilder()
+                row_builder.event(event, value)
+                row_depth = 1
+                continue
+
+            if row_builder is None:
+                continue
+
+            row_builder.event(event, value)
+            if event in ("start_map", "start_array"):
+                row_depth += 1
+            elif event in ("end_map", "end_array"):
+                row_depth -= 1
+
+            if row_depth == 0:
+                bindings.append(row_builder.value)  # type: ignore
+                row_builder = None
+
+        return {"head": {"vars": variables}, "results": {"bindings": bindings}}
+
+    finally:
+        response.close()
 
 
 def execute(
@@ -836,6 +889,7 @@ def execute(
     max_retries: int = 0,
     headers: dict[str, str] | None = None,
     params: dict[str, str] | None = None,
+    sparql_result_max_rows: int | None = None,
     **kwargs: Any,
 ) -> SelectResult | AskResult:
     if headers is None:
@@ -862,7 +916,12 @@ def execute(
 
             response.raise_for_status()
 
-            res = _stream_with_timeout(sparql, response, read_timeout)
+            res = _stream_with_timeout(
+                sparql,
+                response,
+                read_timeout,
+                sparql_result_max_rows,
+            )
             if "boolean" in res:
                 return AskResult(res["boolean"])
             else:

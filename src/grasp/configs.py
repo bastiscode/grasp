@@ -84,6 +84,7 @@ class GraspConfig(ModelConfig):
     sparql_connection_timeout: float = 6.0
     sparql_query_timeout: float = 30.0
     sparql_read_timeout: float = 10.0
+    sparql_result_max_rows: int | None = 1_000_000
 
     # kg function parameters
     search_k: int = 10

@@ -41,6 +41,7 @@ def get_result_or_error(
     sparql: str,
     endpoint: str,
     timeout: float = 300.0,
+    sparql_result_max_rows: int | None = None,
 ) -> tuple[SelectResult | AskResult | None, str | None]:
     try:
         result = execute(
@@ -48,6 +49,7 @@ def get_result_or_error(
             endpoint,
             request_timeout=timeout,
             read_timeout=timeout,
+            sparql_result_max_rows=sparql_result_max_rows,
         )
         return result, None
     except Exception as e:
@@ -98,6 +100,7 @@ def evaluate_f1(
     retry_failed: bool = False,
     exact_after: int = 1024,
     fix_prefixes: bool = False,
+    sparql_result_max_rows: int | None = 1_000_000,
     log_level: str | int | None = None,
 ) -> None:
     logger = get_logger("GRASP EVALUATION", log_level)
@@ -161,7 +164,12 @@ def evaluate_f1(
                 continue
 
         sparql = inputs[id].sparql
-        target_result, target_err = get_result_or_error(sparql, endpoint, timeout)
+        target_result, target_err = get_result_or_error(
+            sparql,
+            endpoint,
+            timeout,
+            sparql_result_max_rows,
+        )
         evaluations[id] = {
             "target": {
                 "err": target_err,
@@ -182,7 +190,12 @@ def evaluate_f1(
 
         if output is not None and output["sparql"] is not None:
             sparql = fix(output["sparql"])
-            pred_result, pred_err = get_result_or_error(sparql, endpoint, timeout)
+            pred_result, pred_err = get_result_or_error(
+                sparql,
+                endpoint,
+                timeout,
+                sparql_result_max_rows,
+            )
 
         if pred_result is not None:
             score = f1_score(pred_result, target_result, exact_after)
@@ -320,6 +333,7 @@ def evaluate_with_judge(
     retry_failed: bool = False,
     reformat_sparql: bool = False,
     timeout: float = 300.0,
+    sparql_result_max_rows: int | None = 1_000_000,
     log_level: str | int | None = None,
 ):
     logger = get_logger("GRASP EVALUATION", log_level)
@@ -366,6 +380,7 @@ def evaluate_with_judge(
                 [manager],
                 request_timeout=timeout,
                 read_timeout=timeout,
+                sparql_result_max_rows=sparql_result_max_rows,
             )
             candidates.append(output["formatted"])
 

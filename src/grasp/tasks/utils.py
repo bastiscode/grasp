@@ -33,6 +33,7 @@ def prepare_sparql_result(
     known: set[str] | None = None,
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
     read_timeout: float | None = READ_TIMEOUT,
+    sparql_result_max_rows: int | None = None,
 ) -> tuple[ExecutionResult, list[Selection]]:
     manager, _ = find_manager(managers, kg)
     selections = []
@@ -47,6 +48,7 @@ def prepare_sparql_result(
             known,
             request_timeout=request_timeout,
             read_timeout=read_timeout,
+            sparql_result_max_rows=sparql_result_max_rows,
         )
     except Exception as e:
         return ExecutionResult(

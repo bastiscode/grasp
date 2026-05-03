@@ -34,7 +34,7 @@ class TestFindOuterClauses:
 class TestValidateIndexSparql:
     def test_canonical_passes(self):
         sparql = (
-            "SELECT ?id ?value ?tags WHERE {\n"
+            "SELECT DISTINCT ?id ?value ?tags WHERE {\n"
             '  ?s ?p ?o . BIND(?s AS ?id) BIND(?o AS ?value) BIND("tag" AS ?tags)\n'
             "  BIND(1.0 AS ?score)\n"
             "} ORDER BY DESC(?score) ?id DESC(?tags)"
@@ -53,7 +53,7 @@ class TestValidateIndexSparql:
             raise AssertionError("expected ValueError")
 
     def test_wrong_solution_modifier_rejected(self):
-        sparql = "SELECT ?id ?value ?tags WHERE { ?s ?p ?o } ORDER BY ?id"
+        sparql = "SELECT DISTINCT ?id ?value ?tags WHERE { ?s ?p ?o } ORDER BY ?id"
         try:
             validate_index_sparql(SPARQL_PARSER, sparql)
         except ValueError as e:
@@ -65,6 +65,8 @@ class TestValidateIndexSparql:
 class TestValidateInfoSparql:
     def test_canonical_passes(self):
         sparql = (
-            "SELECT ?id ?value ?type WHERE {\n  ?s ?p ?o\n} ORDER BY ?id ?type ?value"
+            "SELECT DISTINCT ?id ?value ?type WHERE {\n"
+            "  ?s ?p ?o\n"
+            "} ORDER BY ?id ?type ?value"
         )
         validate_info_sparql(SPARQL_PARSER, sparql)

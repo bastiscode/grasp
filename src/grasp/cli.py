@@ -300,6 +300,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum duration for a single query in seconds",
     )
     eval_f1_parser.add_argument(
+        "--sparql-result-max-rows",
+        type=int,
+        default=1_000_000,
+        help="Maximum number of SPARQL result rows to parse before failing evaluation",
+    )
+    eval_f1_parser.add_argument(
         "--exact-after",
         type=int,
         default=1024,
@@ -349,6 +355,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=300.0,
         help="Maximum duration for a single query in seconds if reformatting is enabled",
+    )
+    eval_judge_parser.add_argument(
+        "--sparql-result-max-rows",
+        type=int,
+        default=1_000_000,
+        help="Maximum number of SPARQL result rows to parse before failing reformatting",
     )
 
     eval_expert_parser = eval_subparsers.add_parser(
@@ -864,6 +876,7 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             args.retry_failed,
             args.exact_after,
             args.fix_prefixes,
+            args.sparql_result_max_rows,
             args.log_level,
         )
 
@@ -879,6 +892,7 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             args.retry_failed,
             args.reformat_sparql,
             args.timeout,
+            args.sparql_result_max_rows,
             args.log_level,
         )
 

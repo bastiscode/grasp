@@ -133,6 +133,7 @@ class KgManager:
         read_timeout: float | None = READ_TIMEOUT,
         max_retries: int = 0,
         force_select_result: bool = False,
+        sparql_result_max_rows: int | None = None,
     ) -> SelectResult | AskResult:
         if force_select_result:
             # ask_to_select returns None if sparql is not an ask query
@@ -148,7 +149,8 @@ class KgManager:
             read_timeout,
             max_retries,
             self.headers,
-            params=self.params,
+            self.params,
+            sparql_result_max_rows,
         )
 
     def format_sparql_result(

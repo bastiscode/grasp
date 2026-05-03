@@ -565,6 +565,7 @@ def call_function(
             config.know_before_use,
             config.sparql_request_timeout,
             config.sparql_read_timeout,
+            config.sparql_result_max_rows,
         ).formatted  # type: ignore
 
     elif fn_name == "list":
@@ -978,6 +979,7 @@ def execute_sparql(
     know_before_use: bool = False,
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
     read_timeout: float | None = READ_TIMEOUT,
+    sparql_result_max_rows: int | None = None,
 ) -> ExecutionResult:
     manager, others = find_manager(managers, kg)
 
@@ -991,7 +993,12 @@ def execute_sparql(
 
     try:
         start = time.monotonic()
-        result = manager.execute_sparql(sparql, request_timeout, read_timeout)
+        result = manager.execute_sparql(
+            sparql,
+            request_timeout,
+            read_timeout,
+            sparql_result_max_rows=sparql_result_max_rows,
+        )
         end = time.monotonic()
     except Exception as e:
         error = f"SPARQL execution failed:\n{e}"

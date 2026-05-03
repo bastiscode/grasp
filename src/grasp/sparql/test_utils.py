@@ -1,7 +1,11 @@
+import json
+
 import pytest
 
 from grasp.sparql.utils import (
     SPARQLException,
+    SPARQLExecuteException,
+    _stream_with_timeout,
     complete_prefix,
     derive_constraint_query_from_prefix,
     find,
@@ -23,6 +27,22 @@ PREFIXES = {
 }
 
 
+class _FakeResponse:
+    def __init__(self, data: dict, chunk_size: int = 16) -> None:
+        self.data = json.dumps(data).encode("utf-8")
+        self.encoding = "utf-8"
+        self.chunk_size = chunk_size
+        self.closed = False
+
+    def iter_content(self, chunk_size: int | None = None):
+        chunk_size = self.chunk_size if chunk_size is None else chunk_size
+        for i in range(0, len(self.data), chunk_size):
+            yield self.data[i : i + chunk_size]
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _fix(sparql: str, **kwargs) -> str:
     return fix_prefixes(sparql, SPARQL_PARSER, IRI_PARSER, PREFIXES, **kwargs)
 
@@ -34,6 +54,54 @@ def _parse(sparql: str) -> dict:
 def _prefix_from_marked_query(sparql: str) -> str:
     assert "<CUR>" in sparql, "Expected <CUR> marker in test query"
     return sparql.split("<CUR>", 1)[0]
+
+
+class TestStreamWithTimeout:
+    def test_streams_select_result(self):
+        data = {
+            "head": {"vars": ["x"]},
+            "results": {
+                "bindings": [
+                    {"x": {"type": "uri", "value": "http://example.org/entity/e1"}},
+                    {"x": {"type": "uri", "value": "http://example.org/entity/e2"}},
+                ]
+            },
+        }
+        response = _FakeResponse(data)
+
+        result = _stream_with_timeout("SELECT ?x WHERE { ?x ?p ?o }", response)  # type: ignore
+
+        assert result == data
+        assert response.closed
+
+    def test_errors_when_select_result_exceeds_max_rows(self):
+        data = {
+            "head": {"vars": ["x"]},
+            "results": {
+                "bindings": [
+                    {"x": {"type": "uri", "value": "http://example.org/entity/e1"}},
+                    {"x": {"type": "uri", "value": "http://example.org/entity/e2"}},
+                ]
+            },
+        }
+        response = _FakeResponse(data)
+
+        with pytest.raises(SPARQLExecuteException, match="exceeded 1 rows"):
+            _stream_with_timeout(
+                "SELECT ?x WHERE { ?x ?p ?o }",
+                response,  # type: ignore
+                sparql_result_max_rows=1,
+            )
+        assert response.closed
+
+    def test_streams_ask_result(self):
+        data = {"head": {}, "boolean": True}
+        response = _FakeResponse(data)
+
+        result = _stream_with_timeout("ASK { ?x ?p ?o }", response)  # type: ignore
+
+        assert result == {"boolean": True}
+        assert response.closed
 
 
 class TestQueryType:
