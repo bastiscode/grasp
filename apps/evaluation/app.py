@@ -1248,6 +1248,11 @@ def show_comprehensive_view(available_data: dict) -> None:
         "Select metric to display:", options=list(metric_options.keys()), index=0
     )
     metric_key = metric_options[selected_metric]
+    show_eval_counts = st.sidebar.checkbox(
+        "Show evaluated counts",
+        value=False,
+        help="When checked, each table cell also shows how many outputs are currently used for evaluation.",
+    )
 
     # Option to restrict evaluation to common examples
     restrict_to_common = st.sidebar.checkbox(
@@ -1494,9 +1499,12 @@ def show_comprehensive_view(available_data: dict) -> None:
                     metrics_data = all_metrics[model_name][kg][benchmark]
                     # Percentage with 1 decimal; 0.0 if nothing was evaluated
                     if metrics_data["evaluated"] == 0:
-                        row.append("0.0")
+                        value = "0.0"
                     else:
-                        row.append(f"{metrics_data[metric_key] * 100:.1f}")
+                        value = f"{metrics_data[metric_key] * 100:.1f}"
+                    if show_eval_counts:
+                        value += f" ({metrics_data['evaluated']})"
+                    row.append(value)
                 else:
                     row.append("—")  # Em dash for missing data
 
