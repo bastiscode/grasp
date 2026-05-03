@@ -5,6 +5,7 @@ import uuid
 from logging import Logger
 
 import yaml
+from search_rdf.model import SentenceTransformerModel
 from tqdm import tqdm, trange
 from universal_ml_utils.io import dump_json, dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger
@@ -26,6 +27,7 @@ from grasp.model import Message, get_model
 from grasp.notes.utils import format_output
 from grasp.tasks import get_task
 from grasp.tasks.cea import AnnotationState, CeaSample, prepare_annotation
+from grasp.tasks.examples import load_example_indices
 from grasp.tasks.exploration import (
     FunctionalExplorationState,
     StructuralExplorationState,
@@ -57,7 +59,19 @@ def take_notes_from_samples(
     logger = get_logger("GRASP NOTE TAKING", log_level)
     agent_logger = get_logger("GRASP AGENT", log_level)
 
-    managers, _ = setup(config)
+    managers, models = setup(config)
+    examples_model = models.get(f"sentence-transformer/{config.embedding_model}")
+    if examples_model is not None:
+        assert isinstance(examples_model, SentenceTransformerModel), (
+            f"Expected examples embedding model to be a SentenceTransformerModel, "
+            f"got {type(examples_model)}"
+        )
+
+    example_indices = load_example_indices(
+        task,
+        config,
+        examples_model or config.embedding_model,
+    )
     notes, kg_notes = load_notes(config)
 
     sample_cls = get_task(task, managers, config).sample_cls()
@@ -101,6 +115,7 @@ def take_notes_from_samples(
                     [manager],
                     kg_notes,
                     notes,
+                    example_indices=example_indices,
                     logger=agent_logger,
                 )
             )
@@ -214,7 +229,19 @@ def take_notes_from_exploration(
 
     agent_logger = get_logger("GRASP AGENT", log_level)
 
-    managers, _ = setup(config)
+    managers, models = setup(config)
+    examples_model = models.get(f"sentence-transformer/{config.embedding_model}")
+    if examples_model is not None:
+        assert isinstance(examples_model, SentenceTransformerModel), (
+            f"Expected examples embedding model to be a SentenceTransformerModel, "
+            f"got {type(examples_model)}"
+        )
+
+    example_indices = load_example_indices(
+        "sparql-qa",
+        config,
+        examples_model or config.embedding_model,
+    )
     notes, kg_notes = load_notes(config)
 
     os.makedirs(out_dir, exist_ok=True)
@@ -244,6 +271,7 @@ def take_notes_from_exploration(
                 managers,
                 kg_notes,
                 notes,
+                example_indices=example_indices,
                 logger=agent_logger,
             )
         )

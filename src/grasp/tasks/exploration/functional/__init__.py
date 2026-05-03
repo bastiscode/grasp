@@ -8,6 +8,10 @@ from grasp.tasks.base import GraspTask
 from grasp.tasks.exploration import shared_rules
 from grasp.tasks.exploration.functions import call_function as call_note_function
 from grasp.tasks.exploration.functions import note_function_definitions
+from grasp.tasks.sparql_qa.examples import (
+    call_function as call_example_function,
+    functions as example_function_definitions,
+)
 from grasp.utils import format_notes
 
 
@@ -85,7 +89,10 @@ class FunctionalExplorationTask(GraspTask):
         return rules()
 
     def function_definitions(self) -> list[dict]:
-        return note_function_definitions(self.managers, kg_specific=False)
+        return [
+            *note_function_definitions(self.managers, kg_specific=False),
+            *example_function_definitions(self.config),
+        ]
 
     def call_function(
         self,
@@ -96,6 +103,16 @@ class FunctionalExplorationTask(GraspTask):
     ) -> str:
         assert isinstance(self.config, NotesConfig)
         assert isinstance(self.state, FunctionalExplorationState)
+        if fn_name in {"find_examples", "find_similar_examples"}:
+            return call_example_function(
+                self.config,
+                self.managers,
+                fn_name,
+                fn_args,
+                known,
+                example_indices=example_indices,
+            )
+
         return call_note_function(
             {},  # functional task does not write KG-specific notes
             self.state.notes,

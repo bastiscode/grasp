@@ -13,6 +13,10 @@ from grasp.tasks.exploration.structural.functions import (
     show_explored,
 )
 from grasp.tasks.functions import find_frequent, find_frequent_function_definition
+from grasp.tasks.sparql_qa.examples import (
+    call_function as call_example_function,
+    functions as example_function_definitions,
+)
 from grasp.utils import format_kg_notes
 
 
@@ -92,6 +96,7 @@ class StructuralExplorationTask(GraspTask):
         kgs = [m.kg for m in self.managers]
         functions = note_function_definitions(self.managers)
         functions.append(find_frequent_function_definition(kgs, self.config.list_k))
+        functions.extend(example_function_definitions(self.config))
         return functions
 
     def call_function(
@@ -136,6 +141,16 @@ class StructuralExplorationTask(GraspTask):
                 known,
                 self.config.sparql_request_timeout,
                 self.config.sparql_read_timeout,
+            )
+
+        elif fn_name in {"find_examples", "find_similar_examples"}:
+            return call_example_function(
+                self.config,
+                self.managers,
+                fn_name,
+                fn_args,
+                known,
+                example_indices=example_indices,
             )
 
         return call_note_function(
