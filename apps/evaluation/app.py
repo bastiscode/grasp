@@ -39,7 +39,7 @@ def widget_changed(tracker_key: str, current_value) -> bool:
 
 
 def select_kg_and_benchmark(available_data: dict) -> tuple[str, str]:
-    """Render the KG + benchmark sidebar selectboxes with conventional defaults."""
+    """Render the group + benchmark sidebar selectboxes with conventional defaults."""
     kg_options = list(available_data.keys())
     default_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
     selected_kg = st.sidebar.selectbox("Select Group", kg_options, index=default_index)
@@ -805,14 +805,14 @@ def show_ranking_view(ranking_data: dict) -> None:
     # Validate consistency across all ranking files
     validate_ranking_consistency(benchmark_entries, rank_data_by_path)
 
-    # Organize benchmarks by knowledge graph for selection
+    # Organize benchmarks by group for selection
     entries_by_kg = defaultdict(list)
     for entry in benchmark_entries:
         entries_by_kg[entry["kg"]].append(entry)
 
     kg_options = sorted(entries_by_kg.keys())
     if not kg_options:
-        st.warning("No knowledge graphs found for the selected ranking.")
+        st.warning("No groups found for the selected ranking.")
         return
 
     default_kg_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
@@ -827,7 +827,7 @@ def show_ranking_view(ranking_data: dict) -> None:
     )
 
     if not benchmark_options:
-        st.warning(f"No benchmarks available for knowledge graph {selected_kg}.")
+        st.warning(f"No benchmarks available for group {selected_kg}.")
         return
 
     default_benchmark_index = 0
@@ -928,7 +928,7 @@ def show_ranking_view(ranking_data: dict) -> None:
             )
 
             row_data = {
-                "KG": kg,
+                "Group": kg,
                 "Benchmark": benchmark,
                 "Valid Evals": f"{valid_evals}/{total_evals}",
             }
@@ -1040,7 +1040,7 @@ def show_ranking_view(ranking_data: dict) -> None:
     df = pd.DataFrame(table_rows)
 
     # Define column order
-    display_columns = ["KG", "Benchmark"]
+    display_columns = ["Group", "Benchmark"]
     for model in sorted_models:
         letter = model_to_letter[model]
         display_columns.append(f"{letter} Wins")
@@ -1073,7 +1073,7 @@ def show_ranking_view(ranking_data: dict) -> None:
     # Show summary statistics
     st.caption(f"Showing {len(benchmark_entries)} benchmark(s) for {display_name}")
 
-    # Detailed sample view for the selected KG and benchmark
+    # Detailed sample view for the selected group and benchmark
     if not selected_entry:
         return
 
@@ -1283,12 +1283,12 @@ def show_comprehensive_view(available_data: dict) -> None:
     # Create a dictionary to hold all metrics across all KGs and benchmarks
     all_metrics = {}
 
-    # Keep track of KGs and their benchmarks for hierarchical columns
+    # Keep track of groups and their benchmarks for hierarchical columns
     kg_benchmarks = defaultdict(list)
 
-    # Process each KG and benchmark
+    # Process each group and benchmark
     with st.spinner(
-        "Loading comprehensive metrics across all knowledge graphs and benchmarks..."
+        "Loading comprehensive metrics across all groups and benchmarks..."
     ):
         for kg_name, kg_data in available_data.items():
             for benchmark_name, benchmark_info in kg_data.items():
@@ -1304,7 +1304,7 @@ def show_comprehensive_view(available_data: dict) -> None:
                 if not model_info:
                     continue
 
-                # Track this benchmark under its KG
+                # Track this benchmark under its group
                 kg_benchmarks[kg_name].append(benchmark_name)
 
                 # Filter models based on user selection
@@ -1331,7 +1331,7 @@ def show_comprehensive_view(available_data: dict) -> None:
                     if model_name not in all_metrics:
                         all_metrics[model_name] = {}
 
-                    # Store with separate KG and benchmark keys for hierarchical display
+                    # Store with separate group and benchmark keys for hierarchical display
                     if kg_name not in all_metrics[model_name]:
                         all_metrics[model_name][kg_name] = {}
 
@@ -1348,7 +1348,7 @@ def show_comprehensive_view(available_data: dict) -> None:
         st.warning("No metrics available for comprehensive view.")
         return
 
-    # Group benchmarks by knowledge graph
+    # Group benchmarks by group
     benchmark_by_kg = {}
     for kg, benchmarks in kg_benchmarks.items():
         benchmark_by_kg[kg] = sorted(benchmarks)
@@ -1450,7 +1450,7 @@ def show_comprehensive_view(available_data: dict) -> None:
     kg_benchmarks = filtered_kg_benchmarks
 
     # Prepare data for a pandas MultiIndex DataFrame
-    # Sort knowledge graphs and benchmarks for consistent display
+    # Sort groups and benchmarks for consistent display
     sorted_kgs = sorted(kg_benchmarks.keys())
 
     selected_benchmark_keys = {
@@ -1474,7 +1474,7 @@ def show_comprehensive_view(available_data: dict) -> None:
     # Create a list of tuples for the MultiIndex columns
     column_tuples = [("Model", "")]  # First column is just the model name
 
-    # Add tuples for each KG and benchmark combination
+    # Add tuples for each group and benchmark combination
     for kg in sorted_kgs:
         for benchmark in sorted(kg_benchmarks[kg]):
             column_tuples.append((kg, benchmark))
@@ -1487,7 +1487,7 @@ def show_comprehensive_view(available_data: dict) -> None:
     for model_name in sorted(displayed_model_names):
         row = [model_name]  # Start with model name
 
-        # Add data for each KG and benchmark
+        # Add data for each group and benchmark
         for kg in sorted_kgs:
             for benchmark in sorted(kg_benchmarks[kg]):
                 # Check if we have metrics for this combination
@@ -1513,7 +1513,7 @@ def show_comprehensive_view(available_data: dict) -> None:
     df = pd.DataFrame(data_rows, columns=columns)
 
     # Display the table with the metric name in the title
-    st.subheader(f"{selected_metric} Across All Knowledge Graphs and Benchmarks")
+    st.subheader(f"{selected_metric} Across All Groups and Benchmarks")
 
     # Find best and second-best models for each benchmark
     rankings = {}
@@ -1573,7 +1573,7 @@ def show_comprehensive_view(available_data: dict) -> None:
     with col1:
         st.metric("Total Models", total_models)
     with col2:
-        st.metric("Knowledge Graphs", total_kgs)
+        st.metric("Groups", total_kgs)
     with col3:
         st.metric("Benchmarks", total_benchmarks)
 

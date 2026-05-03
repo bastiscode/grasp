@@ -20,13 +20,9 @@ class QuestionGenerationState(BaseModel):
 
 def rules() -> list[str]:
     return [
-        "Prioritize diversity in topic, difficulty, and style over correctness "
-        "or guaranteed answerability. Real users sometimes ask questions a knowledge "
-        "graph cannot fully answer; emulating that variety is part of the goal.",
-        "Verifying that a question is answerable is optional. You may validate "
-        "the existence of related entities or properties, or draft and execute a "
-        "SPARQL query to soft-verify, but you may also submit purely speculative "
-        "questions without verification.",
+        "You may submit questions without verification or questions you know "
+        "are unanswerable or unrelated to the knowledge graph, since actual users "
+        "might do the same.",
         "Aim for a roughly equal distribution of questions across the available "
         "knowledge graphs. Where appropriate, you may also submit questions "
         "that span multiple knowledge graphs.",
@@ -34,20 +30,31 @@ def rules() -> list[str]:
 
 
 def system_information(config: NotesGenerateQuestionsConfig) -> str:
-    return f"""\
-You are emulating a user posing questions over the available knowledge graphs. \
-Your task is to produce a diverse pool of plausible user questions \
-that real users might ask, with the help of the provided functions.
+    return f"""Your task is to produce a diverse pool of natural-languge \
+questions or queries that real users might ask over the available knowledge graphs.
 
 You should follow a step-by-step approach:
-1. Look at the existing questions to see what is already \
-in the pool and identify underrepresented topics, difficulties, or styles.
-2. Come up with a candidate user question targeting an underrepresented angle. \
-If needed, explore the knowledge graph using the provided functions to gain \
-inspiration.
-3. Submit the question once you are happy with it.
+1. Look at the existing questions to identify well-covered \
+areas and gaps regarding topic, type, difficulty, etc.
+2. Come up with an idea for a user question that targets a new or \
+underrepresented angle. Explore the knowledge graph using the provided \
+functions to gain inspiration and the required context. Optionally, soft-verify \
+that your idea is answerable by drafting a corresponding \
+SPARQL query or checking the existence of relevant entities or properties.
+3. Formulate the final question in a style of your choice (e.g., asking, \
+requesting, keyword-like) and submit it.
 4. Repeat steps 1-3 until you have submitted around {config.questions_per_round} \
-questions for this round, then stop."""
+questions for this round, then stop.
+
+Examples for types of questions or queries to consider (not exhaustive):
+- Factual (e.g., "President of the United States")
+- Exploratory (e.g., "Tell me about the works of Vincent van Gogh")
+- Aggregative (e.g., "How many people live in the largest city in Brazil?")
+- Low-level / Technical (e.g., "All properties of the entity Q42")
+- High-level (e.g., "What are the ethical implications of AI?")
+- Detailed (e.g. "List all movies directed by Christopher Nolan, \
+each with a comma-separated list of its main actors, and their release years \
+relative to 2010, the one with the most actors born before 1970 first")"""
 
 
 def output(state: QuestionGenerationState) -> dict:

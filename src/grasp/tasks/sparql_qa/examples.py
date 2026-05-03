@@ -77,8 +77,10 @@ Currently, examples are available for the following knowledge graphs:
             "name": "find_similar_examples",
             "description": f"""\
 Find SPARQL-question-pairs over the specified knowledge graph that \
-try to answer a similar question to the one provided. At most {config.num_examples} \
-examples are returned per page (use pagination up to page {config.search_max_pages} \
+try to answer a similar question to the one provided (e.g., can be the \
+user question itself, a sub-question or reformulation of it, or \
+any other question of interest). At most {config.num_examples} examples \
+are returned per page (use pagination up to page {config.search_max_pages} \
 to see more examples).
 
 For example, to find similar SPARQL-question-pairs to the question \
@@ -187,7 +189,7 @@ def format_examples(
     if not exs:
         return f"No examples found (page {page})"
 
-    return f"Examples (page {page})\n" + "\n\n".join(exs)
+    return f"Examples (page {page}):\n" + "\n\n".join(exs)
 
 
 def find_random_examples(

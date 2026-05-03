@@ -538,7 +538,9 @@ def take_notes(
         # only log now once tool call results are set
         logger.debug(format_response(response))
 
-        if any(tool_call.name == "stop" for tool_call in response.tool_calls):
+        if not response.tool_calls or any(
+            tool_call.name == "stop" for tool_call in response.tool_calls
+        ):
             break
 
     end = time.monotonic()
