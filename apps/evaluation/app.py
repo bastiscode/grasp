@@ -7,7 +7,6 @@ from pathlib import Path
 import natsort
 import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 from universal_ml_utils.io import load_jsonl
 from universal_ml_utils.logging import get_logger
 
@@ -1723,35 +1722,13 @@ def main() -> None:
             f"* Info format: Outputs (Missing Evaluations/Invalid Evaluations/Invalid Outputs) - 'Outputs' is the total number of model outputs, 'Missing Evaluations' counts outputs without an evaluation, 'Invalid Evaluations' counts evaluations with errors{empty_ground_truth_text}, 'Invalid Outputs' counts model outputs with errors. Note: Accuracy and F1 scores are calculated over all evaluations."
         )
 
-    # Add auto reload option with slider in sidebar (at the bottom)
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Auto Reload Settings")
-    auto_reload = st.sidebar.checkbox(
-        "Enable auto reload",
-        value=False,
-        help="When checked, the application will automatically reload model outputs and evaluations at the specified interval",
-    )
-    reload_interval = st.sidebar.slider(
-        "Reload interval (seconds)",
-        min_value=10,
-        max_value=300,
-        value=60,
-        step=10,
-        help="How often to reload model outputs and evaluations",
-        disabled=not auto_reload,
-    )
-
-    # Set up auto-reload if enabled
-    if auto_reload:
-        # Show status in sidebar
-        with st.sidebar:
-            st.caption(
-                f"Auto reload enabled. Reloading every {reload_interval} seconds."
-            )
-
-        # Initialize auto-refresh component (convert seconds to milliseconds)
-        refresh_interval_ms = reload_interval * 1000
-        st_autorefresh(interval=refresh_interval_ms, key="model_refresh")
+    if st.sidebar.button(
+        "Clear cache and reload",
+        help="Clear cached benchmark, output, and evaluation data, then reload the app.",
+    ):
+        st.cache_data.clear()
+        st.rerun()
 
 
 if __name__ == "__main__":
