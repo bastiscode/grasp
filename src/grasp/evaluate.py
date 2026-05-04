@@ -163,7 +163,7 @@ def evaluate_f1(
             if not retry_failed or not is_invalid_evaluation(evaluation):
                 continue
 
-        sparql = inputs[id].sparql
+        sparql = fix(inputs[id].sparql)
         target_result, target_err = get_result_or_error(
             sparql,
             endpoint,
@@ -172,6 +172,7 @@ def evaluate_f1(
         )
         evaluations[id] = {
             "target": {
+                "sparql": sparql,
                 "err": target_err,
                 "size": get_result_size(target_result),
             },

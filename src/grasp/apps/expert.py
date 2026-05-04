@@ -12,7 +12,6 @@ from universal_ml_utils.io import dump_json, load_json, load_jsonl
 from universal_ml_utils.logging import get_logger
 
 from grasp.apps.shared import (
-    display_name_from_file,
     render_messages,
     render_output_panel,
     render_sparql_result,
@@ -188,6 +187,18 @@ def _status_marker(evaluations: dict, example_id: str) -> str:
     if ev.get("err"):
         return "❌"
     return "✅"
+
+
+def _score_implied_choice(scores: dict[str, int]) -> tuple[str, int, list[str]] | None:
+    if not scores:
+        return None
+
+    top_score = max(scores.values())
+    top_letters = [letter for letter, score in scores.items() if score == top_score]
+    if len(top_letters) == 1:
+        return top_letters[0], top_score, top_letters
+
+    return "Tie", top_score, top_letters
 
 
 def main() -> None:
@@ -495,6 +506,113 @@ def main() -> None:
                         render_messages(output_entry)
                 render_output_panel(output_entry, show_answer=False)
 
+    def _commit_evaluation(
+        selected_choice: str,
+        selected_explanation: str,
+        selected_letter_scores: dict[str, int],
+        go_next: bool,
+    ) -> None:
+        if selected_choice == "Tie":
+            canonical_verdict = None
+        else:
+            letter_idx = letters.index(selected_choice)
+            canonical_verdict = perm[letter_idx]
+
+        scores_canonical: dict[str, int] | None = None
+        if rate_each:
+            scores_canonical = {}
+            for letter, canonical_idx, _ in candidate_entries:
+                scores_canonical[str(canonical_idx)] = int(selected_letter_scores[letter])
+
+        evaluations[selected_id] = {
+            "verdict": canonical_verdict,
+            "scores": scores_canonical,
+            "explanation": selected_explanation.strip(),
+            "err": None,
+        }
+
+        try:
+            _save_evaluation(evaluation_state, args.evaluation)
+        except Exception as e:
+            st.error(f"Failed to save evaluation: {e}")
+            return
+
+        st.success(f"Saved evaluation for {selected_id}.")
+        st.session_state.pop("example_selectbox", None)
+        st.session_state["current_id"] = selected_id
+
+        if go_next:
+            try:
+                current_idx = id_pool.index(selected_id)
+            except ValueError:
+                current_idx = -1
+            if current_idx + 1 < len(id_pool):
+                next_id = id_pool[current_idx + 1]
+            else:
+                next_id = id_pool[0]
+            st.session_state["pending_selected_id"] = next_id
+        st.rerun()
+
+    pending_confirmation_key = f"score_verdict_confirmation::{selected_id}"
+
+    @st.dialog("Score and verdict differ")
+    def _render_score_verdict_confirmation() -> None:
+        pending = st.session_state.get(pending_confirmation_key)
+        if not pending:
+            return
+
+        score_choice = pending["score_choice"]
+        selected_choice = pending["choice"]
+        top_score = pending["top_score"]
+        top_letters = pending["top_letters"]
+        if score_choice == "Tie":
+            top_labels = ", ".join(f"Candidate {letter}" for letter in top_letters)
+            st.write(
+                f"{top_labels} share the highest score ({top_score}), but the "
+                f"selected best candidate is {selected_choice}. Is this intended?"
+            )
+        else:
+            st.write(
+                f"Candidate {score_choice} has the highest score ({top_score}), "
+                f"but the selected best candidate is {selected_choice}. "
+                "Is this intended?"
+            )
+
+        keep_col, switch_col, cancel_col = st.columns(3)
+        with keep_col:
+            if st.button(
+                f"Keep {selected_choice}",
+                type="primary",
+                use_container_width=True,
+            ):
+                st.session_state.pop(pending_confirmation_key, None)
+                _commit_evaluation(
+                    pending["choice"],
+                    pending["explanation"],
+                    pending["letter_scores"],
+                    pending["go_next"],
+                )
+
+        with switch_col:
+            if st.button(
+                f"Switch to {score_choice}",
+                use_container_width=True,
+            ):
+                st.session_state.pop(pending_confirmation_key, None)
+                _commit_evaluation(
+                    score_choice,
+                    pending["explanation"],
+                    pending["letter_scores"],
+                    pending["go_next"],
+                )
+
+        with cancel_col:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.pop(pending_confirmation_key, None)
+                st.rerun()
+
+    dialog_rendered = False
+
     if has_existing_evaluation and submitted_secondary:
         if has_existing_evaluation:
             del evaluations[selected_id]
@@ -508,76 +626,25 @@ def main() -> None:
                 st.session_state["current_id"] = selected_id
                 st.rerun()
     elif submitted_secondary or submitted_next:
-        if choice == "Tie":
-            canonical_verdict = None
+        score_implied = _score_implied_choice(letter_scores) if rate_each else None
+        if score_implied is not None and choice != score_implied[0]:
+            score_choice, top_score, top_letters = score_implied
+            st.session_state[pending_confirmation_key] = {
+                "choice": choice,
+                "explanation": explanation,
+                "letter_scores": letter_scores,
+                "go_next": submitted_next,
+                "score_choice": score_choice,
+                "top_score": top_score,
+                "top_letters": top_letters,
+            }
+            _render_score_verdict_confirmation()
+            dialog_rendered = True
         else:
-            letter_idx = letters.index(choice)
-            canonical_verdict = perm[letter_idx]
+            _commit_evaluation(choice, explanation, letter_scores, submitted_next)
 
-        scores_canonical: dict[str, int] | None = None
-        if rate_each:
-            scores_canonical = {}
-            for letter, canonical_idx, _ in candidate_entries:
-                scores_canonical[str(canonical_idx)] = int(letter_scores[letter])
-
-        evaluations[selected_id] = {
-            "verdict": canonical_verdict,
-            "scores": scores_canonical,
-            "explanation": explanation.strip(),
-            "err": None,
-        }
-
-        try:
-            _save_evaluation(evaluation_state, args.evaluation)
-        except Exception as e:
-            st.error(f"Failed to save evaluation: {e}")
-        else:
-            st.success(f"Saved evaluation for {selected_id}.")
-            st.session_state.pop("example_selectbox", None)
-            st.session_state["current_id"] = selected_id
-
-            if submitted_next:
-                try:
-                    current_idx = id_pool.index(selected_id)
-                except ValueError:
-                    current_idx = -1
-                if current_idx + 1 < len(id_pool):
-                    next_id = id_pool[current_idx + 1]
-                else:
-                    next_id = id_pool[0]
-                st.session_state["pending_selected_id"] = next_id
-            st.rerun()
-
-    # Always show running summary at the bottom
-    if evaluation_state.get("summary"):
-        st.markdown("---")
-        st.markdown("### Running Summary")
-        rows = []
-        for pred_file in prediction_files:
-            entry = evaluation_state["summary"].get(pred_file, {})
-            rows.append(
-                {
-                    "Model": display_name_from_file(pred_file),
-                    "Wins": entry.get("count", 0),
-                    "Win Ratio": f"{entry.get('ratio', 0.0):.2%}",
-                    "Avg Score": (
-                        f"{entry['avg_score']:.2f} (n={entry.get('n_scores', 0)})"
-                        if entry.get("avg_score") is not None
-                        else "—"
-                    ),
-                }
-            )
-        tie = evaluation_state["summary"].get("tie")
-        if tie:
-            rows.append(
-                {
-                    "Model": "(tie)",
-                    "Wins": tie.get("count", 0),
-                    "Win Ratio": f"{tie.get('ratio', 0.0):.2%}",
-                    "Avg Score": "—",
-                }
-            )
-        st.table(rows)
+    if st.session_state.get(pending_confirmation_key) and not dialog_rendered:
+        _render_score_verdict_confirmation()
 
 
 if __name__ == "__main__":

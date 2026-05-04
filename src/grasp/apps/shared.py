@@ -183,9 +183,10 @@ def render_messages(output: dict, new_format: bool = True) -> None:
 
 
 _TABLE_SEP_RE = re.compile(r"^\s*\|(\s*:?-+:?\s*\|)+\s*$")
+_RESULT_SUMMARY_RE = re.compile(r"^Got (?:result|(?:more than )?[\d,]+ rows?).*")
 
 
-def _parse_markdown_table(text: str) -> pd.DataFrame | None:
+def _parse_markdown_table(text: str) -> tuple[pd.DataFrame, str] | None:
     if not isinstance(text, str) or "|" not in text:
         return None
 
@@ -216,9 +217,22 @@ def _parse_markdown_table(text: str) -> pd.DataFrame | None:
 
         if not rows:
             return None
-        return pd.DataFrame(rows, columns=headers)
+        preamble = "\n".join(line for line in lines[:i] if line.strip())
+        return pd.DataFrame(rows, columns=headers), preamble
 
     return None
+
+
+def _split_result_summary(text: str) -> tuple[str | None, str]:
+    lines = text.splitlines()
+    if not lines:
+        return None, text
+
+    first = lines[0].strip()
+    if not _RESULT_SUMMARY_RE.match(first):
+        return None, text
+
+    return first, "\n".join(lines[1:]).lstrip()
 
 
 def render_sparql_result(result_data) -> None:
@@ -229,14 +243,20 @@ def render_sparql_result(result_data) -> None:
         return
 
     text = str(result_data)
-    df = _parse_markdown_table(text)
-    if df is not None:
+    summary, text = _split_result_summary(text)
+    if summary:
+        st.markdown(f"**{summary}**")
+
+    table = _parse_markdown_table(text)
+    if table is not None:
+        df, preamble = table
+        if preamble:
+            st.code(preamble)
         st.dataframe(df, hide_index=True, width="stretch")
         return
 
-    # Surface the "Got N rows and M columns" header line when present,
-    # even if we couldn't parse a table out of the body.
-    st.code(text)
+    if text:
+        st.code(text)
 
 
 def render_output_panel(output_entry: dict | None, *, show_answer: bool = True) -> None:
