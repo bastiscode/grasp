@@ -23,6 +23,7 @@ from grasp.utils import is_invalid_evaluation, is_invalid_output
 logger = get_logger("EVALUATION APP")
 
 STYLE_BEST = "background-color: #005500; color: white; font-weight: bold"
+STYLE_BEST_TIE = "background-color: #666600; color: white; font-weight: bold"
 STYLE_SECOND = "background-color: #003366; color: white"
 STYLE_INVALID = "background-color: #990000; color: white"
 STYLE_MISSING = "background-color: #444444; color: #ffffff"
@@ -1006,7 +1007,7 @@ def show_ranking_view(ranking_data: dict) -> None:
             row_data["Avg Steps"] = " / ".join(steps_parts)
             row_data["Avg Time"] = " / ".join(time_parts)
 
-            # Determine which letter or "Ties" has the max wins
+            # Determine which letters or "Ties" have the max wins
             max_wins = max(
                 [
                     row_data.get(f"_{model_to_letter[model]}_wins_raw", 0)
@@ -1016,15 +1017,14 @@ def show_ranking_view(ranking_data: dict) -> None:
             )
             row_data["_max_wins"] = max_wins
 
-            winner = None
+            winners = []
             for model in sorted_models:
                 letter = model_to_letter[model]
                 if row_data.get(f"_{letter}_wins_raw", 0) == max_wins and max_wins > 0:
-                    winner = letter
-                    break
-            if winner is None and row_data["_ties_raw"] == max_wins and max_wins > 0:
-                winner = "Ties"
-            row_data["_winner"] = winner
+                    winners.append(letter)
+            if row_data["_ties_raw"] == max_wins and max_wins > 0:
+                winners.append("Ties")
+            row_data["_winners"] = winners
 
             table_rows.append(row_data)
 
@@ -1052,18 +1052,18 @@ def show_ranking_view(ranking_data: dict) -> None:
 
     df_display = df[display_columns]
 
-    # Create styling function to highlight winning column
+    # Create styling function to highlight winning columns
     def highlight_winner(row):
         styles = [""] * len(row)
         row_data = df.iloc[row.name]
-        winner = row_data.get("_winner")
+        winners = row_data.get("_winners", [])
 
-        if winner:
-            # Find the column index for the winner
+        winner_style = STYLE_BEST_TIE if len(winners) > 1 else STYLE_BEST
+        for winner in winners:
             winner_col = f"{winner} Wins" if winner != "Ties" else "Ties"
             if winner_col in display_columns:
                 col_idx = display_columns.index(winner_col)
-                styles[col_idx] = STYLE_BEST
+                styles[col_idx] = winner_style
 
         return styles
 
@@ -1527,9 +1527,14 @@ def show_comprehensive_view(available_data: dict) -> None:
                     model_values.append((model_name, metrics_data[metric_key]))
 
             model_values.sort(key=lambda x: x[1], reverse=True)
-            rankings[(kg, benchmark)] = {
-                model: rank for rank, (model, _) in enumerate(model_values)
-            }
+            distinct_values = []
+            for _, value in model_values:
+                if value not in distinct_values:
+                    distinct_values.append(value)
+
+            rankings[(kg, benchmark)] = {}
+            for model, value in model_values:
+                rankings[(kg, benchmark)][model] = distinct_values.index(value)
 
     # Build a per-cell CSS style DataFrame mirroring df's shape
     style_df = pd.DataFrame("", index=df.index, columns=df.columns)
@@ -1548,7 +1553,12 @@ def show_comprehensive_view(available_data: dict) -> None:
 
             rank = rankings.get((kg, benchmark), {}).get(model_name)
             if rank == 0:
-                style_df.iloc[i, j] = STYLE_BEST
+                best_tie = sum(
+                    1
+                    for value in rankings.get((kg, benchmark), {}).values()
+                    if value == 0
+                ) > 1
+                style_df.iloc[i, j] = STYLE_BEST_TIE if best_tie else STYLE_BEST
             elif rank == 1:
                 style_df.iloc[i, j] = STYLE_SECOND
 

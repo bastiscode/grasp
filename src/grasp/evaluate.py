@@ -360,10 +360,15 @@ def evaluate_with_judge(
         candidates = []
 
         for output in outputs:
-            output = output["output"]
+            formatted = "No SPARQL generated or found"
+            output = output.get("output")
+
+            if output is None:
+                candidates.append(formatted)
+                continue
 
             if not reformat_sparql:
-                formatted = output.get("formatted") or "No SPARQL generated or found"
+                formatted = output.get("formatted", formatted)
                 candidates.append(formatted)
                 continue
 

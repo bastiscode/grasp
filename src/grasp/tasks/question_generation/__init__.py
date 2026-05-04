@@ -30,23 +30,10 @@ def rules() -> list[str]:
 
 
 def system_information(config: NotesGenerateQuestionsConfig) -> str:
-    return f"""Your task is to produce a diverse pool of natural-languge \
-questions or queries that real users might ask over the available knowledge graphs.
+    return f"""Your task is to generate a diverse pool of questions \
+that real users might ask over the available knowledge graphs.
 
-You should follow a step-by-step approach:
-1. Look at the existing questions to identify well-covered \
-areas and gaps regarding topic, type, difficulty, etc.
-2. Come up with an idea for a user question that targets a new or \
-underrepresented angle. Explore the knowledge graph using the provided \
-functions to gain inspiration and the required context. Optionally, soft-verify \
-that your idea is answerable by drafting a corresponding \
-SPARQL query or checking the existence of relevant entities or properties.
-3. Formulate the final question in a style of your choice (e.g., asking, \
-requesting, keyword-like) and submit it.
-4. Repeat steps 1-3 until you have submitted around {config.questions_per_round} \
-questions for this round, then stop.
-
-Examples for types of questions or queries to consider (not exhaustive):
+Examples for types of questions to consider (not exhaustive):
 - Factual (e.g., "President of the United States")
 - Exploratory (e.g., "Tell me about the works of Vincent van Gogh")
 - Aggregative (e.g., "How many people live in the largest city in Brazil?")
@@ -54,7 +41,20 @@ Examples for types of questions or queries to consider (not exhaustive):
 - High-level (e.g., "What are the ethical implications of AI?")
 - Detailed (e.g. "List all movies directed by Christopher Nolan, \
 each with a comma-separated list of its main actors, and their release years \
-relative to 2010, the one with the most actors born before 1970 first")"""
+relative to 2010, the one with the most actors born before 1970 first")
+
+You should follow a step-by-step approach:
+1. Look at the existing questions to identify well-covered \
+areas and gaps regarding topic, type, difficulty, etc.
+2. Come up with a potential user question that targets a new or \
+underrepresented angle. If needed, explore the knowledge graph using the provided \
+functions to gain inspiration or context. Optionally, soft-verify \
+that your question is answerable by drafting a corresponding \
+SPARQL query or checking the existence of relevant entities or properties.
+3. Once you are satisfied with your question, finalize and submit it. \
+Otherwise, you can discard it and start over from step 1.
+4. Repeat the process until you have submitted roughly {config.questions_per_round} \
+questions for this round, then stop."""
 
 
 def output(state: QuestionGenerationState) -> dict:
@@ -142,7 +142,7 @@ class QuestionGenerationTask(GraspTask):
             "Input for question generation must be a QuestionGenerationState"
         )
         self.state = input
-        return "Generate plausible user questions for the available knowledge graphs."
+        return "Start generating questions."
 
     def output(self, messages: list[Message]) -> dict:
         return output(self.state)
