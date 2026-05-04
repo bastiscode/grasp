@@ -445,16 +445,13 @@ def note_taking_instructions(
         assert messages[1].role == "user"
         input = messages[1].content
 
-        content = f"""\
-Input {i + 1}:
-{input}
-
-Agent trace:
-{format_output(output["output"], messages)}"""
+        content = f"Input {i + 1}:\n{input}"
 
         if ground_truths is not None:
             gt = ground_truths[i]
-            content += f"\n\nGround truth:\n{gt}"
+            content += f"\n\nReference Output:\n{gt}"
+
+        content += f"\n\nAgent trace:\n{format_output(output['output'], messages)}"
 
         formatted.append(content)
 

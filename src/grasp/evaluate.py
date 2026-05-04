@@ -230,6 +230,7 @@ def judge_candidates(
     question: str,
     candidates: list[str],
     logger: Logger,
+    ground_truth: str | None = None,
 ) -> tuple[str, int | None]:
     if len(candidates) > len(string.ascii_uppercase):
         raise ValueError(
@@ -266,6 +267,18 @@ def judge_candidates(
         }
     ]
 
+    judge_input = (
+        "Judge the following SPARQL query candidates for the given question.\n\n"
+        f"Question:\n{question}\n\n"
+    )
+
+    if ground_truth is not None:
+        judge_input += f"Reference SPARQL:\n{ground_truth}\n\n"
+
+    judge_input += "\n\n".join(
+        f"Candidate {char}:\n{cand}" for char, cand in zip(candidate_chars, candidates)
+    )
+
     messages = [
         Message.system(
             """\
@@ -289,19 +302,12 @@ might have different interpretations of them that are equally valid. If no \
 single interpretation is clearly better than the others, you should also judge \
 them as being equally good.
 
+If you are given a reference SPARQL query, do not treat it as the single correct \
+ground truth answer that must be matched.
+
 Think before you finalize your answer with the provided judge function.""",
         ),
-        Message.user(
-            f"""\
-Question:
-{question}
-
-"""
-            + "\n\n".join(
-                f"Candidate {char}:\n{cand}"
-                for char, cand in zip(candidate_chars, candidates)
-            ),
-        ),
+        Message.user(judge_input),
     ]
 
     logger.debug(format_message(messages[-1]))
@@ -334,6 +340,7 @@ def evaluate_with_judge(
     reformat_sparql: bool = False,
     timeout: float = 300.0,
     sparql_result_max_rows: int | None = 1_000_000,
+    with_ground_truth_reference: bool = False,
     log_level: str | int | None = None,
 ):
     logger = get_logger("GRASP EVALUATION", log_level)
@@ -346,14 +353,15 @@ def evaluate_with_judge(
         )
 
     manager = None
-    if reformat_sparql:
+    if reformat_sparql or with_ground_truth_reference:
         assert judge_config.knowledge_graph is not None, (
-            "Reformatting requires judge_config.knowledge_graph to be set"
+            "Reformatting or showing ground truth requires "
+            "judge_config.knowledge_graph to be set"
         )
         manager = load_kg_manager(judge_config.knowledge_graph)
         logger.info(
             f'Loaded KG manager for "{judge_config.knowledge_graph.kg}" '
-            f"to reformat SPARQL candidates using the endpoint at {manager.endpoint}"
+            f"to format SPARQL queries using the endpoint at {manager.endpoint}"
         )
 
     def get_candidates(outputs: list[dict]) -> list[str]:
@@ -368,7 +376,7 @@ def evaluate_with_judge(
                 continue
 
             if not reformat_sparql:
-                formatted = output.get("formatted", formatted)
+                formatted = output.get("formatted") or formatted
                 candidates.append(formatted)
                 continue
 
@@ -390,6 +398,19 @@ def evaluate_with_judge(
             candidates.append(output["formatted"])
 
         return candidates
+
+    def get_ground_truth(sparql: str) -> str:
+        assert judge_config.knowledge_graph is not None
+        assert manager is not None
+        output = prepare_formatted_output(
+            sparql,
+            judge_config.knowledge_graph.kg,
+            [manager],
+            request_timeout=timeout,
+            read_timeout=timeout,
+            sparql_result_max_rows=sparql_result_max_rows,
+        )
+        return output["formatted"]
 
     def group_predictions(predictions: list) -> dict:
         grouped: dict = {}
@@ -499,12 +520,16 @@ def evaluate_with_judge(
 
         try:
             candidates_formatted = get_candidates(candidates)
+            ground_truth = (
+                get_ground_truth(sample.sparql) if with_ground_truth_reference else None
+            )
 
             explanation, verdict = judge_candidates(
                 model,
                 sample.question,
                 candidates_formatted,
                 logger,
+                ground_truth,
             )
             evaluation["explanation"] = explanation
             evaluation["verdict"] = indices[verdict] if verdict is not None else None

@@ -362,6 +362,11 @@ def parse_args() -> argparse.Namespace:
         default=1_000_000,
         help="Maximum number of SPARQL result rows to parse before failing reformatting",
     )
+    eval_judge_parser.add_argument(
+        "--with-ground-truth-reference",
+        action="store_true",
+        help="Show the formatted ground-truth SPARQL result to the judge.",
+    )
 
     eval_expert_parser = eval_subparsers.add_parser(
         "expert",
@@ -896,6 +901,7 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             args.reformat_sparql,
             args.timeout,
             args.sparql_result_max_rows,
+            args.with_ground_truth_reference,
             args.log_level,
         )
 
