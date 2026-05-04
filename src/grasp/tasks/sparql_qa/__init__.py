@@ -191,60 +191,37 @@ class CancelCallModel(BaseModel):
     arguments: CancelModel
 
 
-def get_raw_tool_call_from_message(message: str | ResponseMessage) -> str | None:
-    # sometimes the model fails to call the answer function, but
-    # provides the output in one of the following formats:
-    # 1) within <tool_call>...</tool_call> tags:
-    #    in this case check whether the content is a valid answer JSON like
-    #    {"name": "answer", "arguments": "{...}"}
-    # 2) as JSON in ```json...``` code block:
-    #    do as in 1)
-
+def get_raw_json_from_message(message: str | ResponseMessage) -> str | None:
     if isinstance(message, ResponseMessage):
         message = message.content
 
-    # check for tool_call tags
-    tool_call_match = re.search(
-        r"<tool_call>(.*?)</tool_call>",
+    stripped = message.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+
+    json_match = re.search(
+        r"```json\s*(.*?)\s*```",
         message,
         re.IGNORECASE | re.DOTALL,
     )
-    if tool_call_match is None:
-        # fall back to JSON code block
-        tool_call_match = re.search(
-            r"```json\s*(.*?)\s*```",
-            message,
-            re.IGNORECASE | re.DOTALL,
-        )
+    if json_match is not None:
+        return json_match.group(1).strip()
 
-    if tool_call_match is None:
-        return None
-    else:
-        return tool_call_match.group(1).strip()
+    return None
 
 
 def get_answer_from_message(message: str | ResponseMessage | None) -> ToolCall | None:
     if message is None:
         return None
 
-    tool_call = get_raw_tool_call_from_message(message)
+    tool_call = get_raw_json_from_message(message)
     if tool_call is None:
         return None
 
     try:
-        answer_call = AnswerCallModel.model_validate_json(tool_call)
-        return ToolCall(
-            id=uuid4().hex,
-            name=answer_call.name,
-            args=answer_call.arguments.model_dump(),
-        )
-    except ValidationError:
-        pass
-
-    try:
         args = AnswerModel.model_validate_json(tool_call).model_dump()
         return ToolCall(id=uuid4().hex, name="answer", args=args)
-    finally:
+    except ValidationError:
         return None
 
 
@@ -252,24 +229,14 @@ def get_cancel_from_message(message: str | ResponseMessage | None) -> ToolCall |
     if message is None:
         return None
 
-    tool_call = get_raw_tool_call_from_message(message)
+    tool_call = get_raw_json_from_message(message)
     if tool_call is None:
         return None
 
     try:
-        cancel_call = CancelCallModel.model_validate_json(tool_call)
-        return ToolCall(
-            id=uuid4().hex,
-            name=cancel_call.name,
-            args=cancel_call.arguments.model_dump(),
-        )
-    except ValidationError:
-        pass
-
-    try:
         args = CancelModel.model_validate_json(tool_call).model_dump()
         return ToolCall(id=uuid4().hex, name="cancel", args=args)
-    finally:
+    except ValidationError:
         return None
 
 
