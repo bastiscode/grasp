@@ -6,7 +6,7 @@ from copy import deepcopy
 from logging import Logger
 from typing import Any, Generator
 
-from litellm.exceptions import Timeout
+from openai import APIConnectionError
 from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
@@ -273,12 +273,12 @@ def generate(
     while len(messages) - num_messages < config.max_steps:
         try:
             response = model(messages, fns)
-        except Timeout:
+        except APIConnectionError:
             error = {
-                "content": "LLM API timed out",
+                "content": "LLM API timed out or failed to connect",
                 "reason": "timeout",
             }
-            logger.error("LLM API timed out")
+            logger.error("LLM API timed out or failed to connect")
             break
         except Exception as e:
             error = {
