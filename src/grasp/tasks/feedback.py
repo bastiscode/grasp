@@ -1,7 +1,6 @@
 from logging import Logger
 from typing import Any
 
-import litellm
 from universal_ml_utils.logging import get_logger
 
 from grasp.model import Message, Model
@@ -78,19 +77,13 @@ def generate_feedback(
             f"Setting tool choice to 'required' for feedback generation (original: '{tool_choice}')"
         )
 
-    try:
-        response = model(messages, functions(), config)
-    except litellm.exceptions.Timeout:
-        logger.error("LLM API timed out during feedback generation")
-        return None
-
+    # dont catch errors here, if feedback gen fails
+    # we want to know and handle it outside for potential retries
+    response = model(messages, functions(), config)
     logger.debug(format_response(response))
 
-    try:
-        assert len(response.tool_calls) == 1, "No tool call found"  # type: ignore
-        tool_call = response.tool_calls[0]  # type: ignore
-        assert tool_call.name == "give_feedback", "Feedback function not called"
-        return tool_call.args
-    except Exception as e:
-        logger.debug(f"Failed to parse feedback:\n{e}")
-        return None
+    # model failing to follow protocol is a model issue,, no retry
+    assert len(response.tool_calls) == 1, "No tool call found"  # type: ignore
+    tool_call = response.tool_calls[0]  # type: ignore
+    assert tool_call.name == "give_feedback", "Feedback function not called"
+    return tool_call.args
