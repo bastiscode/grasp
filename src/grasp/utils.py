@@ -216,6 +216,16 @@ def is_server_error(message: str | None) -> bool:
         return False
 
     phrases = [
+        # Current SPARQL execution errors.
+        "SPARQL query timed out",
+        "Took longer than",
+        "SPARQL result exceeded",
+        "upstream request timeout",
+        "Bad Gateway",
+        "Server Error",
+        "Tried to allocate",
+        "out of memory",
+        # Older/raw requests error formats.
         "503 Server Error",  # qlever not available
         "502 Server Error",  # proxy error
         "(read timeout=6)",  # qlever not reachable
