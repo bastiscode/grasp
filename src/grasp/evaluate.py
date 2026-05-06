@@ -29,7 +29,12 @@ from grasp.sparql.utils import (
 from grasp.sparql.utils import fix_prefixes as fix_sparql_prefixes
 from grasp.tasks.sparql_qa import prepare_formatted_output
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
-from grasp.utils import format_message, is_invalid_evaluation, is_invalid_output
+from grasp.utils import (
+    format_message,
+    is_invalid_output,
+    is_retryable_evaluation,
+    is_server_error,
+)
 
 
 def get_evaluation_file(prediction_file: str) -> str:
@@ -100,7 +105,7 @@ def evaluate_f1(
     retry_failed: bool = False,
     exact_after: int = 1024,
     fix_prefixes: bool = False,
-    sparql_result_max_rows: int | None = 1_000_000,
+    sparql_result_max_rows: int | None = 10_000_000,
     log_level: str | int | None = None,
 ) -> None:
     logger = get_logger("GRASP EVALUATION", log_level)
@@ -160,7 +165,7 @@ def evaluate_f1(
         id = pred["id"]
         if id in evaluations:
             evaluation = evaluations[id]
-            if not retry_failed or not is_invalid_evaluation(evaluation):
+            if not retry_failed or not is_retryable_evaluation(evaluation):
                 continue
 
         sparql = fix(inputs[id].sparql)
@@ -340,7 +345,7 @@ def evaluate_with_judge(
     retry_failed: bool = False,
     reformat_sparql: bool = False,
     timeout: float = 300.0,
-    sparql_result_max_rows: int | None = 1_000_000,
+    sparql_result_max_rows: int | None = 10_000_000,
     with_ground_truth_reference: bool = False,
     log_level: str | int | None = None,
 ):
@@ -378,6 +383,11 @@ def evaluate_with_judge(
 
             if not reformat_sparql:
                 formatted = output.get("formatted") or formatted
+                if is_server_error(formatted):
+                    raise ValueError(
+                        "Candidate formatting contains a retryable server error:\n"
+                        f"{formatted}"
+                    )
                 candidates.append(formatted)
                 continue
 
@@ -396,6 +406,11 @@ def evaluate_with_judge(
                 read_timeout=timeout,
                 sparql_result_max_rows=sparql_result_max_rows,
             )
+            if is_server_error(output["formatted"]):
+                raise ValueError(
+                    "Candidate formatting contains a retryable server error:\n"
+                    f"{output['formatted']}"
+                )
             candidates.append(output["formatted"])
 
         return candidates
@@ -411,6 +426,11 @@ def evaluate_with_judge(
             read_timeout=timeout,
             sparql_result_max_rows=sparql_result_max_rows,
         )
+        if is_server_error(output["formatted"]):
+            raise ValueError(
+                "Ground-truth formatting contains a retryable server error:\n"
+                f"{output['formatted']}"
+            )
         return output["formatted"]
 
     def group_predictions(predictions: list) -> dict:
@@ -485,7 +505,7 @@ def evaluate_with_judge(
     ):
         if id in evaluations["evaluations"]:
             evaluation = evaluations["evaluations"][id]
-            if not retry_failed or evaluation["err"] is None:
+            if not retry_failed or not is_server_error(evaluation["err"]):
                 continue
 
         candidates = []

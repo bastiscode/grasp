@@ -18,7 +18,12 @@ from grasp.apps.shared import (
     try_load_model_outputs,
     try_load_rank_json,
 )
-from grasp.utils import is_invalid_evaluation, is_invalid_output
+from grasp.utils import (
+    is_invalid_evaluation,
+    is_invalid_output,
+    is_retryable_evaluation,
+    is_server_error,
+)
 
 logger = get_logger("EVALUATION APP")
 
@@ -122,11 +127,11 @@ def load_available_data() -> dict:
 
 @st.cache_data(ttl=30)
 def load_ranking_data() -> dict:
-    """Find all available ranking evaluation files, organized by ranking filename."""
+    """Find all available judge evaluation files, organized by filename."""
     data_root = Path(sys.argv[1])
     rankings = {}
 
-    # Find all directories that might contain ranking data
+    # Find all directories that might contain judge data
     for kg_dir in data_root.glob("*"):
         if not kg_dir.is_dir():
             continue
@@ -141,7 +146,7 @@ def load_ranking_data() -> dict:
             rank_dir = benchmark_dir / "rank"
 
             if rank_dir.exists() and rank_dir.is_dir():
-                # Find all ranking evaluation JSON files
+                # Find all judge evaluation JSON files
                 for rank_file in rank_dir.glob("*.json"):
                     # Group by filename (without extension)
                     filename = rank_file.stem
@@ -210,6 +215,7 @@ def calculate_metrics(
     num_evaluations = len(model_evaluations)
 
     num_invalid_evaluations = 0
+    num_retryable_evaluations = 0
     total_f1 = 0.0
     total_accuracy = 0.0
     total_time = 0.0
@@ -221,6 +227,7 @@ def calculate_metrics(
             empty_target_valid,
         )
         num_invalid_evaluations += invalid_evaluation
+        num_retryable_evaluations += is_retryable_evaluation(evaluation)
         if invalid_evaluation:
             continue
 
@@ -252,6 +259,7 @@ def calculate_metrics(
         "num_invalid_outputs": num_invalid_outputs,
         "num_evaluations": num_evaluations,
         "num_invalid_evaluations": num_invalid_evaluations,
+        "num_retryable_evaluations": num_retryable_evaluations,
         "accuracy": accuracy,
         "f1": f1_score,
         "time": avg_time,
@@ -498,7 +506,12 @@ def show_predictions_view(available_data: dict) -> None:
     st.session_state.predictions_view_model = selected_model
 
     # Filter type
-    prediction_options = ["All Outputs", "Invalid Outputs", "Invalid Evaluations"]
+    prediction_options = [
+        "All Outputs",
+        "Invalid Outputs",
+        "Invalid Evaluations",
+        "Retryable Evaluations",
+    ]
     prediction_type = st.sidebar.radio("Output Type", prediction_options)
 
     # Load data
@@ -537,6 +550,12 @@ def show_predictions_view(available_data: dict) -> None:
             and is_invalid_evaluation(
                 evaluations[id], empty_target_valid=empty_target_valid
             )
+        }
+    elif prediction_type == "Retryable Evaluations":
+        filtered_outputs = {
+            id: output
+            for id, output in outputs.items()
+            if id in evaluations and is_retryable_evaluation(evaluations[id])
         }
     else:  # All Outputs
         filtered_outputs = outputs
@@ -627,7 +646,9 @@ def show_predictions_view(available_data: dict) -> None:
                     st.metric("Time (s)", "N/A")
 
             with eval_cols[2]:
-                if is_invalid_evaluation(eval_data, empty_target_valid):
+                if is_retryable_evaluation(eval_data):
+                    st.metric("Status", "🔁 Retryable")
+                elif is_invalid_evaluation(eval_data, empty_target_valid):
                     # Check if invalid due to empty ground truth
                     if (
                         not empty_target_valid
@@ -678,10 +699,10 @@ def show_predictions_view(available_data: dict) -> None:
 
 
 def validate_ranking_consistency(
-    benchmark_entries: list, rank_data_by_path: dict
+    benchmark_entries: list, rank_data_by_path: dict, check_judge_model: bool = True
 ) -> None:
     """
-    Validate consistency across ranking files.
+    Validate consistency across judge files.
 
     Checks:
     1. Judge model consistency across all KGs and benchmarks
@@ -712,7 +733,7 @@ def validate_ranking_consistency(
             prediction_file_sets[f"{kg}/{benchmark}"] = prediction_files
 
     # Check 1: Judge model consistency
-    if judge_configs:
+    if check_judge_model and judge_configs:
         judge_models = {}
         for benchmark_key, judge_config in judge_configs.items():
             # Only compare the model name
@@ -722,7 +743,7 @@ def validate_ranking_consistency(
             judge_models[model_name].append(benchmark_key)
 
         if len(judge_models) > 1:
-            warning_msg = "⚠️ **Inconsistent judge models detected!** Different ranking files use different judge models:\n"
+            warning_msg = "⚠️ **Inconsistent judge models detected!** Different judge files use different judge models:\n"
             for model_name, benchmarks in judge_models.items():
                 warning_msg += f"\n  {model_name} (used by {', '.join(benchmarks)})"
             st.warning(warning_msg)
@@ -746,29 +767,45 @@ def validate_ranking_consistency(
             st.warning(warning_msg)
 
 
+def judge_label_from_rank(filename: str, rank_data: dict) -> str:
+    model = rank_data.get("judge_config", {}).get("model")
+    if model:
+        return model
+
+    match = re.search(r"-judge-(.+)$", filename)
+    if match:
+        return match.group(1)
+
+    return "default"
+
+
+def prediction_file_signature(rank_data: dict) -> tuple[str, ...]:
+    return tuple(Path(path).name for path in rank_data.get("prediction_files", []))
+
+
 def show_ranking_view(ranking_data: dict) -> None:
-    """Show a view for ranking evaluations across multiple benchmarks."""
-    st.title("Ranking View - Cross-Benchmark Comparison")
+    """Show a view for judge evaluations across multiple benchmarks."""
+    st.title("Judge View - Cross-Benchmark Comparison")
 
     if not ranking_data:
         st.warning(
-            "No ranking evaluation files found. Please make sure ranking files are in the 'rank' subdirectories."
+            "No judge evaluation files found. Please make sure judge files are in the 'rank' subdirectories."
         )
         return
 
-    # Sidebar for ranking model selection
-    st.sidebar.title("Ranking Settings")
+    # Sidebar for judge comparison selection
+    st.sidebar.title("Judge Settings")
 
-    # Get all available ranking filenames
+    # Get all available judge filenames
     ranking_options = sorted(ranking_data.keys())
 
     if not ranking_options:
-        st.warning("No ranking files found.")
+        st.warning("No judge files found.")
         return
 
-    # Regex filter for ranking comparisons
+    # Regex filter for judge comparisons
     ranking_regex = st.sidebar.text_input(
-        "Filter rankings by regex pattern", key="ranking_regex"
+        "Filter judge comparisons by regex pattern", key="ranking_regex"
     )
     filtered_ranking_options = ranking_options
     if ranking_regex:
@@ -778,23 +815,35 @@ def show_ranking_view(ranking_data: dict) -> None:
             if filtered:
                 filtered_ranking_options = filtered
             else:
-                st.sidebar.warning(f"No rankings match the pattern '{ranking_regex}'")
+                st.sidebar.warning(
+                    f"No judge comparisons match the pattern '{ranking_regex}'"
+                )
         except re.error as e:
             st.sidebar.error(f"Invalid regex pattern: {e}")
 
-    # Select ranking comparison to view
-    selected_ranking = st.sidebar.selectbox(
-        "Select Ranking Comparison", filtered_ranking_options, index=0
+    # Select judge comparison(s) to view. Multiple compatible judge files are
+    # rendered as separate rows for the same benchmark.
+    selected_rankings = st.sidebar.multiselect(
+        "Select Judge Comparison(s)",
+        filtered_ranking_options,
+        default=filtered_ranking_options[:1],
     )
 
-    display_name = display_name_from_file(selected_ranking)
-    st.subheader(f"Comparison: {display_name}")
+    if not selected_rankings:
+        st.warning("Select at least one judge comparison.")
+        return
 
-    # Get all benchmarks for this ranking
-    benchmark_entries = ranking_data[selected_ranking]
+    display_names = [display_name_from_file(ranking) for ranking in selected_rankings]
+    st.subheader(f"Comparison: {', '.join(display_names)}")
+
+    # Get all benchmarks for this judge comparison
+    benchmark_entries = []
+    for ranking in selected_rankings:
+        for entry in ranking_data[ranking]:
+            benchmark_entries.append({**entry, "ranking": ranking})
 
     if not benchmark_entries:
-        st.warning(f"No benchmark data found for {selected_ranking}.")
+        st.warning("No benchmark data found for the selected judge comparison(s).")
         return
 
     # Load each rank file at most once per rerun (cache hits across reruns)
@@ -803,8 +852,32 @@ def show_ranking_view(ranking_data: dict) -> None:
         for entry in benchmark_entries
     }
 
-    # Validate consistency across all ranking files
-    validate_ranking_consistency(benchmark_entries, rank_data_by_path)
+    # Validate consistency across all judge files
+    validate_ranking_consistency(
+        benchmark_entries,
+        rank_data_by_path,
+        check_judge_model=len(selected_rankings) == 1,
+    )
+
+    entries_by_benchmark = defaultdict(list)
+    for entry in benchmark_entries:
+        entries_by_benchmark[(entry["kg"], entry["benchmark"])].append(entry)
+
+    incompatible = []
+    for (kg, benchmark), entries in entries_by_benchmark.items():
+        signatures = {
+            prediction_file_signature(rank_data_by_path.get(entry["filepath"], {}))
+            for entry in entries
+        }
+        if len(signatures) > 1:
+            incompatible.append(f"{kg}/{benchmark}")
+
+    if incompatible:
+        st.error(
+            "Selected judge files compare different prediction files and cannot be merged. "
+            f"Affected benchmark(s): {', '.join(sorted(incompatible))}"
+        )
+        return
 
     # Organize benchmarks by group for selection
     entries_by_kg = defaultdict(list)
@@ -813,7 +886,7 @@ def show_ranking_view(ranking_data: dict) -> None:
 
     kg_options = sorted(entries_by_kg.keys())
     if not kg_options:
-        st.warning("No groups found for the selected ranking.")
+        st.warning("No groups found for the selected judge comparison.")
         return
 
     default_kg_index = kg_options.index("wikidata") if "wikidata" in kg_options else 0
@@ -838,26 +911,24 @@ def show_ranking_view(ranking_data: dict) -> None:
         index=default_benchmark_index,
     )
 
-    selected_entry = next(
-        (
-            entry
-            for entry in entries_by_kg[selected_kg]
-            if entry["benchmark"] == selected_benchmark
-        ),
-        None,
+    selected_entries = [
+        entry
+        for entry in entries_by_kg[selected_kg]
+        if entry["benchmark"] == selected_benchmark
+    ]
+
+    selected_entry = selected_entries[0] if selected_entries else None
+
+    judge_labels = sorted(
+        {
+            judge_label_from_rank(
+                entry["ranking"], rank_data_by_path.get(entry["filepath"], {})
+            )
+            for entry in benchmark_entries
+        }
     )
-
-    # Extract judge model information from the first available ranking file
-    judge_model_info = None
-    for entry in benchmark_entries:
-        rank_data = rank_data_by_path.get(entry["filepath"], {})
-        model = rank_data.get("judge_config", {}).get("model")
-        if model:
-            judge_model_info = model
-            break
-
-    if judge_model_info:
-        st.caption(f"**Judge Model:** {judge_model_info}")
+    if judge_labels:
+        st.caption(f"**Judge Models:** {', '.join(judge_labels)}")
 
     # First pass: collect all unique models across all benchmarks to establish global ordering
     sorted_models = None
@@ -878,7 +949,7 @@ def show_ranking_view(ranking_data: dict) -> None:
 
     if sorted_models is None:
         st.warning(
-            "Could not establish a consistent set of models across all benchmarks for this ranking comparison."
+            "Could not establish a consistent set of models across all benchmarks for this judge comparison."
         )
         return
 
@@ -927,11 +998,19 @@ def show_ranking_view(ranking_data: dict) -> None:
                 for eval_data in rank_data.get("evaluations", {}).values()
                 if eval_data.get("err") is None
             )
+            retryable_evals = sum(
+                1
+                for eval_data in rank_data.get("evaluations", {}).values()
+                if is_server_error(eval_data.get("err"))
+            )
 
             row_data = {
                 "Group": kg,
                 "Benchmark": benchmark,
-                "Valid Evals": f"{valid_evals}/{total_evals}",
+                "Judge": judge_label_from_rank(
+                    entry["ranking"], rank_data_by_path.get(rank_file, {})
+                ),
+                "Valid Evals": f"{valid_evals}/{total_evals} (retryable {retryable_evals})",
             }
 
             model_wins = {}
@@ -1033,14 +1112,14 @@ def show_ranking_view(ranking_data: dict) -> None:
             continue
 
     if not table_rows:
-        st.warning(f"No valid ranking data found for {selected_ranking}.")
+        st.warning("No valid judge data found for the selected comparison(s).")
         return
 
     # Create DataFrame
-    df = pd.DataFrame(table_rows)
+    df = pd.DataFrame(table_rows).sort_values(["Group", "Benchmark", "Judge"])
 
     # Define column order
-    display_columns = ["Group", "Benchmark"]
+    display_columns = ["Group", "Benchmark", "Judge"]
     for model in sorted_models:
         letter = model_to_letter[model]
         display_columns.append(f"{letter} Wins")
@@ -1055,7 +1134,7 @@ def show_ranking_view(ranking_data: dict) -> None:
     # Create styling function to highlight winning columns
     def highlight_winner(row):
         styles = [""] * len(row)
-        row_data = df.iloc[row.name]
+        row_data = df.loc[row.name]
         winners = row_data.get("_winners", [])
 
         winner_style = STYLE_BEST_TIE if len(winners) > 1 else STYLE_BEST
@@ -1071,15 +1150,31 @@ def show_ranking_view(ranking_data: dict) -> None:
     st.dataframe(styled_df, width="stretch", hide_index=True)
 
     # Show summary statistics
-    st.caption(f"Showing {len(benchmark_entries)} benchmark(s) for {display_name}")
+    st.caption(
+        f"Showing {len(benchmark_entries)} judge file(s) for {len(entries_by_benchmark)} benchmark(s)"
+    )
 
     # Detailed sample view for the selected group and benchmark
     if not selected_entry:
         return
 
+    if len(selected_entries) > 1:
+        detail_options = {
+            judge_label_from_rank(
+                entry["ranking"], rank_data_by_path.get(entry["filepath"], {})
+            ): entry
+            for entry in selected_entries
+        }
+        selected_judge_label = st.sidebar.selectbox(
+            "Select Judge for Details",
+            sorted(detail_options.keys()),
+            index=0,
+        )
+        selected_entry = detail_options[selected_judge_label]
+
     selected_rank_data = rank_data_by_path.get(selected_entry["filepath"])
     if not selected_rank_data:
-        st.warning("Failed to load ranking data for detailed view.")
+        st.warning("Failed to load judge data for detailed view.")
         return
 
     evaluations = selected_rank_data.get("evaluations", {})
@@ -1119,7 +1214,7 @@ def show_ranking_view(ranking_data: dict) -> None:
         "Select an example:",
         sorted_ids,
         format_func=lambda x: f"{x} - {id_to_question.get(x, 'No question provided')}",
-        key=f"ranking_sample_{selected_kg}_{selected_benchmark}",
+        key=f"judge_sample_{selected_kg}_{selected_benchmark}",
     )
 
     if not selected_id:
@@ -1606,7 +1701,7 @@ def main() -> None:
         "Benchmark View",
         "Comprehensive View",
         "Outputs View",
-        "Ranking View",
+        "Judge View",
     ]
     # Benchmark View is the default (index=0)
     selected_view = st.sidebar.radio("Select View", view_options, index=0)
@@ -1617,8 +1712,8 @@ def main() -> None:
         show_comprehensive_view(available_data)
     elif selected_view == "Outputs View":
         show_predictions_view(available_data)
-    elif selected_view == "Ranking View":
-        # Load ranking data and show ranking view
+    elif selected_view == "Judge View":
+        # Load judge data and show judge view
         ranking_data = load_ranking_data()
         show_ranking_view(ranking_data)
     else:  # Benchmark View
@@ -1697,10 +1792,12 @@ def main() -> None:
             num_without_evaluation = num_outputs - num_evaluations
             num_invalid_outputs = metrics[m]["num_invalid_outputs"]
             num_invalid_evaluations = metrics[m]["num_invalid_evaluations"]
+            num_retryable_evaluations = metrics[m]["num_retryable_evaluations"]
 
-            # Format as: total outputs (missing_evaluations/invalid_evaluations/invalid_outputs)
+            # Format as:
+            # total outputs (missing/invalid/retryable/invalid outputs)
             combined_predictions.append(
-                f"{num_outputs} ({num_without_evaluation}/{num_invalid_evaluations}/{num_invalid_outputs})*"
+                f"{num_outputs} ({num_without_evaluation}/{num_invalid_evaluations}/{num_retryable_evaluations}/{num_invalid_outputs})*"
             )
 
         metrics_df = pd.DataFrame(
@@ -1729,7 +1826,7 @@ def main() -> None:
             "" if empty_target_valid else " or those with empty ground truth results"
         )
         st.caption(
-            f"* Info format: Outputs (Missing Evaluations/Invalid Evaluations/Invalid Outputs) - 'Outputs' is the total number of model outputs, 'Missing Evaluations' counts outputs without an evaluation, 'Invalid Evaluations' counts evaluations with errors{empty_ground_truth_text}, 'Invalid Outputs' counts model outputs with errors. Note: Accuracy and F1 scores are calculated over all evaluations."
+            f"* Info format: Outputs (Missing Evaluations/Invalid Evaluations/Retryable Evaluations/Invalid Outputs) - 'Outputs' is the total number of model outputs, 'Missing Evaluations' counts outputs without an evaluation, 'Invalid Evaluations' counts evaluations with errors{empty_ground_truth_text}, 'Retryable Evaluations' counts evaluations with backend/runtime errors that --retry-failed will retry, 'Invalid Outputs' counts model outputs with errors. Note: Accuracy and F1 scores are calculated over all non-invalid evaluations."
         )
 
     st.sidebar.markdown("---")

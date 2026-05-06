@@ -211,9 +211,22 @@ def format_trace(output: dict, skip_system: bool = False) -> str:
     return "\n\n".join(parts)
 
 
-def is_server_error(message: str | None) -> bool:
+def is_server_error(message: str | None, hard_only: bool = False) -> bool:
     if message is None:
         return False
+
+    strict_phrases = [
+        "500 Server Error",
+        "502 Server Error",
+        "503 Server Error",
+        "504 Server Error",
+        "Bad Gateway",
+        "Internal Server Error",
+        "Service Unavailable",
+        "Gateway Timeout",
+    ]
+    if hard_only:
+        return any(phrase.lower() in message.lower() for phrase in strict_phrases)
 
     phrases = [
         # Current SPARQL execution errors.
@@ -242,12 +255,16 @@ def is_invalid_evaluation(evaluation: dict, empty_target_valid: bool = False) ->
     elif not empty_target_valid and evaluation["target"]["size"] == 0:
         return True
 
-    elif "prediction" not in evaluation:
-        return False
+    return False
 
-    # no target error, but we have a prediction
-    # check whether prediction failed due to server error
-    return is_server_error(evaluation["prediction"]["err"])
+
+def is_retryable_evaluation(evaluation: dict) -> bool:
+    target = evaluation.get("target", {})
+    if target.get("err") is not None or target.get("size") == 0:
+        return True
+
+    prediction = evaluation.get("prediction", {})
+    return is_server_error(prediction.get("err"))
 
 
 def is_tool_fail(message: dict) -> bool:
@@ -255,7 +272,7 @@ def is_tool_fail(message: dict) -> bool:
         return False
 
     content = message["content"]
-    return is_server_error(content)
+    return is_server_error(content, hard_only=True)
 
 
 def is_error(message: dict) -> bool:
@@ -285,7 +302,7 @@ def is_invalid_output(
                 continue
 
             if any(
-                is_server_error(tool_call.result)
+                is_server_error(tool_call.result, hard_only=True)
                 for tool_call in msg.content.tool_calls
             ):
                 return True

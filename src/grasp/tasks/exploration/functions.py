@@ -126,7 +126,10 @@ def delete_note(name: str, notes: list[str], num: int | float) -> str:
 
     num -= 1
     note = notes.pop(num)
-    return f"Deleted {name} note {num + 1}: {clip(note, 64)}"
+    return (
+        f"Deleted {name} note {num + 1}: {clip(note, 64)}\n\n"
+        f"Notes after {name} note {num + 1} have been shifted up by one position."
+    )
 
 
 def update_note(

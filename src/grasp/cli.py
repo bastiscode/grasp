@@ -359,7 +359,7 @@ def parse_args() -> argparse.Namespace:
     eval_judge_parser.add_argument(
         "--sparql-result-max-rows",
         type=int,
-        default=1_000_000,
+        default=10_000_000,
         help="Maximum number of SPARQL result rows to parse before failing reformatting",
     )
     eval_judge_parser.add_argument(
