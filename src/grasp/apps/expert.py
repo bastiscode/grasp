@@ -124,7 +124,7 @@ def _load_evaluation(path: str, prediction_files: list[str]) -> dict:
         "prediction_files": prediction_files,
         "expert_config": {
             "kg_config": None,
-            "evaluator": os.environ.get("USER"),
+            "evaluator": "expert",
         },
         "evaluations": {},
     }

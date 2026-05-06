@@ -772,11 +772,14 @@ def judge_label_from_rank(filename: str, rank_data: dict) -> str:
     if model:
         return model
 
+    if "expert_config" in rank_data:
+        return rank_data.get("expert_config", {}).get("evaluator") or "expert"
+
     match = re.search(r"-judge-(.+)$", filename)
     if match:
         return match.group(1)
 
-    return "default"
+    return "expert"
 
 
 def prediction_file_signature(rank_data: dict) -> tuple[str, ...]:
@@ -969,6 +972,17 @@ def show_ranking_view(ranking_data: dict) -> None:
     # Process all benchmarks to build comprehensive table (one row per benchmark)
     table_rows = []
     any_scores_anywhere = False
+    ranking_to_variant = {
+        ranking: f"J{i + 1}" for i, ranking in enumerate(selected_rankings)
+    }
+    if ranking_to_variant:
+        st.markdown("**Judge Variants:**")
+        st.markdown(
+            "\n".join(
+                f"- **{variant}**: `{ranking}`"
+                for ranking, variant in ranking_to_variant.items()
+            )
+        )
 
     for entry in benchmark_entries:
         kg = entry["kg"]
@@ -1010,6 +1024,7 @@ def show_ranking_view(ranking_data: dict) -> None:
                 "Judge": judge_label_from_rank(
                     entry["ranking"], rank_data_by_path.get(rank_file, {})
                 ),
+                "Variant": ranking_to_variant.get(entry["ranking"], "?"),
                 "Valid Evals": f"{valid_evals}/{total_evals} (retryable {retryable_evals})",
             }
 
@@ -1116,10 +1131,12 @@ def show_ranking_view(ranking_data: dict) -> None:
         return
 
     # Create DataFrame
-    df = pd.DataFrame(table_rows).sort_values(["Group", "Benchmark", "Judge"])
+    df = pd.DataFrame(table_rows).sort_values(
+        ["Group", "Benchmark", "Judge", "Variant"]
+    )
 
     # Define column order
-    display_columns = ["Group", "Benchmark", "Judge"]
+    display_columns = ["Group", "Benchmark", "Judge", "Variant"]
     for model in sorted_models:
         letter = model_to_letter[model]
         display_columns.append(f"{letter} Wins")
