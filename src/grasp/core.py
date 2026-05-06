@@ -22,7 +22,7 @@ from grasp.model import Message, Model, Response, ToolCall, get_model
 from grasp.tasks import get_task
 from grasp.tasks import rules as general_rules
 from grasp.tasks.base import GraspTask
-from grasp.tasks.examples import ExampleIndex
+from grasp.examples import ExampleIndex
 from grasp.tasks.feedback import format_feedback, generate_feedback
 from grasp.tasks.sparql_qa.examples import find_examples
 from grasp.utils import (
@@ -40,6 +40,7 @@ def system_instructions(
     managers: list[KgManager],
     kg_notes: dict[str, list[str]],
     notes: list[str],
+    example_indices: dict | None = None,
 ) -> str:
     index_types = set()
     for manager in managers:
@@ -64,7 +65,7 @@ Types of knowledge graph indices:
         instructions += f"""
 
 Available knowledge graphs:
-{format_kgs(managers, kg_notes)}"""
+{format_kgs(managers, kg_notes, example_indices)}"""
 
     if notes:
         instructions += f"""
@@ -180,6 +181,7 @@ def generate(
         managers,
         kg_notes or {},
         notes or [],
+        example_indices,
     )
     yield {
         "type": "system",
@@ -231,11 +233,11 @@ def generate(
             config.result_max_columns,
         )
 
-        name = "find_random_examples"
+        name = "get_random_examples"
         args = {"kg": config.force_examples, "page": 1}
         if not config.random_examples:
-            name = "find_similar_examples"
-            args["question"] = input
+            name = "search_example"
+            args["query"] = input
 
         tool_call = ToolCall(
             id=uuid.uuid4().hex,

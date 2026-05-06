@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from typing import Any, Type
@@ -5,7 +6,7 @@ from typing import Any, Type
 from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex
 from search_rdf.model import SentenceTransformerModel
-from universal_ml_utils.io import dump_jsonl, load_jsonl
+from universal_ml_utils.io import dump_jsonl, load_json, load_jsonl
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import flatten
 
@@ -22,11 +23,13 @@ class ExampleIndex:
         index: EmbeddingIndex,
         model: SentenceTransformerModel,
         samples: list[Sample],
+        description: str | None = None,
     ) -> None:
         self.model = model
         self.data = data
         self.index = index
         self.samples = samples
+        self.description = description
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -60,7 +63,13 @@ class ExampleIndex:
             cls.sample_cls(**sample)
             for sample in load_jsonl(os.path.join(dir, "samples.jsonl"))
         ]
-        return ExampleIndex(data, index, model, samples)
+
+        description = None
+        info_path = os.path.join(dir, "info.json")
+        if os.path.exists(info_path):
+            description = load_json(info_path).get("description")
+
+        return ExampleIndex(data, index, model, samples, description)
 
     @classmethod
     def build(
@@ -71,6 +80,7 @@ class ExampleIndex:
         batch_size: int = 256,
         overwrite: bool = False,
         log_level: str | int | None = None,
+        description: str = "",
     ) -> None:
         logger = get_logger("EXAMPLE INDEX BUILD", log_level)
 
@@ -87,7 +97,6 @@ class ExampleIndex:
         data_dir = os.path.join(output_dir, "data")
         index_dir = os.path.join(output_dir, "index")
 
-        # save samples in index directory
         samples_file = os.path.join(output_dir, "samples.jsonl")
         dump_jsonl((sample.model_dump() for sample in samples), samples_file)
 
@@ -112,6 +121,9 @@ class ExampleIndex:
         )
 
         EmbeddingIndex.build(data, embedding_path, index_dir)
+
+        with open(os.path.join(output_dir, "info.json"), "w") as f:
+            json.dump({"description": description}, f)
 
         end = time.monotonic()
         logger.info(f"Example index built in {end - start:.2f} seconds")

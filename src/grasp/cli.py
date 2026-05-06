@@ -44,7 +44,7 @@ from grasp.notes import (
 )
 from grasp.server import serve
 from grasp.tasks import Task, get_task
-from grasp.tasks.examples import load_example_indices, task_to_index
+from grasp.examples import load_example_indices, task_to_index
 from grasp.utils import (
     format_trace,
     get_available_knowledge_graphs,
@@ -574,6 +574,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="Qwen/Qwen3-Embedding-0.6B",
         help="Embedding model to use when building examples index",
+    )
+    example_parser.add_argument(
+        "description",
+        type=str,
+        help="Short description of this example index (shown in system prompt)",
     )
     add_task_arg(example_parser)
     add_overwrite_arg(example_parser)
@@ -1128,6 +1133,7 @@ def main():
             args.batch_size,
             args.overwrite,
             args.log_level,
+            args.description,
         )
 
 

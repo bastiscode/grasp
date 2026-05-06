@@ -34,7 +34,7 @@ from grasp.configs import ServerConfig
 from grasp.core import generate, load_notes, setup
 from grasp.model import Message
 from grasp.tasks import Task
-from grasp.tasks.examples import load_example_indices
+from grasp.examples import load_example_indices
 
 
 class Past(BaseModel):

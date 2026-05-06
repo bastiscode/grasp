@@ -27,7 +27,7 @@ from grasp.model import Message, get_model
 from grasp.notes.utils import format_output
 from grasp.tasks import get_task
 from grasp.tasks.cea import AnnotationState, CeaSample, prepare_annotation
-from grasp.tasks.examples import load_example_indices
+from grasp.examples import load_example_indices
 from grasp.tasks.exploration import (
     FunctionalExplorationState,
     StructuralExplorationState,

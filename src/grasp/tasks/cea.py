@@ -11,7 +11,7 @@ from grasp.model import Message
 from grasp.sparql.types import Alternative, ObjType
 from grasp.sparql.utils import parse_into_binding
 from grasp.tasks.base import FeedbackTask, GraspTask
-from grasp.tasks.examples import Sample
+from grasp.tasks.utils import Sample
 from grasp.utils import FunctionCallException, format_list, format_notes
 
 

@@ -893,13 +893,26 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     return KgManager(cfg.kg, indices, **info.model_dump())
 
 
-def format_kgs(managers: list[KgManager], notes: dict[str, list[str]]) -> str:
+def format_kgs(
+    managers: list[KgManager],
+    notes: dict[str, list[str]],
+    example_indices: "dict[str, Any] | None" = None,
+) -> str:
     return format_list(
-        format_kg(manager, notes.get(manager.kg)) for manager in managers
+        format_kg(
+            manager,
+            notes.get(manager.kg),
+            example_index=example_indices.get(manager.kg) if example_indices is not None else None,
+        )
+        for manager in managers
     )
 
 
-def format_kg(manager: KgManager, notes: list[str] | None = None) -> str:
+def format_kg(
+    manager: KgManager,
+    notes: list[str] | None = None,
+    example_index: "Any | None" = None,
+) -> str:
     msg = f'"{manager.kg}" at {manager.endpoint}'
     if manager.description:
         msg += f": {manager.description}"
@@ -910,6 +923,8 @@ def format_kg(manager: KgManager, notes: list[str] | None = None) -> str:
         indices.append(
             f'"{name}" index ({format_index_meta(index.index)}): {index.description}'
         )
+    if example_index is not None and example_index.description:
+        indices.append(f'"examples" (example index): {example_index.description}')
 
     if indices:
         msg += "\n  Search indices:\n" + format_list(indices, indent=4)
