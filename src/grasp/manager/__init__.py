@@ -924,7 +924,9 @@ def format_kg(
             f'"{name}" index ({format_index_meta(index.index)}): {index.description}'
         )
     if example_index is not None and example_index.description:
-        indices.append(f'"examples" (example index): {example_index.description}')
+        indices.append(
+            f'"examples" index ({format_index_meta(example_index.index)}): {example_index.description}'
+        )
 
     if indices:
         msg += "\n  Search indices:\n" + format_list(indices, indent=4)
