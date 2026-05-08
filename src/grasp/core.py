@@ -11,6 +11,7 @@ from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
 from grasp.configs import GraspConfig
+from grasp.examples import ExampleIndex
 from grasp.functions import call_function, kg_functions
 from grasp.manager import KgManager, format_kgs, load_kg_manager
 from grasp.manager.utils import (
@@ -22,7 +23,6 @@ from grasp.model import Message, Model, Response, ToolCall, get_model
 from grasp.tasks import get_task
 from grasp.tasks import rules as general_rules
 from grasp.tasks.base import GraspTask
-from grasp.examples import ExampleIndex
 from grasp.tasks.feedback import format_feedback, generate_feedback
 from grasp.tasks.sparql_qa.examples import find_examples
 from grasp.utils import (

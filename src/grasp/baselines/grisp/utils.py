@@ -3,7 +3,7 @@ import os
 import random
 from typing import Callable, Iterator
 
-from grammar_utils.parse import LR1Parser
+from grammar_utils.parse import LR1Parser  # type: ignore
 from torch.utils.data import Sampler
 from transformers import PreTrainedTokenizerBase
 from universal_ml_utils.io import load_json

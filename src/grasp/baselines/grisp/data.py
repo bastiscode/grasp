@@ -796,7 +796,7 @@ def prepare_selection(
     prompt, options = get_selection_prompt_and_options(
         manager,
         question,
-        sparql,
+        info.sparql,
         skeleton.selections,
         alternatives,
     )
