@@ -4,8 +4,8 @@ from typing import Any
 from grasp.configs import GraspConfig
 from grasp.functions import validate_page, find_manager
 from grasp.manager import KgManager
-from grasp.examples import ExampleIndex
-from grasp.tasks.utils import Sample, format_sparql_result, prepare_sparql_result
+from grasp.examples import ExampleIndex, Sample
+from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import format_list
 
 

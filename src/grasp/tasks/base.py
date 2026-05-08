@@ -4,7 +4,7 @@ from typing import Any
 from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.model import Message
-from grasp.tasks.utils import Sample
+from grasp.examples import Sample
 
 
 class FeedbackTask(ABC):

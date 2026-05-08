@@ -21,13 +21,13 @@ from grasp.configs import (
     NoteTakingConfig,
 )
 from grasp.core import generate, load_notes, setup
+from grasp.examples import Sample, load_example_indices
 from grasp.functions import find_manager
 from grasp.manager import KgManager
 from grasp.model import Message, get_model
 from grasp.notes.utils import format_output
 from grasp.tasks import get_task
 from grasp.tasks.cea import AnnotationState, CeaSample, prepare_annotation
-from grasp.examples import load_example_indices
 from grasp.tasks.exploration import (
     FunctionalExplorationState,
     StructuralExplorationState,
@@ -35,7 +35,7 @@ from grasp.tasks.exploration import (
 from grasp.tasks.exploration.functions import call_function, note_function_definitions
 from grasp.tasks.question_generation import QuestionGenerationState
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
-from grasp.tasks.utils import Sample, format_sparql_result, prepare_sparql_result
+from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import (
     format_kg_notes,
     format_list,
@@ -90,7 +90,7 @@ def take_notes_from_samples(
             random.shuffle(samples)
             samples = samples[: config.samples_per_file]
 
-        all_samples.extend(samples)
+        all_samples.extend(samples)  # type: ignore
 
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "config.yaml"), "w") as f:

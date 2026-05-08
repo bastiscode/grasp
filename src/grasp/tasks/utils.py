@@ -1,7 +1,5 @@
 from typing import Any
 
-from pydantic import BaseModel
-
 from grasp.functions import (
     ExecutionResult,
     execute_sparql,
@@ -12,16 +10,6 @@ from grasp.manager import KgManager
 from grasp.sparql.item import selections_from_sparql
 from grasp.sparql.types import Selection
 from grasp.sparql.utils import READ_TIMEOUT, REQUEST_TIMEOUT
-
-
-class Sample(BaseModel):
-    id: str | None = None
-
-    def input(self) -> Any:
-        raise NotImplementedError
-
-    def queries(self) -> list[str]:
-        raise NotImplementedError
 
 
 def prepare_sparql_result(

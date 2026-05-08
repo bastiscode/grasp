@@ -10,8 +10,19 @@ from universal_ml_utils.io import dump_jsonl, load_json, load_jsonl
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import flatten
 
+from pydantic import BaseModel
+
 from grasp.configs import GraspConfig
-from grasp.tasks.utils import Sample
+
+
+class Sample(BaseModel):
+    id: str | None = None
+
+    def input(self) -> Any:
+        raise NotImplementedError
+
+    def queries(self) -> list[str]:
+        raise NotImplementedError
 
 
 class ExampleIndex:
