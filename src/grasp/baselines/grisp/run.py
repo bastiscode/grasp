@@ -21,7 +21,7 @@ from transformers import (
 )
 from universal_ml_utils.configuration import load_config
 from universal_ml_utils.io import dump_json, dump_jsonl, load_jsonl
-from universal_ml_utils.logging import get_logger
+from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import consume_generator, extract_field, map_generator
 
 from grasp.baselines.grisp.data import (
@@ -74,6 +74,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="INFO",
         help="Logging level",
+    )
+    parser.add_argument(
+        "--all-loggers",
+        action="store_true",
+        help="Set log level for all loggers instead of just the main one",
     )
     parser.add_argument(
         "-d",
@@ -726,6 +731,8 @@ def load_model_and_tokenizer(
 
 def main(args: argparse.Namespace) -> None:
     logger = get_logger("GRISP", args.log_level)
+    if args.all_loggers:
+        setup_logging(args.log_level)
 
     train_cfg_path = os.path.join(args.run_directory, "config.yaml")
     train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))

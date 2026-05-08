@@ -631,7 +631,8 @@ class KgManager:
             )
 
         self.logger.debug(
-            f'Got {len(result):,} candidate items for index "{index_name}"'
+            f'Got {len(result):,} candidate items for index "{index_name}":\n'
+            f"{self.format_sparql_result(result)}"
         )
 
         normalizer = self.get_normalizer(index_name)
@@ -648,7 +649,7 @@ class KgManager:
             norm = normalizer.normalize(identifier)
             if norm is not None:
                 normalized_iri, variant = norm
-                if data.id_from_identifier(normalized_iri) is None:
+                if data.id_from_identifier(normalized_iri) is not None:
                     if normalized_iri not in identifier_map:
                         identifier_map[normalized_iri] = []
                     if variant is not None:
@@ -656,9 +657,11 @@ class KgManager:
                     continue
 
             # direct match fallback
-            if data.id_from_identifier(identifier) is not None:
-                if identifier not in identifier_map:
-                    identifier_map[identifier] = []
+            if (
+                data.id_from_identifier(identifier) is not None
+                and identifier not in identifier_map
+            ):
+                identifier_map[identifier] = []
 
         return identifier_map
 
@@ -902,7 +905,9 @@ def format_kgs(
         format_kg(
             manager,
             notes.get(manager.kg),
-            example_index=example_indices.get(manager.kg) if example_indices is not None else None,
+            example_index=example_indices.get(manager.kg)
+            if example_indices is not None
+            else None,
         )
         for manager in managers
     )
