@@ -777,11 +777,13 @@ def prepare_selection(
 
     alternatives = ordered_alternatives(alternative_groups, queries)
 
+    if drop_infos:
+        for alt, _, _ in alternatives:
+            if alt.info:
+                alt.info.clear()
+
     target_option: int | None = None
     for i, (alt, obj_type, _) in enumerate(alternatives):
-        if drop_infos and alt.info:
-            alt.info.clear()
-
         if alt != target_alt or obj_type != item.obj_type:
             continue
 

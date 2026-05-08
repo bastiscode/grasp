@@ -110,14 +110,19 @@ def materialize_sample(
     manager: KgManager,
     n: int,
     is_val: bool = False,
+    skeleton_p: float = 0.2,
+    selection_p: float = 0.2,
 ) -> GRISPMaterializedSample:
     if is_val:
         n = 1
 
-    skeletons = [prepare_skeleton(sample, is_val) for _ in range(n)]
+    skeletons = [prepare_skeleton(sample, is_val, skeleton_p) for _ in range(n)]
 
     if sample.has_placeholders:
-        selections = [prepare_selection(sample, manager, is_val) for _ in range(n)]
+        selections = [
+            prepare_selection(sample, manager, is_val, skeleton_p, selection_p)
+            for _ in range(n)
+        ]
     else:
         selections = []
 
@@ -182,6 +187,8 @@ def main(args: argparse.Namespace) -> None:
                 manager,
                 args.num_materializations,
                 args.is_val,
+                args.skeleton_p,
+                args.selection_p,
             )
 
             yield materialized_sample.model_dump()
