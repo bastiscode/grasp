@@ -9,6 +9,7 @@ from grasp.tasks.exploration import (
     FunctionalExplorationTask,
     StructuralExplorationTask,
 )
+from grasp.tasks.shapes_setup import ShapesSetupTask
 from grasp.tasks.general_qa import GeneralQaTask
 from grasp.tasks.question_generation import QuestionGenerationTask
 from grasp.tasks.sparql_qa import SparqlQaTask
@@ -38,6 +39,7 @@ _REGISTRY: dict[str, type[GraspTask]] = {
         StructuralExplorationTask,
         QuestionGenerationTask,
         AutoSetupTask,
+        ShapesSetupTask,
     ]
 }
 

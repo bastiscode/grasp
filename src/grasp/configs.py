@@ -11,13 +11,22 @@ class KgInfo(BaseModel):
     params: dict[str, str] | None = None
 
 
+class ShapeConfig(BaseModel):
+    max_properties_per_concept: int = 50
+    min_property_coverage: float = 0.02
+    sparql_result_max_rows: int = 5_000_000
+    request_timeout: float | tuple[float, float] = (3.0, 10.0)
+    read_timeout: float = 5.0
+
+
 class KgConfig(BaseModel):
     kg: str
-    entities_type: Literal["fuzzy", "embedding", "keyword"] = "fuzzy"
-    properties_type: Literal["fuzzy", "embedding", "keyword"] = "embedding"
-    literals_type: Literal["auto", "fuzzy", "embedding", "keyword"] = "auto"
+    entities: Literal["fuzzy", "embedding", "keyword"] | None = "fuzzy"
+    properties: Literal["fuzzy", "embedding", "keyword"] | None = "embedding"
+    literals: Literal["auto", "fuzzy", "embedding", "keyword"] | None = "auto"
+    shapes: ShapeConfig | None = Field(default_factory=ShapeConfig)
     notes_file: str | None = None
-    example_index: str | None = None
+    examples: str | None = None
 
     # kg info
     info: KgInfo | None = None

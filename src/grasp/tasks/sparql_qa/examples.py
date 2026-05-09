@@ -27,7 +27,7 @@ class SparqlQaExampleIndex(ExampleIndex):
 
 
 def functions(config: GraspConfig) -> list[dict]:
-    example_kgs = [kg.kg for kg in config.knowledge_graphs if kg.example_index is not None]
+    example_kgs = [kg.kg for kg in config.knowledge_graphs if kg.examples is not None]
 
     if not example_kgs:
         return []

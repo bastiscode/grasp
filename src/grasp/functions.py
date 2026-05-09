@@ -8,6 +8,7 @@ from grammar_utils.parse import LR1Parser  # type: ignore
 from search_rdf import EmbeddingIndex
 from universal_ml_utils.ops import partition_by
 
+from grasp.build.shapes import compute_shape
 from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer
@@ -165,6 +166,83 @@ list(kg="wikidata", property="wdt:P19")""",
 
     if fn_set == "base":
         return fns
+
+    search_shape_kgs = [m.kg for m in managers if m.shapes is not None and m.shapes.index is not None]
+    get_shape_kgs = [m.kg for m in managers if m.shapes is not None]
+
+    if search_shape_kgs:
+        fns.append(
+            {
+                "name": "search_shape",
+                "description": f"""\
+Search for pseudo-ShEx schema patterns for concepts in the specified knowledge \
+graph that match a semantic query. Shapes are computed approximately via sampling \
+and may not be considered fully accurate.
+
+Use this to discover which concepts exist in the KG and what their structure looks \
+like before writing SPARQL queries.
+
+Currently shapes are available for the following knowledge graphs:
+{format_list(f'"{kg}"' for kg in search_shape_kgs)}""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "kg": {
+                            "type": "string",
+                            "enum": search_shape_kgs,
+                            "description": "The knowledge graph to search shapes in",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "A semantic query describing the concept you are looking for, e.g. 'human', 'protein', 'scientific article'",
+                        },
+                        "page": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": search_max_pages,
+                            "description": "Page number for pagination",
+                        },
+                    },
+                    "required": ["kg", "query", "page"],
+                    "additionalProperties": False,
+                },
+                "strict": True,
+            }
+        )
+
+    if get_shape_kgs:
+        fns.append(
+            {
+                "name": "get_shape",
+                "description": f"""\
+Retrieve the pseudo-ShEx shape for a specific concept IRI. Shapes are computed \
+approximately via sampling and may not be considered fully accurate.
+
+If the shape is not in the pre-built index, it will be computed on the fly \
+by running profiling queries against the endpoint. If on-the-fly computation \
+fails, use SPARQL queries to explore the concept directly.
+
+Currently shapes are available for the following knowledge graphs:
+{format_list(f'"{kg}"' for kg in get_shape_kgs)}""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "kg": {
+                            "type": "string",
+                            "enum": get_shape_kgs,
+                            "description": "The knowledge graph to look up the shape in",
+                        },
+                        "iri": {
+                            "type": "string",
+                            "description": "The full or prefixed IRI of the concept, e.g. 'wd:Q5' or 'http://www.wikidata.org/entity/Q5'",
+                        },
+                    },
+                    "required": ["kg", "iri"],
+                    "additionalProperties": False,
+                },
+                "strict": True,
+            }
+        )
 
     has_entity_index = "entities" in known_indices
     has_property_index = "properties" in known_indices
@@ -715,11 +793,89 @@ def call_function(
             max_pages=config.search_max_pages,
         )
 
+    elif fn_name in {"search_shape", "get_shape"}:
+        manager, _ = find_manager(managers, fn_args["kg"])
+        if manager.shapes is None:
+            return f"No shapes available for knowledge graph '{fn_args['kg']}'"
+        return call_shape_function(fn_name, fn_args, manager.shapes, manager, config)
+
     elif task is not None:
         return task.call_function(fn_name, fn_args, known, example_indices)
 
     else:
         raise ValueError(f"Unknown function {fn_name}")
+
+
+def call_shape_function(
+    fn_name: str,
+    fn_args: dict,
+    shapes: "Any",
+    manager: KgManager,
+    config: GraspConfig,
+) -> str:
+    if fn_name == "search_shape":
+        query = fn_args["query"]
+        page = fn_args.get("page") or 1
+        validate_page(page, config.search_max_pages)
+        k = config.search_k
+        start = (page - 1) * k
+        end = page * k
+        results = shapes.index.search(query, end)[start:end]
+        if not results:
+            return f"No shapes (page {page})"
+
+        parts = [f"Shapes (page {page}):\n"]
+        for i, sample in enumerate(results, start + 1):
+            parts.append(f"{i}. {sample.shex}")
+
+        parts.append(
+            "Note: Shapes are computed approximately via sampling "
+            "and may not be considered fully accurate."
+        )
+
+        return "\n\n".join(parts)
+
+    elif fn_name == "get_shape":
+        iri_arg = fn_args["iri"]
+        binding = parse_iri_or_literal(
+            iri_arg,
+            manager.iri_literal_parser,
+            manager.prefixes,
+        )
+        expanded_iri = (
+            binding.identifier()
+            if binding is not None and binding.typ == "uri"
+            else iri_arg
+        )
+        shape_note = (
+            "\n\nNote: Shapes are computed approximately via sampling "
+            "and may not be considered fully accurate."
+        )
+        sample = (
+            shapes.index.get_by_iri(expanded_iri) or shapes.index.get_by_iri(iri_arg)
+            if shapes.index is not None
+            else None
+        )
+        if sample is not None:
+            return sample.shex + shape_note
+
+        if shapes.pattern is not None:
+            result = compute_shape(expanded_iri, shapes.pattern, manager, manager.shape_config)
+            if result is not None:
+                return result + shape_note
+
+            return (
+                f"Shape for '{iri_arg}' is not in the index and could not be computed "
+                "on the fly (query failed or timed out). "
+                "Use SPARQL queries to explore this concept directly."
+            )
+
+        return (
+            f"No shape found for IRI '{iri_arg}'. "
+            "The IRI may not be a concept in the shape index."
+        )
+
+    raise FunctionCallException(f"Unknown shape function '{fn_name}'")
 
 
 def validate_page(page: int, max_pages: int | None = None) -> None:
