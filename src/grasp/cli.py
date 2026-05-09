@@ -24,6 +24,7 @@ from universal_ml_utils.ops import consume_generator, extract_field
 from grasp.build import get_data
 from grasp.build.data import merge_kgs
 from grasp.build.index import build_index
+from grasp.build.shapes import build_shapes
 from grasp.configs import (
     GraspConfig,
     JudgeConfig,
@@ -32,9 +33,11 @@ from grasp.configs import (
     NotesFromSamplesConfig,
     NotesGenerateQuestionsConfig,
     ServerConfig,
+    ShapeConfig,
 )
 from grasp.core import generate, load_notes, setup
 from grasp.evaluate import evaluate_f1, evaluate_with_expert, evaluate_with_judge
+from grasp.examples import load_example_indices, task_to_index
 from grasp.functions import find_manager
 from grasp.notes import (
     generate_questions,
@@ -43,8 +46,8 @@ from grasp.notes import (
     take_notes_from_samples,
 )
 from grasp.server import serve
+from grasp.shapes import ShapeIndex, ShapeSample
 from grasp.tasks import Task, get_task
-from grasp.examples import load_example_indices, task_to_index
 from grasp.utils import (
     format_trace,
     get_available_knowledge_graphs,
@@ -635,6 +638,69 @@ def parse_args() -> argparse.Namespace:
         help="Which phase(s) to run (default: all)",
     )
 
+    # shapes: setup, build, index
+    shapes_parser = subparsers.add_parser(
+        "shapes",
+        help="Shape index pipeline: setup, build, and index pseudo-ShEx patterns",
+    )
+    shapes_subparsers = shapes_parser.add_subparsers(
+        title="shapes commands",
+        description="Available shapes commands",
+        dest="shapes_command",
+        required=True,
+    )
+
+    shapes_setup_parser = shapes_subparsers.add_parser(
+        "setup",
+        help="Run the shape index setup agent to discover the KG's class grouping pattern",
+    )
+    add_config_arg(shapes_setup_parser)
+    shapes_setup_parser.add_argument(
+        "-kg",
+        "--knowledge-graph",
+        type=str,
+        default=None,
+        help="Knowledge graph to configure (required if config has multiple KGs)",
+    )
+    shapes_setup_parser.add_argument(
+        "--notes",
+        type=str,
+        default=None,
+        help="User notes passed to the setup agent",
+    )
+
+    shapes_build_parser = shapes_subparsers.add_parser(
+        "build",
+        help="Run SPARQL profiling and build embedding index, writing to {kg_dir}/shapes/",
+    )
+    add_config_arg(shapes_build_parser)
+    shapes_build_parser.add_argument(
+        "-kg",
+        "--knowledge-graph",
+        type=str,
+        default=None,
+        help="Knowledge graph to build shapes for (required if config has multiple KGs)",
+    )
+    shapes_build_parser.add_argument(
+        "--max-concepts",
+        type=int,
+        default=500,
+        help="Maximum number of concepts to profile",
+    )
+    shapes_build_parser.add_argument(
+        "--emb-model",
+        type=str,
+        default="Qwen/Qwen3-Embedding-0.6B",
+        help="Embedding model for building the index",
+    )
+    shapes_build_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=256,
+        help="Batch size for embedding",
+    )
+    add_overwrite_arg(shapes_build_parser)
+
     # visualize trace from GRASP output
     show_parser = subparsers.add_parser(
         "show",
@@ -1075,6 +1141,130 @@ def auto_setup_grasp(args: argparse.Namespace) -> None:
         logger.info(f"Saved {name} description to {stamped} (latest: {path})")
 
 
+def shapes_grasp(args: argparse.Namespace) -> None:
+    shapes_cmd = args.shapes_command
+
+    if shapes_cmd == "setup":
+        shapes_setup_grasp(args)
+    elif shapes_cmd == "build":
+        shapes_build_grasp(args)
+
+
+def shapes_setup_grasp(args: argparse.Namespace) -> None:
+    logger = get_logger("GRASP SHAPES SETUP", args.log_level)
+    config = GraspConfig(**load_config(args.config))
+
+    managers, _ = setup(config)
+    if not managers:
+        logger.error("No KG managers available")
+        return
+    elif len(managers) == 1:
+        manager = managers[0]
+    else:
+        assert args.knowledge_graph is not None, (
+            "Knowledge graph must be specified when config has more than one"
+        )
+        manager, _ = find_manager(managers, args.knowledge_graph)
+
+    notes, kg_notes = load_notes(config)
+    kg_dir = get_index_dir(manager.kg)
+
+    logger.info(f"Starting shape index setup for knowledge graph '{manager.kg}'")
+
+    result = consume_generator(
+        generate(
+            "shapes-setup",
+            {"kg": manager.kg, "notes": args.notes},
+            config,
+            [manager],
+            kg_notes,
+            notes,
+            logger=logger,
+        )
+    )
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    def dump_latest(path: str, payload, text: bool = False) -> str:
+        stem, ext = os.path.splitext(path)
+        stamped = f"{stem}.{timestamp}{ext}"
+        if text:
+            dump_text(payload, stamped)
+        else:
+            dump_json(payload, stamped, indent=2)
+        link(stamped, path)
+        return stamped
+
+    shapes_dir = os.path.join(kg_dir, "shapes")
+    os.makedirs(shapes_dir, exist_ok=True)
+
+    trace_path = os.path.join(shapes_dir, "setup.trace.json")
+    stamped = dump_latest(trace_path, result)
+    logger.info(f"Saved setup trace to {stamped} (latest: {trace_path})")
+
+    output = result.get("output")
+    if output is None or output.get("pattern") is None:
+        logger.error("Setup did not produce a pattern")
+        return
+
+    setup_path = os.path.join(shapes_dir, "setup.json")
+    stamped = dump_latest(
+        setup_path,
+        {"pattern": output["pattern"], "description": output.get("description")},
+    )
+    logger.info(f"Saved pattern to {stamped} (latest: {setup_path})")
+
+
+def shapes_build_grasp(args: argparse.Namespace) -> None:
+    logger = get_logger("GRASP SHAPES BUILD", args.log_level)
+    config = GraspConfig(**load_config(args.config))
+
+    managers, _ = setup(config)
+    if not managers:
+        logger.error("No KG managers available")
+        return
+    elif len(managers) == 1:
+        manager = managers[0]
+    else:
+        assert args.knowledge_graph is not None, (
+            "Knowledge graph must be specified when config has more than one"
+        )
+        manager, _ = find_manager(managers, args.knowledge_graph)
+
+    kg_dir = get_index_dir(manager.kg)
+    setup_path = os.path.join(kg_dir, "shapes", "setup.json")
+    if not os.path.exists(setup_path):
+        logger.error(f"No setup found at {setup_path}. Run 'grasp shapes setup' first.")
+        return
+
+    setup_data = load_json(setup_path)
+    pattern = setup_data.get("pattern")
+    if not pattern:
+        logger.error("setup.json does not contain a pattern")
+        return
+
+    shapes_dir = os.path.join(kg_dir, "shapes")
+    raw_samples = build_shapes(
+        pattern,
+        shapes_dir,
+        manager,
+        shape_config=manager.shape_config or ShapeConfig(),
+        max_concepts=args.max_concepts,
+        log_level=args.log_level,
+    )
+    samples = [ShapeSample(**s) for s in raw_samples]
+
+    model = SentenceTransformerModel(args.emb_model)
+    ShapeIndex.build(
+        samples,
+        os.path.join(shapes_dir, "index"),
+        model,
+        args.batch_size,
+        args.overwrite,
+        args.log_level,
+    )
+
+
 def main():
     args = parse_args()
     if args.all_loggers:
@@ -1119,6 +1309,9 @@ def main():
 
     elif args.command == "auto-setup":
         auto_setup_grasp(args)
+
+    elif args.command == "shapes":
+        shapes_grasp(args)
 
     elif args.command == "show":
         show_grasp(args)

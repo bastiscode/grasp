@@ -100,7 +100,7 @@ class QuestionGenerationTask(GraspTask):
         )
 
         if fn_name == "stop":
-            return "Stopping question generation."
+            return "Stopping"
 
         elif fn_name == "submit_question":
             return submit_question(

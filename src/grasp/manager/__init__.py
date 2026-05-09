@@ -13,7 +13,7 @@ from search_rdf.model import (
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.table import generate_table
 
-from grasp.configs import KgConfig
+from grasp.configs import KgConfig, ShapeConfig
 from grasp.manager.normalizer import Normalizer, WikidataPropertyNormalizer
 from grasp.manager.utils import (
     EmbeddingModel,
@@ -60,6 +60,7 @@ from grasp.sparql.utils import (
     prettify,
     query_type,
 )
+from grasp.shapes import ShapeIndex, Shapes, load_shapes
 from grasp.utils import (
     clip,
     format_list,
@@ -101,16 +102,26 @@ class KgManager:
         self.params = params or {}
 
         self.embedding_models: dict[str, EmbeddingModel] = {}
+        self.shapes: Shapes | None = None
+        self.shape_config: ShapeConfig | None = None
 
     def load_models(
         self,
         models: dict[str, EmbeddingModel] | None = None,
+        embedding_model: str | None = None,
     ) -> dict[str, EmbeddingModel]:
         if models is None:
             models = {}
 
         for idx in self.indices.values():
             models = load_embedding_model(idx.index, models)
+
+        shapes_dir = os.path.join(get_index_dir(self.kg), "shapes")
+        if os.path.exists(shapes_dir) and embedding_model is not None and self.shape_config is not None:
+            key = f"sentence-transformer/{embedding_model}"
+            if key not in models:
+                models[key] = SentenceTransformerModel(embedding_model)
+            self.shapes = load_shapes(shapes_dir, models[key])
 
         self.embedding_models = models
         return models
@@ -855,32 +866,20 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
         logger.info("Skipping loading of indices")
         return KgManager(cfg.kg, indices, **info.model_dump())
 
-    ent_index = try_load_index(
-        cfg.kg,
-        "entities",
-        cfg.entities_type,
-        logger,
-    )
-    if ent_index is not None:
-        indices["entities"] = ent_index
+    if cfg.entities is not None:
+        ent_index = try_load_index(cfg.kg, "entities", cfg.entities, logger)
+        if ent_index is not None:
+            indices["entities"] = ent_index
 
-    prop_index = try_load_index(
-        cfg.kg,
-        "properties",
-        cfg.properties_type,
-        logger,
-    )
-    if prop_index is not None:
-        indices["properties"] = prop_index
+    if cfg.properties is not None:
+        prop_index = try_load_index(cfg.kg, "properties", cfg.properties, logger)
+        if prop_index is not None:
+            indices["properties"] = prop_index
 
-    lit_index = try_load_index(
-        cfg.kg,
-        "literals",
-        cfg.literals_type,
-        logger,
-    )
-    if lit_index is not None:
-        indices["literals"] = lit_index
+    if cfg.literals is not None:
+        lit_index = try_load_index(cfg.kg, "literals", cfg.literals, logger)
+        if lit_index is not None:
+            indices["literals"] = lit_index
 
     others = load_other_indices(cfg.kg, cfg.indices)
     for name, index in others.items():
@@ -893,7 +892,16 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
 
         indices[name] = index
 
-    return KgManager(cfg.kg, indices, **info.model_dump())
+    manager = KgManager(cfg.kg, indices, **info.model_dump())
+    manager.shape_config = cfg.shapes
+    if cfg.shapes is not None:
+        pattern_file = os.path.join(get_index_dir(cfg.kg), "shapes", "pattern.sparql")
+        if os.path.exists(pattern_file):
+            with open(pattern_file) as f:
+                pattern = f.read().strip() or None
+            if pattern:
+                manager.shapes = Shapes(pattern=pattern)
+    return manager
 
 
 def format_kgs(
