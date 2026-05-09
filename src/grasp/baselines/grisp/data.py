@@ -730,11 +730,7 @@ def prepare_selection(
     }
 
     _, items = extract_sparql_items(sparql, manager)
-    items = [
-        item
-        for item in items
-        if item.is_entity_or_property or (item.is_unindexed and item.has_label)
-    ]
+    items = [item for item in items if item.is_entity_or_property]
     assert len(items) > 0, "No valid item to replace found in sample"
 
     parser = load_sparql_parser()
