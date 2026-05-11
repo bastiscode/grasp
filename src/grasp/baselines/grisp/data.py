@@ -78,9 +78,15 @@ class GRISPSample(BaseModel):
         return any(isinstance(part, IRI) for part in self.sparql)
 
 
+class SelectionSample(BaseModel):
+    messages: Messages
+    options: list[str]
+    target: str
+
+
 class GRISPMaterializedSample(BaseModel):
     skeletons: list[Messages]
-    selections: list[Messages]
+    selections: list[SelectionSample]
 
     @property
     def has_skeletons(self) -> bool:
@@ -598,6 +604,60 @@ def tokenize_and_log(
     return output
 
 
+def tokenize_selection(
+    sample: SelectionSample,
+    tokenizer: PreTrainedTokenizerBase,
+) -> dict:
+    enc: dict = tokenizer.apply_chat_template(
+        sample.messages,
+        return_dict=True,
+        enable_thinking=False,
+    )  # type: ignore
+    prompt_ids = tokenizer.apply_chat_template(
+        sample.messages[:-1],
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+    answer_pos = len(prompt_ids)
+
+    option_token_ids = [tokenizer.convert_tokens_to_ids(o) for o in sample.options]
+    assert all(
+        t is not None and t != tokenizer.unk_token_id for t in option_token_ids
+    ), f"Option letters not single tokens: {sample.options}"
+
+    target_idx = sample.options.index(sample.target)
+    assert enc["input_ids"][answer_pos] == option_token_ids[target_idx], (
+        f"Answer position mismatch: expected token id "
+        f"{option_token_ids[target_idx]} for target '{sample.target}', "
+        f"got {enc['input_ids'][answer_pos]}"
+    )
+
+    return {
+        "input_ids": enc["input_ids"],
+        "attention_mask": enc["attention_mask"],
+        # Restricted CE replaces NTP on the answer position; EOS loss dropped.
+        "labels": [IGNORE_INDEX] * len(enc["input_ids"]),
+        "answer_pos": answer_pos,
+        "option_token_ids": option_token_ids,
+        "target_idx": target_idx,
+    }
+
+
+def tokenize_selection_and_log(
+    sample: SelectionSample,
+    tokenizer: PreTrainedTokenizerBase,
+    logger: Logger,
+) -> dict:
+    output = tokenize_selection(sample, tokenizer)
+    logger.debug(f"Selection sample:\n{tokenizer.decode(output['input_ids'])}")
+    logger.debug(f"Length: {len(output['input_ids']):,}")
+    logger.debug(
+        f"Answer pos: {output['answer_pos']}, target idx: {output['target_idx']}, "
+        f"target: '{sample.target}'"
+    )
+    return output
+
+
 class GRISPMaterializedSkeletonDataset(Dataset):
     def __init__(
         self,
@@ -704,16 +764,15 @@ class GRISPMaterializedSelectionDataset(Dataset):
         sample = self.samples[idx]
 
         count = self.counter[idx]
-        messages = sample.selections[count % len(sample.selections)]
+        selection = sample.selections[count % len(sample.selections)]
         self.counter[idx] += 1
         self.logger.debug(
             f"({type(self).__name__}) Accessing sample {idx} count {count}"
         )
 
-        return tokenize_and_log(
-            messages,
+        return tokenize_selection_and_log(
+            selection,
             self.tokenizer,
-            self.mask_inputs,
             self.logger,
         )
 
@@ -726,7 +785,7 @@ def prepare_selection(
     drop_infos_p: float = 0.05,
     drop_target_p: float = 0.1,
     shuffle_alts_p: float = 0.1,
-) -> Messages:
+) -> tuple[Messages, list[str], str]:
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
 
@@ -809,7 +868,7 @@ def prepare_selection(
     # option, which is the "None of the above" option
     option = options[-1] if target_option is None else options[target_option]
     prompt.append({"role": "assistant", "content": option})
-    return prompt
+    return prompt, options, option
 
 
 class GRISPSelectionDataset(Dataset):
@@ -851,7 +910,7 @@ class GRISPSelectionDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         sample = self.samples[idx]
 
-        messages = prepare_selection(
+        messages, options, target = prepare_selection(
             sample,
             self.manager,
             self.is_val,
@@ -861,10 +920,9 @@ class GRISPSelectionDataset(Dataset):
             self.shuffle_alts_p,
         )
 
-        return tokenize_and_log(
-            messages,
+        return tokenize_selection_and_log(
+            SelectionSample(messages=messages, options=options, target=target),
             self.tokenizer,
-            self.mask_inputs,
             self.logger,
         )
 
@@ -909,18 +967,46 @@ class GRISPCollator:
 
     def __call__(self, batch: list[dict]) -> dict[str, torch.Tensor]:
         assert len(batch) > 0, "Batch must not be empty"
+        keys = ["input_ids", "attention_mask", "labels"]
         output = {
             key: pad(
                 [sample[key] for sample in batch],
                 pad_value=self.pad_values[key],
                 max_length=self.max_length,
             )
-            for key in batch[0]
+            for key in keys
         }
-        # ensure at least one label is not IGNORE_INDEX
-        # to avoid nan issues during training
+
+        # selection metadata; skeleton rows get sentinel values
+        B = len(batch)
+        max_opts = max((len(s.get("option_token_ids", [])) for s in batch), default=0)
+        max_opts = max(max_opts, 1)
+        opt_ids = torch.zeros((B, max_opts), dtype=torch.long)
+        opt_mask = torch.zeros((B, max_opts), dtype=torch.bool)
+        target_idx = torch.full((B,), -1, dtype=torch.long)
+        answer_pos = torch.full((B,), -1, dtype=torch.long)
+        is_select = torch.zeros(B, dtype=torch.bool)
+
+        for i, s in enumerate(batch):
+            if "option_token_ids" not in s:
+                continue
+            n = len(s["option_token_ids"])
+            opt_ids[i, :n] = torch.tensor(s["option_token_ids"], dtype=torch.long)
+            opt_mask[i, :n] = True
+            target_idx[i] = s["target_idx"]
+            answer_pos[i] = s["answer_pos"]
+            is_select[i] = True
+
+        output["option_token_ids"] = opt_ids
+        output["option_mask"] = opt_mask
+        output["target_idx"] = target_idx
+        output["answer_pos"] = answer_pos
+        output["is_selection"] = is_select
+
+        # ensure at least one label is not IGNORE_INDEX to avoid nan issues
+        # during training (only relevant if no selection rows provide grad)
         labels = output["labels"]
-        if torch.all(labels == IGNORE_INDEX):
+        if torch.all(labels == IGNORE_INDEX) and not is_select.any():
             self.logger.warning(
                 "No labels for this batch, setting one to "
                 "avoid nan issues during training"

@@ -3,7 +3,10 @@ import math
 import os
 import random
 from logging import Logger
+from typing import Any
 
+import torch
+import torch.nn.functional as F
 import yaml
 from peft import LoraConfig, PeftModel, get_peft_model
 from pydantic import BaseModel
@@ -22,6 +25,7 @@ from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
 from grasp.baselines.grisp.data import (
+    IGNORE_INDEX,
     GRISPCollator,
     GRISPMaterializedSelectionDataset,
     GRISPMaterializedSkeletonDataset,
@@ -258,6 +262,58 @@ class GRISPTrainer(Trainer):
             seed=self.args.seed,
             epoch=self.epochs_trained,
         )
+
+    def compute_loss(  # type: ignore
+        self,
+        model: PreTrainedModel,
+        inputs: dict[str, torch.Tensor],
+        return_outputs: bool = False,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor, Any] | torch.Tensor:
+        option_ids = inputs.pop("option_token_ids")
+        option_mask = inputs.pop("option_mask")
+        target_idx = inputs.pop("target_idx")
+        answer_pos = inputs.pop("answer_pos")
+        is_select = inputs.pop("is_selection")
+        labels = inputs.pop("labels")
+
+        outputs = model(**inputs)
+        logits = outputs.logits  # (B, T, V)
+
+        total_loss = torch.zeros((), device=logits.device, dtype=logits.dtype)
+        total_n = torch.zeros((), device=logits.device, dtype=logits.dtype)
+
+        if (~is_select).any():
+            skel_logits = logits[~is_select]
+            skel_labels = labels[~is_select]
+            shift_logits = skel_logits[:, :-1].contiguous()
+            shift_labels = skel_labels[:, 1:].contiguous()
+            ntp = F.cross_entropy(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
+                ignore_index=IGNORE_INDEX,
+                reduction="sum",
+            )
+            n_ntp = (shift_labels != IGNORE_INDEX).sum().to(logits.dtype)
+            total_loss = total_loss + ntp
+            total_n = total_n + n_ntp
+
+        if is_select.any():
+            sel_rows = is_select.nonzero(as_tuple=True)[0]
+            # logit at position t-1 predicts token at position t
+            pred_pos = (answer_pos[sel_rows] - 1).clamp(min=0)
+            ans_logits = logits[sel_rows, pred_pos]  # (M, V)
+            opt_logits = ans_logits.gather(1, option_ids[sel_rows])  # (M, K)
+            opt_logits = opt_logits.masked_fill(~option_mask[sel_rows], float("-inf"))
+            sel = F.cross_entropy(opt_logits, target_idx[sel_rows], reduction="sum")
+            n_sel = torch.tensor(
+                len(sel_rows), device=logits.device, dtype=logits.dtype
+            )
+            total_loss = total_loss + sel
+            total_n = total_n + n_sel
+
+        loss = total_loss / total_n.clamp(min=1)
+        return (loss, outputs) if return_outputs else loss
 
 
 def main(args: argparse.Namespace) -> None:

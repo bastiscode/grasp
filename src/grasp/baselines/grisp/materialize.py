@@ -10,6 +10,7 @@ from universal_ml_utils.logging import get_logger, setup_logging
 from grasp.baselines.grisp.data import (
     GRISPMaterializedSample,
     GRISPSample,
+    SelectionSample,
     load_samples,
     prepare_selection,
     prepare_skeleton,
@@ -133,8 +134,9 @@ def materialize_sample(
     skeletons = [prepare_skeleton(sample, is_val, skeleton_p) for _ in range(n)]
 
     if sample.has_placeholders:
-        selections = [
-            prepare_selection(
+        selections = []
+        for _ in range(n):
+            messages, options, target = prepare_selection(
                 sample,
                 manager,
                 is_val,
@@ -143,8 +145,11 @@ def materialize_sample(
                 drop_target_p,
                 shuffle_alts_p,
             )
-            for _ in range(n)
-        ]
+            selections.append(
+                SelectionSample(
+                    messages=messages, options=options, target=target
+                )
+            )
     else:
         selections = []
 
