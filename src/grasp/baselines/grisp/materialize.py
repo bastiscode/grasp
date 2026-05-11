@@ -57,10 +57,22 @@ def parse_args() -> argparse.Namespace:
         help="Augmentation probability for skeletons",
     )
     parser.add_argument(
-        "--selection-p",
+        "--drop-infos-p",
         type=float,
-        default=0.2,
-        help="Augmentation probability for selections",
+        default=0.05,
+        help="Probability of dropping all alternative infos (emulates endpoint failure)",
+    )
+    parser.add_argument(
+        "--drop-target-p",
+        type=float,
+        default=0.1,
+        help="Probability of removing the correct alternative (trains None-of-above selection)",
+    )
+    parser.add_argument(
+        "--shuffle-alts-p",
+        type=float,
+        default=0.1,
+        help="Probability of shuffling alternatives within each type bucket",
     )
     parser.add_argument(
         "--val-output-file",
@@ -111,7 +123,9 @@ def materialize_sample(
     n: int,
     is_val: bool = False,
     skeleton_p: float = 0.2,
-    selection_p: float = 0.2,
+    drop_infos_p: float = 0.05,
+    drop_target_p: float = 0.1,
+    shuffle_alts_p: float = 0.1,
 ) -> GRISPMaterializedSample:
     if is_val:
         n = 1
@@ -120,7 +134,15 @@ def materialize_sample(
 
     if sample.has_placeholders:
         selections = [
-            prepare_selection(sample, manager, is_val, skeleton_p, selection_p)
+            prepare_selection(
+                sample,
+                manager,
+                is_val,
+                skeleton_p,
+                drop_infos_p,
+                drop_target_p,
+                shuffle_alts_p,
+            )
             for _ in range(n)
         ]
     else:
@@ -188,7 +210,9 @@ def main(args: argparse.Namespace) -> None:
                 args.num_materializations,
                 args.is_val,
                 args.skeleton_p,
-                args.selection_p,
+                args.drop_infos_p,
+                args.drop_target_p,
+                args.shuffle_alts_p,
             )
 
             yield materialized_sample.model_dump()

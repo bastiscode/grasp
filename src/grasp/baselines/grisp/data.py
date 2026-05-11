@@ -314,15 +314,19 @@ def format_alternatives(alternatives: OrderedAlternatives) -> str:
     for label, (alternative, obj_type, variant) in zip(ALT_LABELS, alternatives):
         alt = alternative.get_selection_string(
             show_matched_label=False,
-            include_variants=[variant] if variant else None,
+            include_variants=[],
         )
         if obj_type not in grouped:
             grouped[obj_type] = []
         grouped[obj_type].append(f"{label}. {alt}")
 
+    multiple_types = len(grouped) > 1
     alt_groups = []
     for obj_type, alts in grouped.items():
-        alt_group = f"{obj_type.value.capitalize()} alternatives:\n"
+        if multiple_types:
+            alt_group = f"{obj_type.value.capitalize()} alternatives:\n"
+        else:
+            alt_group = "Alternatives:\n"
         alt_group += "\n".join(alts)
         alt_groups.append(alt_group)
 
@@ -719,7 +723,9 @@ def prepare_selection(
     manager: KgManager,
     is_val: bool = False,
     skeleton_p: float = 0.2,
-    selection_p: float = 0.2,
+    drop_infos_p: float = 0.05,
+    drop_target_p: float = 0.1,
+    shuffle_alts_p: float = 0.1,
 ) -> Messages:
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
@@ -762,9 +768,9 @@ def prepare_selection(
     else:
         alternative_groups = {}
 
-    drop_infos = not is_val and random.random() < selection_p
-    drop_target = not is_val and random.random() < selection_p
-    shuffle_alts = not is_val and random.random() < selection_p
+    drop_infos = not is_val and random.random() < drop_infos_p
+    drop_target = not is_val and random.random() < drop_target_p
+    shuffle_alts = not is_val and random.random() < shuffle_alts_p
 
     if shuffle_alts:
         # shuffle within each obj-type bucket while preserving grouped layout
@@ -815,7 +821,9 @@ class GRISPSelectionDataset(Dataset):
         mask_inputs: bool = True,
         is_val: bool = False,
         skeleton_p: float = 0.2,
-        selection_p: float = 0.2,
+        drop_infos_p: float = 0.05,
+        drop_target_p: float = 0.1,
+        shuffle_alts_p: float = 0.1,
         log_level: str | None = None,
     ) -> None:
         self.parser = load_sparql_parser()
@@ -825,7 +833,9 @@ class GRISPSelectionDataset(Dataset):
         self.is_val = is_val
 
         self.skeleton_p = skeleton_p
-        self.selection_p = selection_p
+        self.drop_infos_p = drop_infos_p
+        self.drop_target_p = drop_target_p
+        self.shuffle_alts_p = shuffle_alts_p
 
         self.logger = get_logger(f"GRISP SELECTION DATASET ({is_val=})", log_level)
 
@@ -846,7 +856,9 @@ class GRISPSelectionDataset(Dataset):
             self.manager,
             self.is_val,
             self.skeleton_p,
-            self.selection_p,
+            self.drop_infos_p,
+            self.drop_target_p,
+            self.shuffle_alts_p,
         )
 
         return tokenize_and_log(

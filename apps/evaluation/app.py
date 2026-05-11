@@ -922,20 +922,22 @@ def show_ranking_view(ranking_data: dict) -> None:
 
     selected_entry = selected_entries[0] if selected_entries else None
 
+    selected_kg_entries = entries_by_kg[selected_kg]
+
     judge_labels = sorted(
         {
             judge_label_from_rank(
                 entry["ranking"], rank_data_by_path.get(entry["filepath"], {})
             )
-            for entry in benchmark_entries
+            for entry in selected_kg_entries
         }
     )
     if judge_labels:
         st.caption(f"**Judge Models:** {', '.join(judge_labels)}")
 
-    # First pass: collect all unique models across all benchmarks to establish global ordering
+    # First pass: collect all unique models for the selected group to establish ordering
     sorted_models = None
-    for entry in benchmark_entries:
+    for entry in selected_kg_entries:
         rank_data = rank_data_by_path.get(entry["filepath"])
         if not rank_data or "prediction_files" not in rank_data:
             continue
@@ -952,7 +954,7 @@ def show_ranking_view(ranking_data: dict) -> None:
 
     if sorted_models is None:
         st.warning(
-            "Could not establish a consistent set of models across all benchmarks for this judge comparison."
+            "Could not establish a consistent set of models across benchmarks for this group and judge comparison."
         )
         return
 
@@ -984,7 +986,7 @@ def show_ranking_view(ranking_data: dict) -> None:
             )
         )
 
-    for entry in benchmark_entries:
+    for entry in selected_kg_entries:
         kg = entry["kg"]
         benchmark = entry["benchmark"]
         rank_file = entry["filepath"]
@@ -1019,7 +1021,6 @@ def show_ranking_view(ranking_data: dict) -> None:
             )
 
             row_data = {
-                "Group": kg,
                 "Benchmark": benchmark,
                 "Judge": judge_label_from_rank(
                     entry["ranking"], rank_data_by_path.get(rank_file, {})
@@ -1132,11 +1133,11 @@ def show_ranking_view(ranking_data: dict) -> None:
 
     # Create DataFrame
     df = pd.DataFrame(table_rows).sort_values(
-        ["Group", "Benchmark", "Judge", "Variant"]
+        ["Benchmark", "Judge", "Variant"]
     )
 
     # Define column order
-    display_columns = ["Group", "Benchmark", "Judge", "Variant"]
+    display_columns = ["Benchmark", "Judge", "Variant"]
     for model in sorted_models:
         letter = model_to_letter[model]
         display_columns.append(f"{letter} Wins")
@@ -1168,7 +1169,7 @@ def show_ranking_view(ranking_data: dict) -> None:
 
     # Show summary statistics
     st.caption(
-        f"Showing {len(benchmark_entries)} judge file(s) for {len(entries_by_benchmark)} benchmark(s)"
+        f"Showing {len(selected_kg_entries)} judge file(s) for {len(table_rows)} benchmark(s) in group '{selected_kg}'"
     )
 
     # Detailed sample view for the selected group and benchmark

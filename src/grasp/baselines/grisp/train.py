@@ -65,7 +65,9 @@ class GRISPTrainConfig(BaseModel):
 
     # data augmentation
     skeleton_p: float = 0.2
-    selection_p: float = 0.2
+    drop_infos_p: float = 0.05
+    drop_target_p: float = 0.1
+    shuffle_alts_p: float = 0.1
 
     # training hyperparameters
     lr: float = 1e-4
@@ -170,7 +172,9 @@ def load_datasets(
             manager = load_kg_manager(cfg.knowledge_graph)
             dataset_kwargs["manager"] = manager
             dataset_kwargs["skeleton_p"] = cfg.skeleton_p
-            dataset_kwargs["selection_p"] = cfg.selection_p
+            dataset_kwargs["drop_infos_p"] = cfg.drop_infos_p
+            dataset_kwargs["drop_target_p"] = cfg.drop_target_p
+            dataset_kwargs["shuffle_alts_p"] = cfg.shuffle_alts_p
             logger.warning("Setting num workers to 0 for online selection training")
             cfg.num_workers = 0
     else:
