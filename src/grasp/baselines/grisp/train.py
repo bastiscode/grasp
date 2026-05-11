@@ -413,7 +413,7 @@ def main(args: argparse.Namespace) -> None:
         gradient_accumulation_steps=config.gradient_accumulation_steps,
         learning_rate=config.lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=config.warmup_ratio,
+        warmup_steps=int(total_steps * config.warmup_ratio),
         weight_decay=config.weight_decay,
         num_train_epochs=config.num_epochs,
         seed=config.seed,
@@ -426,6 +426,9 @@ def main(args: argparse.Namespace) -> None:
         torch_compile=config.do_compile,
         dataloader_num_workers=config.num_workers,
         dataloader_prefetch_factor=4 if config.num_workers > 0 else None,
+        # keep selection-specific keys (option_token_ids, answer_pos, etc.)
+        # that compute_loss uses for restricted CE
+        remove_unused_columns=False,
     )
 
     trainer = GRISPTrainer(

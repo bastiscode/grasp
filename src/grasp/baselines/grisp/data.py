@@ -613,23 +613,33 @@ def tokenize_selection(
         return_dict=True,
         enable_thinking=False,
     )  # type: ignore
-    prompt_ids = tokenizer.apply_chat_template(
+    prompt_enc: dict = tokenizer.apply_chat_template(
         sample.messages[:-1],
         add_generation_prompt=True,
+        return_dict=True,
         enable_thinking=False,
-    )
-    answer_pos = len(prompt_ids)
-
+    )  # type: ignore
     option_token_ids = [tokenizer.convert_tokens_to_ids(o) for o in sample.options]
     assert all(
         t is not None and t != tokenizer.unk_token_id for t in option_token_ids
     ), f"Option letters not single tokens: {sample.options}"
 
     target_idx = sample.options.index(sample.target)
-    assert enc["input_ids"][answer_pos] == option_token_ids[target_idx], (
-        f"Answer position mismatch: expected token id "
-        f"{option_token_ids[target_idx]} for target '{sample.target}', "
-        f"got {enc['input_ids'][answer_pos]}"
+    target_id = option_token_ids[target_idx]
+
+    # Some chat templates emit extra tokens between the generation prompt and
+    # the assistant content (e.g. Qwen3 inserts <think>\n\n</think>\n\n when
+    # enable_thinking=False). Locate the answer letter by searching forward
+    # from the prompt boundary for the first occurrence of the target token id.
+    input_ids = enc["input_ids"]
+    search_start = len(prompt_enc["input_ids"])
+    answer_pos = next(
+        (i for i in range(search_start, len(input_ids)) if input_ids[i] == target_id),
+        None,
+    )
+    assert answer_pos is not None, (
+        f"Could not locate target token id {target_id} for target "
+        f"'{sample.target}' in assistant turn (search from index {search_start})"
     )
 
     return {
@@ -1003,16 +1013,25 @@ class GRISPCollator:
         output["answer_pos"] = answer_pos
         output["is_selection"] = is_select
 
-        # ensure at least one label is not IGNORE_INDEX to avoid nan issues
-        # during training (only relevant if no selection rows provide grad)
-        labels = output["labels"]
-        if torch.all(labels == IGNORE_INDEX) and not is_select.any():
+        if (
+            torch.all(output["labels"] == IGNORE_INDEX).item()
+            and not is_select.any().item()
+        ):
+            seq_lens = output["attention_mask"].sum(dim=1).tolist()
+            input_lens = [len(s["input_ids"]) for s in batch]
+            label_lens = [len(s["labels"]) for s in batch]
+            n_nonign_per_row = [
+                sum(1 for x in s["labels"] if x != IGNORE_INDEX) for s in batch
+            ]
             self.logger.warning(
-                "No labels for this batch, setting one to "
-                "avoid nan issues during training"
+                f"Batch has no skeleton labels and no selection rows; "
+                f"loss will be zero (no gradient signal).\n"
+                f"  max_length={self.max_length}, padded_shape={tuple(output['input_ids'].shape)}\n"
+                f"  per-row attention sums: {seq_lens}\n"
+                f"  per-row pre-pad input_ids lens: {input_lens}\n"
+                f"  per-row pre-pad labels lens:    {label_lens}\n"
+                f"  per-row non-IGNORE label counts (pre-pad): {n_nonign_per_row}"
             )
-            last_dim = labels.shape[1] - 1
-            labels[0, last_dim] = output["input_ids"][0, last_dim]
 
         return output
 
