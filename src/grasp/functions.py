@@ -814,6 +814,8 @@ def call_shape_function(
     config: GraspConfig,
 ) -> str:
     if fn_name == "search_shape":
+        if shapes.index is None:
+            return "Shape search is unavailable: the existing index was cleared after the pattern was changed. Rebuild the index to re-enable shape search."
         query = fn_args["query"]
         page = fn_args.get("page") or 1
         validate_page(page, config.search_max_pages)
@@ -871,8 +873,8 @@ def call_shape_function(
             )
 
         return (
-            f"No shape found for IRI '{iri_arg}'. "
-            "The IRI may not be a concept in the shape index."
+            f"No shape found for IRI '{iri_arg}': "
+            "the IRI is not in the index and no pattern is available for on-the-fly computation."
         )
 
     raise FunctionCallException(f"Unknown shape function '{fn_name}'")

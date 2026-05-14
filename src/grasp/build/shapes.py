@@ -20,6 +20,7 @@ class PropertyProfile:
     entity_count: int = 0
     cardinality_tag: str = ""
     literal_datatypes: list[str] = field(default_factory=list)
+    target_class_iris: list[str] = field(default_factory=list)
     target_class_short_iris: list[str] = field(default_factory=list)
 
 
@@ -174,6 +175,17 @@ def build_per_class_total_query(pattern: str, class_iri: str) -> str:
     )
 
 
+def _property_rank(iri: str, manager: KgManager) -> int:
+    data = manager.try_get_data("properties")
+    if data is None:
+        return 0  # no index: all equal, triple_count tiebreaker takes over
+    norm = manager.normalize(iri, "properties")
+    if norm is not None:
+        iri = norm[0]
+    id = data.id_from_identifier(iri)
+    return id if id is not None else len(data)  # unknown props sort last
+
+
 def cardinality_tag(coverage: float, avg_values: float) -> str:
     if coverage >= 0.90 and avg_values <= 1.10:
         return ""
@@ -185,22 +197,71 @@ def cardinality_tag(coverage: float, avg_values: float) -> str:
         return "*"
 
 
+def _label_iri(label: str | None, short_iri: str) -> str:
+    return f"{label} ({short_iri})" if label else short_iri
+
+
+def _target_class_parts(prop: "PropertyProfile", manager: KgManager) -> list[str]:
+    if prop.target_class_iris:
+        return [
+            _label_iri(manager.get_label(t_iri, "entities"), t_short)
+            for t_iri, t_short in zip(prop.target_class_iris, prop.target_class_short_iris)
+        ]
+    return prop.target_class_short_iris[:3]
+
+
 def emit_pseudo_shex(profile: ConceptProfile, manager: KgManager) -> str:
-    lines = [f"{profile.short_iri} {{"]
+    class_label = manager.get_label(profile.iri, "entities")
+    header = _label_iri(class_label, profile.short_iri)
+    lines = [f"{header} {{"]
 
     for prop in profile.properties:
-        prop_iri = prop.short_iri
+        prop_label = manager.get_label(prop.iri, "properties")
+        prop_str = _label_iri(prop_label, prop.short_iri)
         tag = prop.cardinality_tag
         tag_suffix = f" {tag}" if tag else ""
 
         if prop.literal_datatypes:
             dtype = prop.literal_datatypes[0]
-            lines.append(f"  {prop_iri} {dtype}{tag_suffix} ;")
+            lines.append(f"  {prop_str} {dtype}{tag_suffix} ;")
         elif prop.target_class_short_iris:
-            target_str = " ".join(prop.target_class_short_iris[:3])
-            lines.append(f"  {prop_iri} [ {target_str} ]{tag_suffix} ;")
+            target_str = " ".join(_target_class_parts(prop, manager))
+            lines.append(f"  {prop_str} [ {target_str} ]{tag_suffix} ;")
         else:
-            lines.append(f"  {prop_iri} IRI{tag_suffix} ;")
+            lines.append(f"  {prop_str} IRI{tag_suffix} ;")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def emit_pseudo_shex_natural(profile: ConceptProfile, manager: KgManager) -> str | None:
+    if manager.try_get_data("entities") is None and manager.try_get_data("properties") is None:
+        return None
+
+    class_label = manager.get_label(profile.iri, "entities") or profile.short_iri
+    lines = [f"{class_label} {{"]
+
+    for prop in profile.properties:
+        prop_label = manager.get_label(prop.iri, "properties") or prop.short_iri
+        tag = prop.cardinality_tag
+        tag_suffix = f" {tag}" if tag else ""
+
+        if prop.literal_datatypes:
+            dtype = prop.literal_datatypes[0]
+            lines.append(f"  {prop_label} {dtype}{tag_suffix} ;")
+        elif prop.target_class_short_iris:
+            if prop.target_class_iris:
+                parts = [
+                    manager.get_label(t_iri, "entities") or t_short
+                    for t_iri, t_short in zip(
+                        prop.target_class_iris, prop.target_class_short_iris
+                    )
+                ]
+            else:
+                parts = prop.target_class_short_iris[:3]
+            lines.append(f"  {prop_label} [ {' '.join(parts)} ]{tag_suffix} ;")
+        else:
+            lines.append(f"  {prop_label} IRI{tag_suffix} ;")
 
     lines.append("}")
     return "\n".join(lines)
@@ -229,8 +290,10 @@ def assemble_profile(
 
     common_props = sorted(
         freq_map.items(),
-        key=lambda item: item[1].get("triple_count", 0),
-        reverse=True,
+        key=lambda item: (
+            _property_rank(item[0], manager),
+            -item[1].get("triple_count", 0),
+        ),
     )
 
     for p_iri, freq in common_props[: shape_config.max_properties_per_concept]:
@@ -247,6 +310,7 @@ def assemble_profile(
             tag = ""
 
         p_short = manager.format_iri(p_iri, wrap=True)
+        target_iris = range_map.get(p_iri, [])[:5]
         prop = PropertyProfile(
             iri=p_iri,
             short_iri=p_short,
@@ -254,9 +318,8 @@ def assemble_profile(
             entity_count=entity_count,
             cardinality_tag=tag,
             literal_datatypes=lit_dtypes.get(p_iri, []),
-            target_class_short_iris=[
-                manager.format_iri(t, wrap=True) for t in range_map.get(p_iri, [])[:5]
-            ],
+            target_class_iris=target_iris,
+            target_class_short_iris=[manager.format_iri(t, wrap=True) for t in target_iris],
         )
         properties.append(prop)
 
@@ -405,12 +468,16 @@ def build_shapes(
             manager,
         )
         shex = emit_pseudo_shex(profile, manager)
+        shex_natural = emit_pseudo_shex_natural(profile, manager)
+        class_label = manager.get_label(c_iri, "entities")
 
         samples.append(
             ShapeSample(
                 iri=c_iri,
                 short_iri=profile.short_iri,
                 shex=shex,
+                shex_natural=shex_natural,
+                label=class_label,
             )
         )
 

@@ -4,6 +4,7 @@ from grammar_utils.parse import LR1Parser  # type: ignore
 from pydantic import BaseModel
 
 from grasp.model import Message
+from grasp.shapes import Shapes
 from grasp.sparql.utils import find_all, parse_string
 from grasp.tasks.base import GraspTask
 from grasp.utils import FunctionCallException
@@ -61,7 +62,7 @@ Your goal:
 3. Validate the candidate pattern by running:
    SELECT DISTINCT ?class WHERE {{ PATTERN[{{CLASS}}→?class] }} LIMIT 1
    Confirm at least one result is returned.
-4. Call set_query with the validated pattern.
+4. Call set_pattern with the validated pattern.
 5. Optionally call set_description with a summary of what classes are covered.
 6. Call stop when done."""
 
@@ -69,7 +70,8 @@ Your goal:
         return []
 
     def function_definitions(self) -> list[dict]:
-        return [
+        manager = self.managers[0]
+        fns: list[dict] = [
             {
                 "name": "show_setup",
                 "description": "Show the current pattern and description for the shape index.",
@@ -120,6 +122,40 @@ Your goal:
             },
         ]
 
+        # Add get_shape only when kg_functions won't already include it.
+        # kg_functions includes get_shape when manager.shapes is not None.
+        if manager.shapes is None:
+            fns.insert(
+                0,
+                {
+                    "name": "get_shape",
+                    "description": (
+                        "Retrieve the pseudo-ShEx shape for a specific concept IRI by "
+                        "running profiling queries using the current pattern. "
+                        "Use this to test the pattern after calling set_pattern."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "kg": {
+                                "type": "string",
+                                "enum": [manager.kg],
+                                "description": "The knowledge graph",
+                            },
+                            "iri": {
+                                "type": "string",
+                                "description": "The full or prefixed IRI of the concept",
+                            },
+                        },
+                        "required": ["kg", "iri"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                },
+            )
+
+        return fns
+
     def call_function(
         self,
         fn_name: str,
@@ -133,11 +169,18 @@ Your goal:
         if fn_name == "show_setup":
             return format_setup(self.state)
 
-        elif fn_name == "set_query":
+        elif fn_name == "set_pattern":
             pattern = fn_args["pattern"]
-            validate_pattern_format(pattern, manager.sparql_parser)
+            if pattern is not None:
+                validate_pattern_format(pattern, manager.sparql_parser)
             self.state.pattern = pattern
-            return "Pattern updated. Use get_shape to test it live."
+            if pattern is None:
+                manager.shapes = None
+            elif manager.shapes is None or manager.shapes.pattern != pattern:
+                # Pattern changed or newly set — existing index is no longer valid.
+                manager.shapes = Shapes(pattern=pattern)
+            # else: same pattern, keep existing shapes (index intact).
+            return "Pattern updated. Use get_shape to test it live." if pattern else "Pattern cleared."
 
         elif fn_name == "set_description":
             self.state.description = fn_args["description"]
