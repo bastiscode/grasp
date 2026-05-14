@@ -279,40 +279,43 @@ class GRISPTrainer(Trainer):
 
         outputs = model(**inputs)
         logits = outputs.logits  # (B, T, V)
+        T = logits.size(1)
 
-        total_loss = torch.zeros((), device=logits.device, dtype=logits.dtype)
-        total_n = torch.zeros((), device=logits.device, dtype=logits.dtype)
+        # Selection rows have all-IGNORE labels, so they contribute nothing.
+        shift_logits = logits[:, :-1, :]
+        shift_labels = labels[:, 1:]
+        ntp_loss = F.cross_entropy(
+            shift_logits.reshape(-1, shift_logits.size(-1)),
+            shift_labels.reshape(-1),
+            ignore_index=IGNORE_INDEX,
+            reduction="sum",
+        )
+        ntp_n = (shift_labels != IGNORE_INDEX).sum().to(logits.dtype)
 
-        if (~is_select).any():
-            skel_logits = logits[~is_select]
-            skel_labels = labels[~is_select]
-            shift_logits = skel_logits[:, :-1].contiguous()
-            shift_labels = skel_labels[:, 1:].contiguous()
-            ntp = F.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1),
-                ignore_index=IGNORE_INDEX,
+        # Drop rows whose answer position fell beyond the (possibly truncated)
+        # sequence; indexing them would go out of bounds.
+        sel_valid = is_select & (answer_pos >= 1) & (answer_pos < T)
+        sel_rows = sel_valid.nonzero(as_tuple=True)[0]
+
+        sel_loss = torch.zeros((), device=logits.device, dtype=logits.dtype)
+        sel_n = sel_rows.numel()
+
+        if sel_n > 0:
+            pred_pos = answer_pos[sel_rows] - 1
+            answer_logits = logits[sel_rows, pred_pos]
+
+            option_logits = answer_logits.gather(1, option_ids[sel_rows])
+            option_logits = option_logits.masked_fill(
+                ~option_mask[sel_rows], float("-inf")
+            )
+
+            sel_loss = F.cross_entropy(
+                option_logits,
+                target_idx[sel_rows],
                 reduction="sum",
             )
-            n_ntp = (shift_labels != IGNORE_INDEX).sum().to(logits.dtype)
-            total_loss = total_loss + ntp
-            total_n = total_n + n_ntp
 
-        if is_select.any():
-            sel_rows = is_select.nonzero(as_tuple=True)[0]
-            # logit at position t-1 predicts token at position t
-            pred_pos = (answer_pos[sel_rows] - 1).clamp(min=0)
-            ans_logits = logits[sel_rows, pred_pos]  # (M, V)
-            opt_logits = ans_logits.gather(1, option_ids[sel_rows])  # (M, K)
-            opt_logits = opt_logits.masked_fill(~option_mask[sel_rows], float("-inf"))
-            sel = F.cross_entropy(opt_logits, target_idx[sel_rows], reduction="sum")
-            n_sel = torch.tensor(
-                len(sel_rows), device=logits.device, dtype=logits.dtype
-            )
-            total_loss = total_loss + sel
-            total_n = total_n + n_sel
-
-        loss = total_loss / total_n.clamp(min=1)
+        loss = (ntp_loss + sel_loss) / (ntp_n + sel_n).clamp(min=1)
         return (loss, outputs) if return_outputs else loss
 
 
