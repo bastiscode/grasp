@@ -12,19 +12,37 @@ from universal_ml_utils.ops import flatten
 
 
 class ShapeSample:
-    def __init__(self, iri: str, short_iri: str, shex: str, **_: object) -> None:
+    def __init__(
+        self,
+        iri: str,
+        short_iri: str,
+        shex: str,
+        shex_natural: str | None = None,
+        label: str | None = None,
+        **_: object,
+    ) -> None:
         self.iri = iri
         self.short_iri = short_iri
         self.shex = shex
+        self.shex_natural = shex_natural
+        self.label = label
 
     def queries(self) -> list[str]:
-        return [self.shex, self.short_iri]
+        result = [self.shex]
+        if self.shex_natural:
+            result.append(self.shex_natural)
+        if self.label:
+            result.append(self.label)
+        result.append(self.short_iri)
+        return result
 
     def model_dump(self) -> dict:
         return {
             "iri": self.iri,
             "short_iri": self.short_iri,
             "shex": self.shex,
+            "shex_natural": self.shex_natural,
+            "label": self.label,
         }
 
 

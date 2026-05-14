@@ -8,15 +8,41 @@ from grasp.build.shapes import (
     cardinality_tag,
     compute_shape,
     emit_pseudo_shex,
+    emit_pseudo_shex_natural,
     get_rows,
 )
 from grasp.manager import KgManager
+from grasp.shapes import ShapeSample
 from grasp.sparql.types import AskResult, SelectResult
 
 
 def make_manager() -> Mock:
     m = Mock(spec=KgManager)
     m.format_iri.side_effect = lambda iri, **_: iri
+    m.get_label.return_value = None
+    m.try_get_data.return_value = None
+    return m
+
+
+def make_labelled_manager(
+    entity_labels: dict[str, str] | None = None,
+    property_labels: dict[str, str] | None = None,
+) -> Mock:
+    m = Mock(spec=KgManager)
+    m.format_iri.side_effect = lambda iri, **_: iri
+
+    _entity_labels = entity_labels or {}
+    _property_labels = property_labels or {}
+
+    def get_label(iri: str, index: str) -> str | None:
+        if index == "entities":
+            return _entity_labels.get(iri)
+        if index == "properties":
+            return _property_labels.get(iri)
+        return None
+
+    m.get_label.side_effect = get_label
+    m.try_get_data.return_value = object()  # non-None signals index exists
     return m
 
 
@@ -206,3 +232,140 @@ class TestComputeShape:
         assert (
             compute_shape("http://ex.org/X", "?instance a {CLASS} .", manager) is None
         )
+
+
+def _make_profile(with_target_iris: bool = True) -> ConceptProfile:
+    target_iris = ["http://ex.org/Class"] if with_target_iris else []
+    return ConceptProfile(
+        iri="http://ex.org/Human",
+        short_iri="ex:Human",
+        total_entities=500,
+        properties=[
+            PropertyProfile(
+                iri="http://ex.org/type",
+                short_iri="ex:type",
+                triple_count=500,
+                entity_count=500,
+                target_class_iris=target_iris,
+                target_class_short_iris=["ex:Class"] if target_iris else [],
+            ),
+            PropertyProfile(
+                iri="http://ex.org/name",
+                short_iri="ex:name",
+                triple_count=400,
+                entity_count=400,
+                literal_datatypes=["xsd:string"],
+            ),
+        ],
+    )
+
+
+class TestEmitPseudoShexLabelled:
+    def test_no_index_falls_back_to_short_iris(self):
+        manager = make_manager()
+        profile = _make_profile()
+        shex = emit_pseudo_shex(profile, manager)
+        assert shex == (
+            "ex:Human {\n"
+            "  ex:type [ ex:Class ] ;\n"
+            "  ex:name xsd:string ;\n"
+            "}"
+        )
+
+    def test_labels_resolved_when_index_available(self):
+        manager = make_labelled_manager(
+            entity_labels={
+                "http://ex.org/Human": "Human",
+                "http://ex.org/Class": "MyClass",
+            },
+            property_labels={
+                "http://ex.org/type": "type of",
+                "http://ex.org/name": "name",
+            },
+        )
+        profile = _make_profile()
+        shex = emit_pseudo_shex(profile, manager)
+        assert shex == (
+            "Human (ex:Human) {\n"
+            "  type of (ex:type) [ MyClass (ex:Class) ] ;\n"
+            "  name (ex:name) xsd:string ;\n"
+            "}"
+        )
+
+    def test_partial_labels_fall_back_per_iri(self):
+        manager = make_labelled_manager(
+            entity_labels={"http://ex.org/Human": "Human"},
+        )
+        profile = _make_profile()
+        shex = emit_pseudo_shex(profile, manager)
+        assert shex == (
+            "Human (ex:Human) {\n"
+            "  ex:type [ ex:Class ] ;\n"
+            "  ex:name xsd:string ;\n"
+            "}"
+        )
+
+
+class TestEmitPseudoShexNatural:
+    def test_returns_none_when_no_index(self):
+        manager = make_manager()
+        assert emit_pseudo_shex_natural(_make_profile(), manager) is None
+
+    def test_natural_output_with_labels(self):
+        manager = make_labelled_manager(
+            entity_labels={
+                "http://ex.org/Human": "Human",
+                "http://ex.org/Class": "MyClass",
+            },
+            property_labels={
+                "http://ex.org/type": "type of",
+                "http://ex.org/name": "name",
+            },
+        )
+        result = emit_pseudo_shex_natural(_make_profile(), manager)
+        assert result == (
+            "Human {\n"
+            "  type of [ MyClass ] ;\n"
+            "  name xsd:string ;\n"
+            "}"
+        )
+
+    def test_natural_falls_back_to_short_iri_when_no_label(self):
+        manager = make_labelled_manager()  # indices exist but no labels
+        result = emit_pseudo_shex_natural(_make_profile(), manager)
+        assert result == (
+            "ex:Human {\n"
+            "  ex:type [ ex:Class ] ;\n"
+            "  ex:name xsd:string ;\n"
+            "}"
+        )
+
+
+class TestShapeSampleQueries:
+    def test_all_fields_present(self):
+        s = ShapeSample(
+            iri="http://ex.org/Q5",
+            short_iri="wd:Q5",
+            shex="Human (wd:Q5) { ... }",
+            shex_natural="Human { ... }",
+            label="Human",
+        )
+        assert s.queries() == [
+            "Human (wd:Q5) { ... }",
+            "Human { ... }",
+            "Human",
+            "wd:Q5",
+        ]
+
+    def test_missing_optional_fields(self):
+        s = ShapeSample(iri="http://ex.org/Q5", short_iri="wd:Q5", shex="wd:Q5 { ... }")
+        assert s.queries() == ["wd:Q5 { ... }", "wd:Q5"]
+
+    def test_backward_compat_extra_kwargs(self):
+        s = ShapeSample(
+            iri="http://ex.org/Q5",
+            short_iri="wd:Q5",
+            shex="wd:Q5 { ... }",
+            unknown_future_field="ignored",
+        )
+        assert s.iri == "http://ex.org/Q5"
