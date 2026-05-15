@@ -8,7 +8,6 @@ from grammar_utils.parse import LR1Parser  # type: ignore
 from search_rdf import EmbeddingIndex
 from universal_ml_utils.ops import partition_by
 
-from grasp.build.shapes import compute_shape
 from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer
@@ -862,6 +861,8 @@ def call_shape_function(
             return sample.shex + shape_note
 
         if shapes.pattern is not None:
+            from grasp.build.shapes import compute_shape
+
             result = compute_shape(expanded_iri, shapes.pattern, manager, manager.shape_config)
             if result is not None:
                 return result + shape_note
