@@ -10,6 +10,7 @@ from grasp.configs import ShapeConfig
 from grasp.manager import KgManager
 from grasp.shapes import ShapeSample
 from grasp.sparql.types import AskResult, SelectResult
+from grasp.utils import derive_label_from_iri
 
 
 @dataclass
@@ -197,27 +198,40 @@ def cardinality_tag(coverage: float, avg_values: float) -> str:
         return "*"
 
 
-def _label_iri(label: str | None, short_iri: str) -> str:
+def _resolve_label(iri: str, index_name: str, short_iri: str, manager: KgManager) -> str:
+    label = manager.get_label(iri, index_name)
     return f"{label} ({short_iri})" if label else short_iri
+
+
+def _get_label_and_aliases(
+    iri: str, index_name: str, manager: KgManager
+) -> tuple[str | None, list[str]]:
+    data = manager.try_get_data(index_name)
+    if data is None:
+        return None, []
+    norm = manager.normalize(iri, index_name)
+    key = norm[0] if norm is not None else iri
+    id = data.id_from_identifier(key)
+    if id is None:
+        return None, []
+    return data.main_field(id) or data.field(id, 0), data.fields(id)
 
 
 def _target_class_parts(prop: "PropertyProfile", manager: KgManager) -> list[str]:
     if prop.target_class_iris:
         return [
-            _label_iri(manager.get_label(t_iri, "entities"), t_short)
+            _resolve_label(t_iri, "entities", t_short, manager)
             for t_iri, t_short in zip(prop.target_class_iris, prop.target_class_short_iris)
         ]
     return prop.target_class_short_iris[:3]
 
 
 def emit_pseudo_shex(profile: ConceptProfile, manager: KgManager) -> str:
-    class_label = manager.get_label(profile.iri, "entities")
-    header = _label_iri(class_label, profile.short_iri)
+    header = _resolve_label(profile.iri, "entities", profile.short_iri, manager)
     lines = [f"{header} {{"]
 
     for prop in profile.properties:
-        prop_label = manager.get_label(prop.iri, "properties")
-        prop_str = _label_iri(prop_label, prop.short_iri)
+        prop_str = _resolve_label(prop.iri, "properties", prop.short_iri, manager)
         tag = prop.cardinality_tag
         tag_suffix = f" {tag}" if tag else ""
 
@@ -229,39 +243,6 @@ def emit_pseudo_shex(profile: ConceptProfile, manager: KgManager) -> str:
             lines.append(f"  {prop_str} [ {target_str} ]{tag_suffix} ;")
         else:
             lines.append(f"  {prop_str} IRI{tag_suffix} ;")
-
-    lines.append("}")
-    return "\n".join(lines)
-
-
-def emit_pseudo_shex_natural(profile: ConceptProfile, manager: KgManager) -> str | None:
-    if manager.try_get_data("entities") is None and manager.try_get_data("properties") is None:
-        return None
-
-    class_label = manager.get_label(profile.iri, "entities") or profile.short_iri
-    lines = [f"{class_label} {{"]
-
-    for prop in profile.properties:
-        prop_label = manager.get_label(prop.iri, "properties") or prop.short_iri
-        tag = prop.cardinality_tag
-        tag_suffix = f" {tag}" if tag else ""
-
-        if prop.literal_datatypes:
-            dtype = prop.literal_datatypes[0]
-            lines.append(f"  {prop_label} {dtype}{tag_suffix} ;")
-        elif prop.target_class_short_iris:
-            if prop.target_class_iris:
-                parts = [
-                    manager.get_label(t_iri, "entities") or t_short
-                    for t_iri, t_short in zip(
-                        prop.target_class_iris, prop.target_class_short_iris
-                    )
-                ]
-            else:
-                parts = prop.target_class_short_iris[:3]
-            lines.append(f"  {prop_label} [ {' '.join(parts)} ]{tag_suffix} ;")
-        else:
-            lines.append(f"  {prop_label} IRI{tag_suffix} ;")
 
     lines.append("}")
     return "\n".join(lines)
@@ -468,16 +449,17 @@ def build_shapes(
             manager,
         )
         shex = emit_pseudo_shex(profile, manager)
-        shex_natural = emit_pseudo_shex_natural(profile, manager)
-        class_label = manager.get_label(c_iri, "entities")
+        class_label, class_aliases = _get_label_and_aliases(c_iri, "entities", manager)
+        if not class_label:
+            class_label = derive_label_from_iri(c_iri, manager.prefixes) or None
 
         samples.append(
             ShapeSample(
                 iri=c_iri,
                 short_iri=profile.short_iri,
                 shex=shex,
-                shex_natural=shex_natural,
                 label=class_label,
+                aliases=class_aliases,
             )
         )
 

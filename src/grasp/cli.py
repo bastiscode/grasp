@@ -1244,7 +1244,7 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
         return
 
     shapes_dir = os.path.join(kg_dir, "shapes")
-    raw_samples = build_shapes(
+    samples = build_shapes(
         pattern,
         shapes_dir,
         manager,
@@ -1252,7 +1252,6 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
         max_concepts=args.max_concepts,
         log_level=args.log_level,
     )
-    samples = [ShapeSample(**s) for s in raw_samples]
 
     model = SentenceTransformerModel(args.emb_model)
     ShapeIndex.build(
