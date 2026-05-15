@@ -17,32 +17,33 @@ class ShapeSample:
         iri: str,
         short_iri: str,
         shex: str,
-        shex_natural: str | None = None,
         label: str | None = None,
+        aliases: list[str] | None = None,
         **_: object,
     ) -> None:
         self.iri = iri
         self.short_iri = short_iri
         self.shex = shex
-        self.shex_natural = shex_natural
         self.label = label
+        self.aliases = aliases or []
 
     def queries(self) -> list[str]:
-        result = [self.shex]
-        if self.shex_natural:
-            result.append(self.shex_natural)
+        from grasp.utils import ordered_unique
+
+        candidates = []
         if self.label:
-            result.append(self.label)
-        result.append(self.short_iri)
-        return result
+            candidates.append(self.label)
+        candidates.extend(self.aliases)
+        candidates.append(self.short_iri)
+        return ordered_unique(candidates)
 
     def model_dump(self) -> dict:
         return {
             "iri": self.iri,
             "short_iri": self.short_iri,
             "shex": self.shex,
-            "shex_natural": self.shex_natural,
             "label": self.label,
+            "aliases": self.aliases,
         }
 
 

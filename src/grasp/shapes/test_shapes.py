@@ -8,7 +8,6 @@ from grasp.build.shapes import (
     cardinality_tag,
     compute_shape,
     emit_pseudo_shex,
-    emit_pseudo_shex_natural,
     get_rows,
 )
 from grasp.manager import KgManager
@@ -21,6 +20,7 @@ def make_manager() -> Mock:
     m.format_iri.side_effect = lambda iri, **_: iri
     m.get_label.return_value = None
     m.try_get_data.return_value = None
+    m.prefixes = {}
     return m
 
 
@@ -30,6 +30,7 @@ def make_labelled_manager(
 ) -> Mock:
     m = Mock(spec=KgManager)
     m.format_iri.side_effect = lambda iri, **_: iri
+    m.prefixes = {}
 
     _entity_labels = entity_labels or {}
     _property_labels = property_labels or {}
@@ -292,7 +293,7 @@ class TestEmitPseudoShexLabelled:
             "}"
         )
 
-    def test_partial_labels_fall_back_per_iri(self):
+    def test_partial_labels_fall_back_to_short_iri(self):
         manager = make_labelled_manager(
             entity_labels={"http://ex.org/Human": "Human"},
         )
@@ -306,60 +307,29 @@ class TestEmitPseudoShexLabelled:
         )
 
 
-class TestEmitPseudoShexNatural:
-    def test_returns_none_when_no_index(self):
-        manager = make_manager()
-        assert emit_pseudo_shex_natural(_make_profile(), manager) is None
-
-    def test_natural_output_with_labels(self):
-        manager = make_labelled_manager(
-            entity_labels={
-                "http://ex.org/Human": "Human",
-                "http://ex.org/Class": "MyClass",
-            },
-            property_labels={
-                "http://ex.org/type": "type of",
-                "http://ex.org/name": "name",
-            },
-        )
-        result = emit_pseudo_shex_natural(_make_profile(), manager)
-        assert result == (
-            "Human {\n"
-            "  type of [ MyClass ] ;\n"
-            "  name xsd:string ;\n"
-            "}"
-        )
-
-    def test_natural_falls_back_to_short_iri_when_no_label(self):
-        manager = make_labelled_manager()  # indices exist but no labels
-        result = emit_pseudo_shex_natural(_make_profile(), manager)
-        assert result == (
-            "ex:Human {\n"
-            "  ex:type [ ex:Class ] ;\n"
-            "  ex:name xsd:string ;\n"
-            "}"
-        )
-
-
 class TestShapeSampleQueries:
-    def test_all_fields_present(self):
+    def test_label_and_aliases(self):
         s = ShapeSample(
             iri="http://ex.org/Q5",
             short_iri="wd:Q5",
             shex="Human (wd:Q5) { ... }",
-            shex_natural="Human { ... }",
             label="Human",
+            aliases=["person", "human being"],
         )
-        assert s.queries() == [
-            "Human (wd:Q5) { ... }",
-            "Human { ... }",
-            "Human",
-            "wd:Q5",
-        ]
+        assert s.queries() == ["Human", "person", "human being", "wd:Q5"]
+
+    def test_deduplicates(self):
+        s = ShapeSample(
+            iri="http://ex.org/Q5",
+            short_iri="wd:Q5",
+            shex="wd:Q5 { ... }",
+            label="wd:Q5",  # same as short_iri
+        )
+        assert s.queries() == ["wd:Q5"]
 
     def test_missing_optional_fields(self):
         s = ShapeSample(iri="http://ex.org/Q5", short_iri="wd:Q5", shex="wd:Q5 { ... }")
-        assert s.queries() == ["wd:Q5 { ... }", "wd:Q5"]
+        assert s.queries() == ["wd:Q5"]
 
     def test_backward_compat_extra_kwargs(self):
         s = ShapeSample(
