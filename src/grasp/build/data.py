@@ -20,7 +20,6 @@ from grasp.manager.utils import (
 )
 from grasp.sparql.types import Binding
 from grasp.sparql.utils import (
-    find_longest_prefix,
     get_qlever_endpoint,
     has_scheme,
     load_iri_and_literal_parser,
@@ -31,7 +30,6 @@ from grasp.utils import (
     get_object_name_from_id,
     ordered_unique,
     split_at_punctuation,
-    split_iri,
 )
 
 

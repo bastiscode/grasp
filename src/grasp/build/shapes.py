@@ -176,7 +176,7 @@ def build_per_class_total_query(pattern: str, class_iri: str) -> str:
     )
 
 
-def _property_rank(iri: str, manager: KgManager) -> int:
+def property_rank(iri: str, manager: KgManager) -> int:
     data = manager.try_get_data("properties")
     if data is None:
         return 0  # no index: all equal, triple_count tiebreaker takes over
@@ -198,13 +198,20 @@ def cardinality_tag(coverage: float, avg_values: float) -> str:
         return "*"
 
 
-def _resolve_label(iri: str, index_name: str, short_iri: str, manager: KgManager) -> str:
+def resolve_label(
+    iri: str,
+    index_name: str,
+    short_iri: str,
+    manager: KgManager,
+) -> str:
     label = manager.get_label(iri, index_name)
     return f"{label} ({short_iri})" if label else short_iri
 
 
-def _get_label_and_aliases(
-    iri: str, index_name: str, manager: KgManager
+def get_label_and_aliases(
+    iri: str,
+    index_name: str,
+    manager: KgManager,
 ) -> tuple[str | None, list[str]]:
     data = manager.try_get_data(index_name)
     if data is None:
@@ -214,24 +221,26 @@ def _get_label_and_aliases(
     id = data.id_from_identifier(key)
     if id is None:
         return None, []
-    return data.main_field(id) or data.field(id, 0), data.fields(id)
+    return data.main_field(id) or data.field(id, 0), data.fields(id) or []
 
 
 def _target_class_parts(prop: "PropertyProfile", manager: KgManager) -> list[str]:
     if prop.target_class_iris:
         return [
-            _resolve_label(t_iri, "entities", t_short, manager)
-            for t_iri, t_short in zip(prop.target_class_iris, prop.target_class_short_iris)
+            resolve_label(t_iri, "entities", t_short, manager)
+            for t_iri, t_short in zip(
+                prop.target_class_iris, prop.target_class_short_iris
+            )
         ]
     return prop.target_class_short_iris[:3]
 
 
 def emit_pseudo_shex(profile: ConceptProfile, manager: KgManager) -> str:
-    header = _resolve_label(profile.iri, "entities", profile.short_iri, manager)
+    header = resolve_label(profile.iri, "entities", profile.short_iri, manager)
     lines = [f"{header} {{"]
 
     for prop in profile.properties:
-        prop_str = _resolve_label(prop.iri, "properties", prop.short_iri, manager)
+        prop_str = resolve_label(prop.iri, "properties", prop.short_iri, manager)
         tag = prop.cardinality_tag
         tag_suffix = f" {tag}" if tag else ""
 
@@ -272,7 +281,7 @@ def assemble_profile(
     common_props = sorted(
         freq_map.items(),
         key=lambda item: (
-            _property_rank(item[0], manager),
+            property_rank(item[0], manager),
             -item[1].get("triple_count", 0),
         ),
     )
@@ -300,7 +309,9 @@ def assemble_profile(
             cardinality_tag=tag,
             literal_datatypes=lit_dtypes.get(p_iri, []),
             target_class_iris=target_iris,
-            target_class_short_iris=[manager.format_iri(t, wrap=True) for t in target_iris],
+            target_class_short_iris=[
+                manager.format_iri(t, wrap=True) for t in target_iris
+            ],
         )
         properties.append(prop)
 
@@ -317,7 +328,7 @@ def compute_shape(
     pattern: str,
     manager: KgManager,
     shape_config: ShapeConfig | None = None,
-) -> str | None:
+) -> str:
     if shape_config is None:
         shape_config = ShapeConfig()
 
@@ -335,8 +346,10 @@ def compute_shape(
         lit_rows = run(build_per_class_literal_profile_query(pattern, class_iri))
         range_rows = run(build_per_class_range_profile_query(pattern, class_iri))
         total_rows = run(build_per_class_total_query(pattern, class_iri))
-    except Exception:
-        return None
+    except Exception as e:
+        raise RuntimeError(
+            f"One of the queries for computing the shape of '{class_iri}' failed:\n{e}"
+        )
 
     total = int(total_rows[0].get("totalEntities", 0)) if total_rows else 0
 
@@ -362,7 +375,13 @@ def compute_shape(
             range_map[p].append(tc)
 
     profile = assemble_profile(
-        class_iri, freq_map, lit_dtypes, range_map, total, shape_config, manager
+        class_iri,
+        freq_map,
+        lit_dtypes,
+        range_map,
+        total,
+        shape_config,
+        manager,
     )
     return emit_pseudo_shex(profile, manager)
 
@@ -449,7 +468,7 @@ def build_shapes(
             manager,
         )
         shex = emit_pseudo_shex(profile, manager)
-        class_label, class_aliases = _get_label_and_aliases(c_iri, "entities", manager)
+        class_label, class_aliases = get_label_and_aliases(c_iri, "entities", manager)
         if not class_label:
             class_label = derive_label_from_iri(c_iri, manager.prefixes) or None
 
