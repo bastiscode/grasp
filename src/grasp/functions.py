@@ -12,6 +12,7 @@ from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import get_common_sparql_prefixes
+from grasp.shapes import ShapeSample
 from grasp.sparql.item import parse_into_binding
 from grasp.sparql.types import (
     Alternative,
@@ -31,7 +32,7 @@ from grasp.sparql.utils import (
     parse_string,
     wrap_iri,
 )
-from grasp.utils import FunctionCallException, format_list
+from grasp.utils import FunctionCallException, format_enumerate, format_list
 
 if TYPE_CHECKING:
     from grasp.tasks.base import GraspTask
@@ -166,7 +167,9 @@ list(kg="wikidata", property="wdt:P19")""",
     if fn_set == "base":
         return fns
 
-    search_shape_kgs = [m.kg for m in managers if m.shapes is not None and m.shapes.index is not None]
+    search_shape_kgs = [
+        m.kg for m in managers if m.shapes is not None and m.shapes.index is not None
+    ]
     get_shape_kgs = [m.kg for m in managers if m.shapes is not None]
 
     if search_shape_kgs:
@@ -805,6 +808,19 @@ def call_function(
         raise ValueError(f"Unknown function {fn_name}")
 
 
+SHAPE_NOTE = (
+    "Note: Shapes are computed via sampling "
+    "and in doubt should not be considered fully accurate or complete, "
+    "especially on large knolwedge graphs."
+)
+
+
+def format_shapes(shapes: list[ShapeSample]) -> str:
+    result = format_enumerate(shape.shex for shape in shapes)
+    result += f"\n\n{SHAPE_NOTE}"
+    return result
+
+
 def call_shape_function(
     fn_name: str,
     fn_args: dict,
@@ -825,16 +841,7 @@ def call_shape_function(
         if not results:
             return f"No shapes (page {page})"
 
-        parts = [f"Shapes (page {page}):\n"]
-        for i, sample in enumerate(results, start + 1):
-            parts.append(f"{i}. {sample.shex}")
-
-        parts.append(
-            "Note: Shapes are computed approximately via sampling "
-            "and may not be considered fully accurate."
-        )
-
-        return "\n\n".join(parts)
+        return f"Shapes (page {page}):\n" + format_shapes(results)
 
     elif fn_name == "get_shape":
         iri_arg = fn_args["iri"]
@@ -848,35 +855,36 @@ def call_shape_function(
             if binding is not None and binding.typ == "uri"
             else iri_arg
         )
-        shape_note = (
-            "\n\nNote: Shapes are computed approximately via sampling "
-            "and may not be considered fully accurate."
-        )
         sample = (
             shapes.index.get_by_iri(expanded_iri) or shapes.index.get_by_iri(iri_arg)
             if shapes.index is not None
             else None
         )
         if sample is not None:
-            return sample.shex + shape_note
+            return sample.shex + "\n\n" + SHAPE_NOTE
 
-        if shapes.pattern is not None:
-            from grasp.build.shapes import compute_shape
-
-            result = compute_shape(expanded_iri, shapes.pattern, manager, manager.shape_config)
-            if result is not None:
-                return result + shape_note
-
+        if shapes.pattern is None:
             return (
-                f"Shape for '{iri_arg}' is not in the index and could not be computed "
-                "on the fly (query failed or timed out). "
-                "Use SPARQL queries to explore this concept directly."
+                f"No shape found for '{iri_arg}'. "
+                "It is not in the index and no pattern is available "
+                "for on-the-fly computation."
             )
 
-        return (
-            f"No shape found for IRI '{iri_arg}': "
-            "the IRI is not in the index and no pattern is available for on-the-fly computation."
-        )
+        from grasp.build.shapes import compute_shape
+
+        try:
+            result = compute_shape(
+                expanded_iri,
+                shapes.pattern,
+                manager,
+                manager.shape_config,
+            )
+            return result + "\n\n" + SHAPE_NOTE
+        except Exception as e:
+            return (
+                f"Shape for '{iri_arg}' is not in the index and failed "
+                f"to compute on the fly:\n{e}"
+            )
 
     raise FunctionCallException(f"Unknown shape function '{fn_name}'")
 
