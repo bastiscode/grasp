@@ -46,7 +46,7 @@ from grasp.notes import (
     take_notes_from_samples,
 )
 from grasp.server import serve
-from grasp.shapes import ShapeIndex
+from grasp.shapes import ShapeIndex, ShapeSample
 from grasp.tasks import Task, get_task
 from grasp.utils import (
     format_trace,
@@ -1154,19 +1154,26 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
         return
 
     shapes_dir = os.path.join(kg_dir, "shapes")
-    samples = build_shapes(
-        pattern,
-        shapes_dir,
-        manager,
-        shape_config=manager.shape_config or ShapeConfig(),
-        max_concepts=args.max_concepts,
-        log_level=args.log_level,
-    )
+    index_dir = os.path.join(shapes_dir, "index")
+    samples_file = os.path.join(index_dir, "samples.jsonl")
+
+    if os.path.exists(samples_file) and not args.overwrite:
+        logger.info(f"Shapes already exist at {samples_file}, skipping profiling")
+        samples = [ShapeSample(**s) for s in load_jsonl(samples_file)]
+    else:
+        samples = build_shapes(
+            pattern,
+            shapes_dir,
+            manager,
+            shape_config=manager.shape_config or ShapeConfig(),
+            max_concepts=args.max_concepts,
+            log_level=args.log_level,
+        )
 
     model = SentenceTransformerModel(args.emb_model)
     ShapeIndex.build(
         samples,
-        os.path.join(shapes_dir, "index"),
+        index_dir,
         model,
         args.emb_batch_size,
         args.overwrite,

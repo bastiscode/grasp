@@ -66,7 +66,7 @@ def objectmembership(pattern: str) -> str:
 
 
 def build_validation_query(pattern: str) -> str:
-    return f"SELECT DISTINCT ?class WHERE {{\n  {class_pattern(pattern)}\n}} LIMIT 1"
+    return f"SELECT DISTINCT ?class WHERE {{\n  {class_pattern(pattern)}\n}}"
 
 
 def build_property_frequency_query(pattern: str) -> str:
@@ -208,7 +208,8 @@ def resolve_label(
     if not label:
         return short_iri
     local_name = get_local_name_from_iri(iri, manager.prefixes)
-    if local_name.lower() == label.lower():
+    derived = derive_label_from_iri(iri, manager.prefixes)
+    if local_name.lower() == label.lower() or derived.lower() == label.lower():
         return short_iri
     return f"{short_iri} ({label})"
 
@@ -414,14 +415,14 @@ def build_shapes(
             {var: row[var].value for var in result.variables} for row in result.rows()
         ]
 
-    logger.info("Validating pattern with test query")
+    logger.info("Validating pattern with class query")
     validation_rows = run(build_validation_query(pattern))
     if not validation_rows:
         raise ValueError(
             "Pattern validation failed: test query returned no results. "
             "Check that the pattern correctly connects instances to class nodes."
         )
-    logger.info(f"Validation passed ({len(validation_rows)} row(s) returned)")
+    logger.info(f"Validation passed ({len(validation_rows)} row(s)/class(es) returned)")
 
     logger.info("Running property frequency query")
     freq_rows = run(build_property_frequency_query(pattern))
@@ -476,8 +477,10 @@ def build_shapes(
         )
         shex = emit_pseudo_shex(profile, manager)
         class_label, class_aliases = get_label_and_aliases(c_iri, "entities", manager)
-        if not class_label:
-            class_label = derive_label_from_iri(c_iri, manager.prefixes) or None
+        if class_label:
+            derived = derive_label_from_iri(c_iri, manager.prefixes)
+            if derived and derived.lower() == class_label.lower():
+                class_label = None
 
         samples.append(
             ShapeSample(
