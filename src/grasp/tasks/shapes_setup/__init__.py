@@ -7,6 +7,7 @@ from grasp.model import Message
 from grasp.shapes import Shapes
 from grasp.sparql.utils import find_all, parse_string
 from grasp.tasks.base import GraspTask
+from grasp.tasks.functions import find_frequent, find_frequent_function_definition
 from grasp.utils import FunctionCallException
 
 REFERENCE_SETUP = {
@@ -94,7 +95,8 @@ Reference description:
 
     def function_definitions(self) -> list[dict]:
         manager = self.managers[0]
-        fns: list[dict] = [
+        kgs = [m.kg for m in self.managers]
+        fns: list[dict] = [find_frequent_function_definition(kgs, self.config.list_k),
             {
                 "name": "show_setup",
                 "description": "Show the current pattern and description for the shape index.",
@@ -189,7 +191,22 @@ Reference description:
         assert isinstance(self.state, ShapesSetupState)
         manager = self.managers[0]
 
-        if fn_name == "show_setup":
+        if fn_name == "find_frequent":
+            return find_frequent(
+                self.managers,
+                fn_args["kg"],
+                fn_args["position"],
+                fn_args.get("subject"),
+                fn_args.get("property"),
+                fn_args.get("object"),
+                fn_args.get("page", 1),
+                self.config.list_k,
+                known,
+                self.config.sparql_request_timeout,
+                self.config.sparql_read_timeout,
+            )
+
+        elif fn_name == "show_setup":
             return format_setup(self.state)
 
         elif fn_name == "set_pattern":

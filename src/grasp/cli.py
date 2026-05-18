@@ -46,7 +46,7 @@ from grasp.notes import (
     take_notes_from_samples,
 )
 from grasp.server import serve
-from grasp.shapes import ShapeIndex, ShapeSample
+from grasp.shapes import ShapeIndex
 from grasp.tasks import Task, get_task
 from grasp.utils import (
     format_trace,
@@ -610,8 +610,16 @@ def parse_args() -> argparse.Namespace:
     )
     setup_parser.add_argument(
         "phase",
-        choices=["search", "info", "entities", "properties", "literals", "indices", "shapes"],
-        help="Setup phase to run: 'search' runs info+indices (entities+properties+literals); 'indices' runs the three index phases only",
+        choices=[
+            "standard",
+            "info",
+            "entities",
+            "properties",
+            "literals",
+            "indices",
+            "shapes",
+        ],
+        help="Setup phase to run: 'standard' runs info+indices (entities+properties+literals); 'indices' runs the three index phases only",
     )
     setup_parser.add_argument(
         "config",
@@ -954,7 +962,7 @@ def setup_grasp(args: argparse.Namespace) -> None:
     notes, kg_notes = load_notes(config)
     kg_dir = get_index_dir(manager.kg)
 
-    multi_phase = phase in ("search", "indices")
+    multi_phase = phase in ("standard", "indices")
 
     if multi_phase and args.notes is not None:
         logger.error(
@@ -967,7 +975,7 @@ def setup_grasp(args: argparse.Namespace) -> None:
     phase_note = args.notes if not multi_phase else None
 
     selected = {
-        "search": {"info", "entities", "properties", "literals"},
+        "standard": {"info", "entities", "properties", "literals"},
         "indices": {"entities", "properties", "literals"},
         "info": {"info"},
         "entities": {"entities"},
@@ -976,10 +984,10 @@ def setup_grasp(args: argparse.Namespace) -> None:
     }[phase]
 
     all_phases = [
-        ("info",       {"phase": "info",  "notes": phase_note}),
-        ("entities",   {"phase": "index", "name": "entities",   "notes": phase_note}),
+        ("info", {"phase": "info", "notes": phase_note}),
+        ("entities", {"phase": "index", "name": "entities", "notes": phase_note}),
         ("properties", {"phase": "index", "name": "properties", "notes": phase_note}),
-        ("literals",   {"phase": "index", "name": "literals",   "notes": phase_note}),
+        ("literals", {"phase": "index", "name": "literals", "notes": phase_note}),
     ]
     phases = [payload for tag, payload in all_phases if tag in selected]
 
