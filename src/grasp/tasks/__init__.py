@@ -9,9 +9,9 @@ from grasp.tasks.exploration import (
     FunctionalExplorationTask,
     StructuralExplorationTask,
 )
-from grasp.tasks.shapes_setup import ShapesSetupTask
 from grasp.tasks.general_qa import GeneralQaTask
 from grasp.tasks.question_generation import QuestionGenerationTask
+from grasp.tasks.shapes_setup import ShapesSetupTask
 from grasp.tasks.sparql_qa import SparqlQaTask
 from grasp.tasks.sparql_to_question import SparqlToQuestionTask
 from grasp.tasks.wikidata_query_logs import WdqlTask
@@ -67,4 +67,6 @@ lead to errors and unexpected or empty results.",
         'Do not use "SERVICE wikibase:label { bd:serviceParam wikibase:language ..." \
 in SPARQL queries. It is not SPARQL standard and unsupported by most SPARQL endpoints. \
 Use rdfs:label or similar properties to get labels instead.',
+        "If example or shape indices are available, using them early on to quickly find \
+relevant information to solve the task is recommended.",
     ]

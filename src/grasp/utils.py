@@ -44,21 +44,24 @@ def camel_case_split(s: str) -> str:
     return " ".join(words)
 
 
-def get_object_name_from_id(obj_id: str, prefixes: dict[str, str]) -> str:
+def get_local_name_from_iri(iri: str, prefixes: dict[str, str]) -> str:
     from grasp.sparql.utils import find_longest_prefix
 
-    pfx = find_longest_prefix(obj_id, prefixes)
+    pfx = find_longest_prefix(iri, prefixes)
     if pfx is None:
-        _, obj_name = split_iri(obj_id)
+        _, obj_name = split_iri(iri)
     else:
         _, long = pfx
-        obj_name = obj_id[len(long):]
+        obj_name = iri[len(long) :]
+
     return unquote_plus(obj_name)
 
 
 def derive_label_from_iri(iri: str, prefixes: dict[str, str]) -> str:
-    obj_name = get_object_name_from_id(iri, prefixes)
-    return " ".join(camel_case_split(part) for part in split_at_punctuation(obj_name)).strip()
+    obj_name = get_local_name_from_iri(iri, prefixes)
+    return " ".join(
+        camel_case_split(part) for part in split_at_punctuation(obj_name)
+    ).strip()
 
 
 def get_index_dir(kg: str | None = None) -> str:

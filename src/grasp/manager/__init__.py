@@ -31,6 +31,7 @@ from grasp.manager.utils import (
     merge_prefixes,
     try_load_search_index,
 )
+from grasp.shapes import Shapes, load_shapes
 from grasp.sparql.types import (
     Alternative,
     AskResult,
@@ -60,7 +61,6 @@ from grasp.sparql.utils import (
     prettify,
     query_type,
 )
-from grasp.shapes import ShapeIndex, Shapes, load_shapes
 from grasp.utils import (
     clip,
     format_list,
@@ -117,11 +117,16 @@ class KgManager:
             models = load_embedding_model(idx.index, models)
 
         shapes_dir = os.path.join(get_index_dir(self.kg), "shapes")
-        if os.path.exists(shapes_dir) and embedding_model is not None and self.shape_config is not None:
+        if (
+            os.path.exists(shapes_dir)
+            and embedding_model is not None
+            and self.shape_config is not None
+        ):
             key = f"sentence-transformer/{embedding_model}"
             if key not in models:
                 models[key] = SentenceTransformerModel(embedding_model)
-            self.shapes = load_shapes(shapes_dir, models[key])
+
+            self.shapes = load_shapes(shapes_dir, models[key])  # type: ignore
 
         self.embedding_models = models
         return models

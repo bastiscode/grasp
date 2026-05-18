@@ -10,7 +10,7 @@ from grasp.configs import ShapeConfig
 from grasp.manager import KgManager
 from grasp.shapes import ShapeSample
 from grasp.sparql.types import AskResult, SelectResult
-from grasp.utils import derive_label_from_iri
+from grasp.utils import derive_label_from_iri, get_local_name_from_iri
 
 
 @dataclass
@@ -31,6 +31,8 @@ class ConceptProfile:
     short_iri: str
     total_entities: int = 0
     properties: list[PropertyProfile] = field(default_factory=list)
+    omitted_properties: int = 0
+    filtered_properties: int = 0
 
 
 def class_pattern(pattern: str) -> str:
@@ -205,7 +207,12 @@ def resolve_label(
     manager: KgManager,
 ) -> str:
     label = manager.get_label(iri, index_name)
-    return f"{label} ({short_iri})" if label else short_iri
+    if not label:
+        return short_iri
+    local_name = get_local_name_from_iri(iri, manager.prefixes)
+    if local_name.lower() == label.lower():
+        return short_iri
+    return f"{short_iri} ({label})"
 
 
 def get_label_and_aliases(
@@ -253,6 +260,13 @@ def emit_pseudo_shex(profile: ConceptProfile, manager: KgManager) -> str:
         else:
             lines.append(f"  {prop_str} IRI{tag_suffix} ;")
 
+    if profile.omitted_properties or profile.filtered_properties:
+        parts = []
+        if profile.omitted_properties:
+            parts.append(f"{profile.omitted_properties:,} omitted (cap)")
+        if profile.filtered_properties:
+            parts.append(f"{profile.filtered_properties:,} filtered (low coverage)")
+        lines.append(f"  # ... {', '.join(parts)}")
     lines.append("}")
     return "\n".join(lines)
 
@@ -277,6 +291,7 @@ def assemble_profile(
     manager: KgManager,
 ) -> ConceptProfile:
     properties: list[PropertyProfile] = []
+    filtered_count = 0
 
     common_props = sorted(
         freq_map.items(),
@@ -293,6 +308,7 @@ def assemble_profile(
         if total_entities > 0:
             coverage = entity_count / total_entities
             if coverage < shape_config.min_property_coverage:
+                filtered_count += 1
                 continue
             avg_vals = triple_count / entity_count if entity_count > 0 else 1.0
             tag = cardinality_tag(coverage, avg_vals)
@@ -320,6 +336,8 @@ def assemble_profile(
         short_iri=manager.format_iri(class_iri, wrap=True),
         total_entities=total_entities,
         properties=properties,
+        omitted_properties=max(0, len(common_props) - shape_config.max_properties_per_concept),
+        filtered_properties=filtered_count,
     )
 
 

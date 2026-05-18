@@ -27,7 +27,7 @@ from grasp.sparql.utils import (
 from grasp.utils import (
     camel_case_split,
     get_index_dir,
-    get_object_name_from_id,
+    get_local_name_from_iri,
     ordered_unique,
     split_at_punctuation,
 )
@@ -204,7 +204,7 @@ def get_value_from_id_binding(obj_id: Binding, prefixes: dict[str, str]) -> str:
     if obj_id.typ != "uri":
         return obj_id.value
 
-    obj_name = get_object_name_from_id(obj_id.identifier(), prefixes)
+    obj_name = get_local_name_from_iri(obj_id.identifier(), prefixes)
     label = " ".join(camel_case_split(part) for part in split_at_punctuation(obj_name))
     return label.strip()
 
