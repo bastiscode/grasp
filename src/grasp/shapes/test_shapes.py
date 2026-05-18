@@ -8,11 +8,10 @@ from grasp.build.shapes import (
     cardinality_tag,
     compute_shape,
     emit_pseudo_shex,
-    get_rows,
 )
 from grasp.manager import KgManager
 from grasp.shapes import ShapeSample
-from grasp.sparql.types import AskResult, SelectResult
+from grasp.sparql.types import SelectResult
 
 
 def make_manager() -> Mock:
@@ -76,25 +75,6 @@ class TestCardinality:
 
     def test_optional_multi(self):
         assert cardinality_tag(0.50, 2.0) == "*"
-
-
-class TestGetRows:
-    def test_select_result(self):
-        result = select(
-            ["p", "tripleCount"],
-            [
-                {"p": uri("http://ex.org/p1"), "tripleCount": literal("10")},
-                {"p": uri("http://ex.org/p2"), "tripleCount": literal("5")},
-            ],
-        )
-        rows = get_rows(result)
-        assert rows == [
-            {"p": "http://ex.org/p1", "tripleCount": "10"},
-            {"p": "http://ex.org/p2", "tripleCount": "5"},
-        ]
-
-    def test_ask_result(self):
-        assert get_rows(AskResult(boolean=True)) == []
 
 
 class TestAssembleProfile:

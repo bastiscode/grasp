@@ -9,7 +9,7 @@ from universal_ml_utils.logging import get_logger
 from grasp.configs import ShapeConfig
 from grasp.manager import KgManager
 from grasp.shapes import ShapeSample
-from grasp.sparql.types import AskResult, SelectResult
+from grasp.sparql.types import SelectResult
 from grasp.utils import derive_label_from_iri, get_local_name_from_iri
 
 
@@ -55,14 +55,14 @@ def subquery(pattern: str) -> str:
 
 def membership(pattern: str) -> str:
     cp = class_pattern(pattern)
-    lines = [f"  {line}" for line in cp.strip().splitlines()]
-    return "\n".join(lines)
+    inner = "\n".join(f"    {line}" for line in cp.strip().splitlines())
+    return f"  {{\n{inner}\n  }}"
 
 
 def objectmembership(pattern: str) -> str:
     op = object_pattern(pattern)
-    lines = [f"  {line}" for line in op.strip().splitlines()]
-    return "\n".join(lines)
+    inner = "\n".join(f"    {line}" for line in op.strip().splitlines())
+    return f"  {{\n{inner}\n  }}"
 
 
 def build_validation_query(pattern: str) -> str:
@@ -123,13 +123,17 @@ def build_total_entities_query(pattern: str) -> str:
     )
 
 
+def _wrap(pattern: str) -> str:
+    inner = "\n".join(f"    {line}" for line in pattern.strip().splitlines())
+    return f"  {{\n{inner}\n  }}"
+
+
 def build_per_class_property_frequency_query(pattern: str, class_iri: str) -> str:
-    ip = instance_pattern(pattern, class_iri)
-    lines = "\n".join(f"  {line}" for line in ip.strip().splitlines())
+    ip = _wrap(instance_pattern(pattern, class_iri))
     return (
         f"SELECT ?p (COUNT(*) AS ?tripleCount) (COUNT(DISTINCT ?instance) AS ?entityCount)\n"
         f"WHERE {{\n"
-        f"{lines}\n"
+        f"{ip}\n"
         f"  ?instance ?p ?o .\n"
         f"}}\n"
         f"GROUP BY ?p\n"
@@ -138,12 +142,11 @@ def build_per_class_property_frequency_query(pattern: str, class_iri: str) -> st
 
 
 def build_per_class_literal_profile_query(pattern: str, class_iri: str) -> str:
-    ip = instance_pattern(pattern, class_iri)
-    lines = "\n".join(f"  {line}" for line in ip.strip().splitlines())
+    ip = _wrap(instance_pattern(pattern, class_iri))
     return (
         f"SELECT ?p ?datatype (COUNT(*) AS ?count)\n"
         f"WHERE {{\n"
-        f"{lines}\n"
+        f"{ip}\n"
         f"  ?instance ?p ?o .\n"
         f"  FILTER(isLiteral(?o))\n"
         f"  BIND(DATATYPE(?o) AS ?datatype)\n"
@@ -154,16 +157,14 @@ def build_per_class_literal_profile_query(pattern: str, class_iri: str) -> str:
 
 
 def build_per_class_range_profile_query(pattern: str, class_iri: str) -> str:
-    ip = instance_pattern(pattern, class_iri)
-    lines = "\n".join(f"  {line}" for line in ip.strip().splitlines())
-    op = object_pattern(pattern)
-    obj_lines = "\n".join(f"  {line}" for line in op.strip().splitlines())
+    ip = _wrap(instance_pattern(pattern, class_iri))
+    op = _wrap(object_pattern(pattern))
     return (
         f"SELECT ?p ?targetClass (COUNT(*) AS ?count)\n"
         f"WHERE {{\n"
-        f"{lines}\n"
+        f"{ip}\n"
         f"  ?instance ?p ?o .\n"
-        f"{obj_lines}\n"
+        f"{op}\n"
         f"}}\n"
         f"GROUP BY ?p ?targetClass\n"
         f"ORDER BY ?p DESC(?count)"
@@ -171,11 +172,8 @@ def build_per_class_range_profile_query(pattern: str, class_iri: str) -> str:
 
 
 def build_per_class_total_query(pattern: str, class_iri: str) -> str:
-    ip = instance_pattern(pattern, class_iri)
-    lines = "\n".join(f"  {line}" for line in ip.strip().splitlines())
-    return (
-        f"SELECT (COUNT(DISTINCT ?instance) AS ?totalEntities)\nWHERE {{\n{lines}\n}}"
-    )
+    ip = _wrap(instance_pattern(pattern, class_iri))
+    return f"SELECT (COUNT(DISTINCT ?instance) AS ?totalEntities)\nWHERE {{\n{ip}\n}}"
 
 
 def property_rank(iri: str, manager: KgManager) -> int:
@@ -271,16 +269,6 @@ def emit_pseudo_shex(profile: ConceptProfile, manager: KgManager) -> str:
     return "\n".join(lines)
 
 
-def get_rows(result: SelectResult | AskResult) -> list[dict[str, Any]]:
-    if isinstance(result, AskResult):
-        return []
-
-    return [
-        {var: row[var].value for var in result.variables if var in row}
-        for row in result.rows()
-    ]
-
-
 def assemble_profile(
     class_iri: str,
     freq_map: dict[str, dict],
@@ -352,14 +340,17 @@ def compute_shape(
     if shape_config is None:
         shape_config = ShapeConfig()
 
-    def run(query: str) -> list[dict[str, Any]]:
+    def run(query: str) -> list[dict]:
         result = manager.execute_sparql(
             query,
             shape_config.request_timeout,
             shape_config.read_timeout,
             sparql_result_max_rows=shape_config.sparql_result_max_rows,
         )
-        return get_rows(result)
+        assert isinstance(result, SelectResult), "Expected SELECT query result"
+        return [
+            {var: row[var].value for var in result.variables} for row in result.rows()
+        ]
 
     try:
         freq_rows = run(build_per_class_property_frequency_query(pattern, class_iri))
@@ -371,27 +362,23 @@ def compute_shape(
             f"One of the queries for computing the shape of '{class_iri}' failed:\n{e}"
         )
 
-    total = int(total_rows[0].get("totalEntities", 0)) if total_rows else 0
+    total = int(total_rows[0]["totalEntities"]) if total_rows else 0
 
     freq_map: dict[str, dict] = {}
     for row in freq_rows:
-        p = row.get("p", "")
-        if p:
-            freq_map[p] = {
-                "triple_count": int(row.get("tripleCount", 0)),
-                "entity_count": int(row.get("entityCount", 0)),
-            }
+        freq_map[row["p"]] = {
+            "triple_count": int(row["tripleCount"]),
+            "entity_count": int(row["entityCount"]),
+        }
 
     lit_dtypes: dict[str, list[str]] = defaultdict(list)
     for row in lit_rows:
-        p, dt = row.get("p", ""), row.get("datatype", "")
-        if p and dt:
-            lit_dtypes[p].append(manager.format_iri(dt, wrap=True))
+        lit_dtypes[row["p"]].append(manager.format_iri(row["datatype"], wrap=True))
 
     range_map: dict[str, list[str]] = defaultdict(list)
     for row in range_rows:
-        p, tc = row.get("p", ""), row.get("targetClass", "")
-        if p and tc and tc not in range_map[p]:
+        p, tc = row["p"], row["targetClass"]
+        if tc not in range_map[p]:
             range_map[p].append(tc)
 
     profile = assemble_profile(
@@ -419,9 +406,13 @@ def build_shapes(
     def run(query: str) -> list[dict[str, Any]]:
         logger.debug(f"Running query:\n{query}")
         result = manager.execute_sparql(
-            query, sparql_result_max_rows=shape_config.sparql_result_max_rows
+            query,
+            sparql_result_max_rows=shape_config.sparql_result_max_rows,
         )
-        return get_rows(result)
+        assert isinstance(result, SelectResult), "Expected SELECT query result"
+        return [
+            {var: row[var].value for var in result.variables} for row in result.rows()
+        ]
 
     logger.info("Validating pattern with test query")
     validation_rows = run(build_validation_query(pattern))
@@ -447,29 +438,25 @@ def build_shapes(
     # Build per-class maps
     total_entities: dict[str, int] = {}
     for row in total_rows:
-        c, t = row.get("class", ""), row.get("totalEntities", 0)
-        if c:
-            total_entities[c] = int(t)
+        total_entities[row["class"]] = int(row["totalEntities"])
 
     prop_freq: dict[str, dict[str, dict]] = defaultdict(dict)
     for row in freq_rows:
-        c, p = row.get("class", ""), row.get("p", "")
-        if c and p:
-            prop_freq[c][p] = {
-                "triple_count": int(row.get("tripleCount", 0)),
-                "entity_count": int(row.get("entityCount", 0)),
-            }
+        prop_freq[row["class"]][row["p"]] = {
+            "triple_count": int(row["tripleCount"]),
+            "entity_count": int(row["entityCount"]),
+        }
 
     lit_dtypes: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
     for row in lit_rows:
-        c, p, dt = row.get("class", ""), row.get("p", ""), row.get("datatype", "")
-        if c and p and dt:
-            lit_dtypes[c][p].append(manager.format_iri(dt, wrap=True))
+        lit_dtypes[row["class"]][row["p"]].append(
+            manager.format_iri(row["datatype"], wrap=True)
+        )
 
     range_map: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
     for row in range_rows:
-        c, p, tc = row.get("class", ""), row.get("p", ""), row.get("targetClass", "")
-        if c and p and tc and tc not in range_map[c][p]:
+        c, p, tc = row["class"], row["p"], row["targetClass"]
+        if tc not in range_map[c][p]:
             range_map[c][p].append(tc)
 
     all_concept_iris = list(prop_freq.keys())[:max_concepts]
