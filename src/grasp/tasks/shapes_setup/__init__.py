@@ -9,6 +9,11 @@ from grasp.sparql.utils import find_all, parse_string
 from grasp.tasks.base import GraspTask
 from grasp.utils import FunctionCallException
 
+REFERENCE_SETUP = {
+    "pattern": "?instance a {CLASS}",
+    "description": "All standard RDF classes via the rdf:type (a) property",
+}
+
 
 class ShapesSetupState(BaseModel):
     pattern: str | None = None
@@ -30,7 +35,7 @@ def validate_pattern_format(pattern: str, parser: LR1Parser) -> None:
     }
     if "?instance" not in variables:
         raise FunctionCallException(
-            "Pattern must contain '?instance' as the entity variable."
+            "Pattern must contain '?instance' as the instance variable."
         )
 
 
@@ -40,31 +45,47 @@ class ShapesSetupTask(GraspTask):
     def system_information(self) -> str:
         manager = self.managers[0]
         return f"""\
-You are a knowledge graph shape index setup assistant. Your task is to \
-explore the '{manager.kg}' knowledge graph and determine the SPARQL pattern \
-that connects instances to their class-like nodes.
+You are a knowledge graph setup assistant. Your task is to \
+explore the '{manager.kg}' knowledge graph and come up with or improve \
+the setup - a SPARQL graph pattern relating instances to classes and a \
+description - of the shape index.
 
-Different knowledge graphs use different idioms for grouping entities into concepts:
-- Standard RDF/OWL: '?instance a {{CLASS}} .'
-- Wikidata-style:   '?instance wdt:P31 {{CLASS}} .'
-- SKOS:             '?instance skos:inScheme {{CLASS}} .'
-- Custom:           '?instance ex:category {{CLASS}} .'
-- UNION (mixed):    '{{ ?instance a {{CLASS}} . }} UNION {{ ?instance wdt:P31 {{CLASS}} . }}'
-- Multi-hop:        '?instance ex:type ?t . ?t skos:broader {{CLASS}} .'
+The SPARQL graph pattern should relate an instance variable ?instance to \
+a class placeholder {{CLASS}}, using suitable properties and SPARQL constructs. \
+The pattern will then be used in two ways:
+1. To determine all classes in the knowledge graph by replacing {{CLASS}} with \
+a ?class variable and embedding it in a SPARQL query of the form 'SELECT DISTINCT \
+?class WHERE {{ <pattern> }}'.
+2. To determine the shape of a class by replacing {{CLASS}} with a \
+specific IRI and embedding it in various profiling queries.
 
-The pattern uses two fixed placeholders:
-- '?instance' — the entity/instance node
-- '{{CLASS}}' — replaced with '?class' for class discovery, or a concrete IRI for per-class profiling
+The description should be a concise summary of the classes captured \
+by the pattern.
 
-Your goal:
-1. Explore the KG structure with SPARQL queries to understand how entities are typed.
-2. Identify the primary grouping idiom (or a combination via UNION/property paths).
-3. Validate the candidate pattern by running:
-   SELECT DISTINCT ?class WHERE {{ PATTERN[{{CLASS}}→?class] }} LIMIT 1
-   Confirm at least one result is returned.
-4. Call set_pattern with the validated pattern.
-5. Optionally call set_description with a summary of what classes are covered.
-6. Call stop when done."""
+You should follow a step-by-step approach:
+1. Explore the knowledge graph using provided functions to understand how \
+instances and classes are modeled.
+2. Come up with the class graph pattern and validate it against the knowledge graph by \
+executing SPARQL queries. The pattern can contain any SPARQL graph pattern constructs needed \
+to capture all relevant classes. For example, if classes are modeled via more than one property \
+you should use a UNION pattern, or if classes are modeled via more than one hop you should use \
+property paths or multiple triple patterns.
+3. Set the pattern and get the shape of a few exemplary classes \
+to verify that it works as intended. If not, go back to step 1 or 2 and adjust the pattern. \
+Note that you can also set the pattern to null if the knowledge graph does not \
+contain any meaningful instance-class relationships.
+4. Once you are satisfied with the pattern, write the corresponding description \
+and stop.
+
+Below is a reference setup you can use as a starting point if \
+no shape setup is available yet. It is generic and thus \
+may not be optimal for the knowledge graph at hand.
+
+Reference graph pattern:
+{REFERENCE_SETUP["pattern"]}
+
+Reference description:
+{REFERENCE_SETUP["description"]}"""
 
     def rules(self) -> list[str]:
         return []
@@ -85,13 +106,13 @@ Your goal:
             },
             {
                 "name": "set_pattern",
-                "description": "Set or clear the shape index' SPARQL pattern.",
+                "description": "Set or clear the shape index' SPARQL graph pattern.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "pattern": {
                             "type": ["string", "null"],
-                            "description": "The SPARQL pattern, or null to clear / unset the current pattern.",
+                            "description": "The SPARQL graph pattern, or null to clear / unset the current pattern.",
                         },
                     },
                     "required": ["pattern"],
@@ -130,9 +151,9 @@ Your goal:
                 {
                     "name": "get_shape",
                     "description": (
-                        "Retrieve the pseudo-ShEx shape for a specific concept IRI by "
+                        "Retrieve the pseudo-ShEx shape for a specific class by "
                         "running profiling queries using the current pattern. "
-                        "Use this to test the pattern after calling set_pattern."
+                        "Use this to test the pattern after setting it."
                     ),
                     "parameters": {
                         "type": "object",
@@ -144,7 +165,7 @@ Your goal:
                             },
                             "iri": {
                                 "type": "string",
-                                "description": "The full or prefixed IRI of the concept",
+                                "description": "The full or prefixed class IRI",
                             },
                         },
                         "required": ["kg", "iri"],
@@ -180,7 +201,11 @@ Your goal:
                 # Pattern changed or newly set — existing index is no longer valid.
                 manager.shapes = Shapes(pattern=pattern)
             # else: same pattern, keep existing shapes (index intact).
-            return "Pattern updated. Use get_shape to test it live." if pattern else "Pattern cleared."
+            return (
+                "Pattern updated. Use get_shape to test it live."
+                if pattern
+                else "Pattern cleared."
+            )
 
         elif fn_name == "set_description":
             self.state.description = fn_args["description"]
@@ -207,12 +232,13 @@ Your goal:
         assert isinstance(self.state, ShapesSetupState)
         if self.state.pattern:
             formatted = (
-                f"Shape setup complete.\n"
-                f"Pattern:\n{self.state.pattern}\n"
+                f"Shape setup complete.\n\n"
+                f"Pattern:\n{self.state.pattern}\n\n"
                 f"Description:\n{self.state.description or 'None'}"
             )
         else:
             formatted = "Shape setup stopped without a pattern."
+
         return {
             "type": "output",
             "pattern": self.state.pattern,

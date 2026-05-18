@@ -834,7 +834,7 @@ def call_shape_function(
         query = fn_args["query"]
         page = fn_args.get("page") or 1
         validate_page(page, config.search_max_pages)
-        k = config.search_k
+        k = config.num_shapes
         start = (page - 1) * k
         end = page * k
         results = shapes.index.search(query, end)[start:end]

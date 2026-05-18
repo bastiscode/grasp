@@ -145,7 +145,63 @@ class TestAssembleProfile:
         )
         shex = emit_pseudo_shex(profile, manager)
 
-        assert shex == ("http://ex.org/C {\n  http://ex.org/common IRI ;\n}")
+        assert shex == (
+            "http://ex.org/C {\n"
+            "  http://ex.org/common IRI ;\n"
+            "  # ... 1 filtered (low coverage)\n"
+            "}"
+        )
+
+    def test_cap_omits(self):
+        manager = make_manager()
+        freq_map = {
+            f"http://ex.org/p{i}": {"triple_count": 100 - i, "entity_count": 100 - i}
+            for i in range(5)
+        }
+        shape_config = ShapeConfig(
+            max_properties_per_concept=3, min_property_coverage=0.0
+        )
+
+        profile = assemble_profile(
+            "http://ex.org/C",
+            freq_map,
+            {},
+            {},
+            total_entities=100,
+            shape_config=shape_config,
+            manager=manager,
+        )
+        shex = emit_pseudo_shex(profile, manager)
+
+        assert "# ... 2 omitted (cap)" in shex
+        assert "filtered" not in shex
+
+    def test_cap_and_coverage_filter(self):
+        manager = make_manager()
+        # p0: common, p1: rare (high triples, low entities → filtered within cap),
+        # p2: common, p3: omitted (beyond cap=3)
+        freq_map = {
+            "http://ex.org/p0": {"triple_count": 100, "entity_count": 100},
+            "http://ex.org/p1": {"triple_count": 99, "entity_count": 1},
+            "http://ex.org/p2": {"triple_count": 98, "entity_count": 98},
+            "http://ex.org/p3": {"triple_count": 1, "entity_count": 1},
+        }
+        shape_config = ShapeConfig(
+            max_properties_per_concept=3, min_property_coverage=0.5
+        )
+
+        profile = assemble_profile(
+            "http://ex.org/C",
+            freq_map,
+            {},
+            {},
+            total_entities=100,
+            shape_config=shape_config,
+            manager=manager,
+        )
+        shex = emit_pseudo_shex(profile, manager)
+
+        assert "# ... 1 omitted (cap), 1 filtered (low coverage)" in shex
 
     def test_empty_freq_map(self):
         manager = make_manager()
@@ -226,13 +282,15 @@ class TestComputeShape:
             "}"
         )
 
-    def test_query_failure_returns_none(self):
+    def test_query_failure_raises(self):
         manager = make_manager()
         manager.execute_sparql.side_effect = Exception("timeout")
 
-        assert (
-            compute_shape("http://ex.org/X", "?instance a {CLASS} .", manager) is None
-        )
+        try:
+            compute_shape("http://ex.org/X", "?instance a {CLASS} .", manager)
+            assert False, "Expected an exception"
+        except RuntimeError as e:
+            assert "timeout" in str(e)
 
 
 def _make_profile(with_target_iris: bool = True) -> ConceptProfile:
@@ -267,10 +325,7 @@ class TestEmitPseudoShexLabelled:
         profile = _make_profile()
         shex = emit_pseudo_shex(profile, manager)
         assert shex == (
-            "ex:Human {\n"
-            "  ex:type [ ex:Class ] ;\n"
-            "  ex:name xsd:string ;\n"
-            "}"
+            "ex:Human {\n  ex:type [ ex:Class ] ;\n  ex:name xsd:string ;\n}"
         )
 
     def test_labels_resolved_when_index_available(self):
@@ -287,9 +342,9 @@ class TestEmitPseudoShexLabelled:
         profile = _make_profile()
         shex = emit_pseudo_shex(profile, manager)
         assert shex == (
-            "Human (ex:Human) {\n"
-            "  type of (ex:type) [ MyClass (ex:Class) ] ;\n"
-            "  name (ex:name) xsd:string ;\n"
+            "ex:Human {\n"
+            "  ex:type (type of) [ ex:Class (MyClass) ] ;\n"
+            "  ex:name xsd:string ;\n"
             "}"
         )
 
@@ -300,10 +355,7 @@ class TestEmitPseudoShexLabelled:
         profile = _make_profile()
         shex = emit_pseudo_shex(profile, manager)
         assert shex == (
-            "Human (ex:Human) {\n"
-            "  ex:type [ ex:Class ] ;\n"
-            "  ex:name xsd:string ;\n"
-            "}"
+            "ex:Human {\n  ex:type [ ex:Class ] ;\n  ex:name xsd:string ;\n}"
         )
 
 
