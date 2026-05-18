@@ -536,7 +536,7 @@ class CeaTask(GraspTask, FeedbackTask):
         return "table"
 
     @classmethod
-    def sample_cls(cls) -> type[CeaSample]:
+    def sample_cls(cls) -> type[CeaSample] | None:
         return CeaSample
 
     def feedback_system_message(
