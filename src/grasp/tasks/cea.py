@@ -5,13 +5,12 @@ from pydantic import BaseModel
 from universal_ml_utils.table import generate_table
 
 from grasp.configs import GraspConfig
-from grasp.functions import find_manager
+from grasp.examples import Sample
+from grasp.functions import find_manager, parse_iri_or_literal
 from grasp.manager import KgManager, format_kgs
 from grasp.model import Message
 from grasp.sparql.types import Alternative, ObjType
-from grasp.sparql.utils import parse_into_binding
 from grasp.tasks.base import FeedbackTask, GraspTask
-from grasp.examples import Sample
 from grasp.utils import FunctionCallException, format_list, format_notes
 
 
@@ -299,7 +298,7 @@ This function overwrites any previous annotation of the cell.""",
 
 
 def prepare_annotation(manager: KgManager, entity: str) -> Annotation:
-    binding = parse_into_binding(entity, manager.iri_literal_parser, manager.prefixes)
+    binding = parse_iri_or_literal(entity, manager.iri_literal_parser, manager.prefixes)
     if binding is None or binding.typ != "uri":
         raise ValueError(f"Entity {entity} is not a valid IRI")
 
