@@ -218,8 +218,6 @@ def calculate_metrics(
     num_retryable_evaluations = 0
     total_f1 = 0.0
     total_accuracy = 0.0
-    total_time = 0.0
-    time_count = 0
 
     for id, evaluation in model_evaluations.items():
         invalid_evaluation = is_invalid_evaluation(
@@ -234,10 +232,6 @@ def calculate_metrics(
         # get f1 score
         if "prediction" in evaluation:
             f1_score = evaluation["prediction"]["score"]
-            # Get elapsed time directly from the prediction
-            elapsed = evaluation["prediction"]["elapsed"]
-            total_time += elapsed
-            time_count += 1
         else:
             f1_score = 0.0
 
@@ -248,10 +242,9 @@ def calculate_metrics(
 
     f1_score = total_f1 / max(num_valid_evaluations, 1)
     accuracy = total_accuracy / max(num_valid_evaluations, 1)
-    avg_time = total_time / max(time_count, 1)
 
-    # Calculate average steps using the average steps and time function
-    avg_steps, _ = calculate_average_steps_and_time(model_outputs)
+    # Calculate average steps and time over the (possibly filtered) outputs
+    avg_steps, avg_time = calculate_average_steps_and_time(model_outputs)
 
     return {
         "num_total": total,
@@ -262,7 +255,7 @@ def calculate_metrics(
         "num_retryable_evaluations": num_retryable_evaluations,
         "accuracy": accuracy,
         "f1": f1_score,
-        "time": avg_time,
+        "time": avg_time if avg_time is not None else 0,
         "steps": avg_steps if avg_steps is not None else 0,
     }
 
