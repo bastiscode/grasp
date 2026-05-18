@@ -610,8 +610,8 @@ def parse_args() -> argparse.Namespace:
     )
     setup_parser.add_argument(
         "phase",
-        choices=["all", "info", "entities", "properties", "literals", "indices", "shapes"],
-        help="Setup phase to run: 'all' runs info+indices, 'indices' runs entities+properties+literals",
+        choices=["search", "info", "entities", "properties", "literals", "indices", "shapes"],
+        help="Setup phase to run: 'search' runs info+indices (entities+properties+literals); 'indices' runs the three index phases only",
     )
     setup_parser.add_argument(
         "config",
@@ -622,31 +622,7 @@ def parse_args() -> argparse.Namespace:
         "--notes",
         type=str,
         default=None,
-        help="Notes passed to the setup agent (for single-phase runs)",
-    )
-    setup_parser.add_argument(
-        "--info-notes",
-        type=str,
-        default=None,
-        help="Notes for the info sub-agent (all phase only)",
-    )
-    setup_parser.add_argument(
-        "--entity-index-notes",
-        type=str,
-        default=None,
-        help="Notes for the entity index sub-agent (all/indices phases only)",
-    )
-    setup_parser.add_argument(
-        "--property-index-notes",
-        type=str,
-        default=None,
-        help="Notes for the property index sub-agent (all/indices phases only)",
-    )
-    setup_parser.add_argument(
-        "--literal-index-notes",
-        type=str,
-        default=None,
-        help="Notes for the literal index sub-agent (all/indices phases only)",
+        help="Notes passed to the setup agent (single-phase runs only: info, entities, properties, literals, shapes)",
     )
 
     # visualize trace from GRASP output
@@ -978,25 +954,20 @@ def setup_grasp(args: argparse.Namespace) -> None:
     notes, kg_notes = load_notes(config)
     kg_dir = get_index_dir(manager.kg)
 
-    # build the per-phase notes map
-    multi_phase_notes = {
-        "info": args.info_notes,
-        "entities": args.entity_index_notes,
-        "properties": args.property_index_notes,
-        "literals": args.literal_index_notes,
-    }
+    multi_phase = phase in ("search", "indices")
 
-    # warn if per-index flags are set but phase won't use them
-    if phase not in ("all", "indices"):
-        for flag, val in multi_phase_notes.items():
-            if val is not None:
-                logger.warning(
-                    f"--{flag.replace('_', '-')}-notes is ignored for phase '{phase}'; "
-                    f"use --notes instead"
-                )
+    if multi_phase and args.notes is not None:
+        logger.error(
+            f"--notes is not supported for phase '{phase}'; "
+            "it is only supported for single-phase runs "
+            "(info, entities, properties, literals, shapes)"
+        )
+        return
+
+    phase_note = args.notes if not multi_phase else None
 
     selected = {
-        "all": {"info", "entities", "properties", "literals"},
+        "search": {"info", "entities", "properties", "literals"},
         "indices": {"entities", "properties", "literals"},
         "info": {"info"},
         "entities": {"entities"},
@@ -1004,17 +975,11 @@ def setup_grasp(args: argparse.Namespace) -> None:
         "literals": {"literals"},
     }[phase]
 
-    # for single-phase runs, the general --notes applies
-    def phase_notes(tag: str) -> str | None:
-        if phase in ("all", "indices"):
-            return multi_phase_notes.get(tag)
-        return args.notes
-
     all_phases = [
-        ("info", {"phase": "info", "notes": phase_notes("info")}),
-        ("entities", {"phase": "index", "name": "entities", "notes": phase_notes("entities")}),
-        ("properties", {"phase": "index", "name": "properties", "notes": phase_notes("properties")}),
-        ("literals", {"phase": "index", "name": "literals", "notes": phase_notes("literals")}),
+        ("info",       {"phase": "info",  "notes": phase_note}),
+        ("entities",   {"phase": "index", "name": "entities",   "notes": phase_note}),
+        ("properties", {"phase": "index", "name": "properties", "notes": phase_note}),
+        ("literals",   {"phase": "index", "name": "literals",   "notes": phase_note}),
     ]
     phases = [payload for tag, payload in all_phases if tag in selected]
 

@@ -46,7 +46,7 @@ class ShapesSetupTask(GraspTask):
         manager = self.managers[0]
         return f"""\
 You are a knowledge graph setup assistant. Your task is to \
-explore the '{manager.kg}' knowledge graph and come up with or improve \
+explore the "{manager.kg}" knowledge graph and come up with or improve \
 the setup - a SPARQL graph pattern relating instances to classes and a \
 description - of the shape index.
 
@@ -54,8 +54,8 @@ The SPARQL graph pattern should relate an instance variable ?instance to \
 a class placeholder {{CLASS}}, using suitable properties and SPARQL constructs. \
 The pattern will then be used in two ways:
 1. To determine all classes in the knowledge graph by replacing {{CLASS}} with \
-a ?class variable and embedding it in a SPARQL query of the form 'SELECT DISTINCT \
-?class WHERE {{ <pattern> }}'.
+a ?class variable and embedding it in a SPARQL query of the form "SELECT DISTINCT \
+?class WHERE {{ <pattern> }}".
 2. To determine the shape of a class by replacing {{CLASS}} with a \
 specific IRI and embedding it in various profiling queries.
 
@@ -88,7 +88,9 @@ Reference description:
 {REFERENCE_SETUP["description"]}"""
 
     def rules(self) -> list[str]:
-        return []
+        return [
+            "If the user provides additional notes about the desired setup, make sure to follow them.",
+        ]
 
     def function_definitions(self) -> list[dict]:
         manager = self.managers[0]
@@ -226,7 +228,7 @@ Reference description:
         manager = self.managers[0]
         if input.get("notes"):
             return input["notes"]
-        return f'Set up the shape index pattern for the "{manager.kg}" knowledge graph.'
+        return f'Set up the shape index for the "{manager.kg}" knowledge graph.'
 
     def output(self, messages: list[Message]) -> dict:
         assert isinstance(self.state, ShapesSetupState)
