@@ -177,11 +177,10 @@ list(kg="wikidata", property="wdt:P19")""",
             {
                 "name": "search_shape",
                 "description": f"""\
-Search for pseudo-ShEx schema patterns for concepts in the specified knowledge \
-graph that match a semantic query. Shapes are computed approximately via sampling \
-and may not be considered fully accurate.
+Search for pseudo-ShEx schema patterns for classes in the specified knowledge \
+graph that match a semantic query.
 
-Use this to discover which concepts exist in the KG and what their structure looks \
+Use this to discover which classes exist in the KG and what their structure looks \
 like before writing SPARQL queries.
 
 Currently shapes are available for the following knowledge graphs:
@@ -192,11 +191,11 @@ Currently shapes are available for the following knowledge graphs:
                         "kg": {
                             "type": "string",
                             "enum": search_shape_kgs,
-                            "description": "The knowledge graph to search shapes in",
+                            "description": "The knowledge graph to search",
                         },
                         "query": {
                             "type": "string",
-                            "description": "A semantic query describing the concept you are looking for, e.g. 'human', 'protein', 'scientific article'",
+                            "description": "The search query",
                         },
                         "page": {
                             "type": "integer",
@@ -217,12 +216,12 @@ Currently shapes are available for the following knowledge graphs:
             {
                 "name": "get_shape",
                 "description": f"""\
-Retrieve the pseudo-ShEx shape for a specific concept IRI. Shapes are computed \
+Retrieve the pseudo-ShEx shape for a specific class IRI. Shapes are computed \
 approximately via sampling and may not be considered fully accurate.
 
 If the shape is not in the pre-built index, it will be computed on the fly \
 by running profiling queries against the endpoint. If on-the-fly computation \
-fails, use SPARQL queries to explore the concept directly.
+fails, use SPARQL queries to explore the class directly.
 
 Currently shapes are available for the following knowledge graphs:
 {format_list(f'"{kg}"' for kg in get_shape_kgs)}""",
@@ -236,7 +235,7 @@ Currently shapes are available for the following knowledge graphs:
                         },
                         "iri": {
                             "type": "string",
-                            "description": "The full or prefixed IRI of the concept, e.g. 'wd:Q5' or 'http://www.wikidata.org/entity/Q5'",
+                            "description": "The class IRI",
                         },
                     },
                     "required": ["kg", "iri"],
@@ -811,7 +810,7 @@ def call_function(
 SHAPE_NOTE = (
     "Note: Shapes are computed via sampling "
     "and in doubt should not be considered fully accurate or complete, "
-    "especially on large knolwedge graphs."
+    "especially on large knowledge graphs."
 )
 
 

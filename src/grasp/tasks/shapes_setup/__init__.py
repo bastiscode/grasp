@@ -169,7 +169,7 @@ Reference description:
                             },
                             "iri": {
                                 "type": "string",
-                                "description": "The full or prefixed class IRI",
+                                "description": "The class IRI",
                             },
                         },
                         "required": ["kg", "iri"],

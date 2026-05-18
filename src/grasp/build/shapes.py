@@ -3,6 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from tqdm import tqdm
 from universal_ml_utils.io import dump_text
 from universal_ml_utils.logging import get_logger
 
@@ -26,7 +27,7 @@ class PropertyProfile:
 
 
 @dataclass
-class ConceptProfile:
+class ClassProfile:
     iri: str
     short_iri: str
     total_entities: int = 0
@@ -63,10 +64,6 @@ def objectmembership(pattern: str) -> str:
     op = object_pattern(pattern)
     inner = "\n".join(f"    {line}" for line in op.strip().splitlines())
     return f"  {{\n{inner}\n  }}"
-
-
-def build_validation_query(pattern: str) -> str:
-    return f"SELECT DISTINCT ?class WHERE {{\n  {class_pattern(pattern)}\n}}"
 
 
 def build_property_frequency_query(pattern: str) -> str:
@@ -241,7 +238,7 @@ def _target_class_parts(prop: "PropertyProfile", manager: KgManager) -> list[str
     return prop.target_class_short_iris[:3]
 
 
-def emit_pseudo_shex(profile: ConceptProfile, manager: KgManager) -> str:
+def emit_pseudo_shex(profile: ClassProfile, manager: KgManager) -> str:
     header = resolve_label(profile.iri, "entities", profile.short_iri, manager)
     lines = [f"{header} {{"]
 
@@ -278,7 +275,7 @@ def assemble_profile(
     total_entities: int,
     shape_config: ShapeConfig,
     manager: KgManager,
-) -> ConceptProfile:
+) -> ClassProfile:
     properties: list[PropertyProfile] = []
     filtered_count = 0
 
@@ -290,7 +287,7 @@ def assemble_profile(
         ),
     )
 
-    for p_iri, freq in common_props[: shape_config.max_properties_per_concept]:
+    for p_iri, freq in common_props[: shape_config.max_properties_per_class]:
         entity_count = freq.get("entity_count", 0)
         triple_count = freq.get("triple_count", 0)
 
@@ -320,13 +317,13 @@ def assemble_profile(
         )
         properties.append(prop)
 
-    return ConceptProfile(
+    return ClassProfile(
         iri=class_iri,
         short_iri=manager.format_iri(class_iri, wrap=True),
         total_entities=total_entities,
         properties=properties,
         omitted_properties=max(
-            0, len(common_props) - shape_config.max_properties_per_concept
+            0, len(common_props) - shape_config.max_properties_per_class
         ),
         filtered_properties=filtered_count,
     )
@@ -399,8 +396,10 @@ def build_shapes(
     shapes_dir: str,
     manager: KgManager,
     shape_config: ShapeConfig = ShapeConfig(),
-    max_concepts: int = 500,
+    max_classes: int = 500,
     log_level: str | int | None = None,
+    request_timeout: float | tuple[float, float] | None = None,
+    read_timeout: float | None = None,
 ) -> list[ShapeSample]:
     logger = get_logger("GRASP SHAPES BUILD", log_level)
 
@@ -408,6 +407,8 @@ def build_shapes(
         logger.debug(f"Running query:\n{query}")
         result = manager.execute_sparql(
             query,
+            request_timeout,
+            read_timeout,
             sparql_result_max_rows=shape_config.sparql_result_max_rows,
         )
         assert isinstance(result, SelectResult), "Expected SELECT query result"
@@ -415,63 +416,62 @@ def build_shapes(
             {var: row[var].value for var in result.variables} for row in result.rows()
         ]
 
-    logger.info("Validating pattern with class query")
-    validation_rows = run(build_validation_query(pattern))
-    if not validation_rows:
+    logger.info("Discovering classes")
+    try:
+        total_rows = run(build_total_entities_query(pattern))
+    except Exception as e:
         raise ValueError(
-            "Pattern validation failed: test query returned no results. "
+            f"Pattern validation failed: could not query classes ({e}). "
+            "Check that the pattern correctly connects instances to class nodes."
+        ) from e
+    if not total_rows:
+        raise ValueError(
+            "Pattern validation failed: no classes found. "
             "Check that the pattern correctly connects instances to class nodes."
         )
-    logger.info(f"Validation passed ({len(validation_rows)} row(s)/class(es) returned)")
+    total_entities = {row["class"]: int(row["totalEntities"]) for row in total_rows}
 
-    logger.info("Running property frequency query")
-    freq_rows = run(build_property_frequency_query(pattern))
-
-    logger.info("Running literal datatype profiling query")
-    lit_rows = run(build_literal_profile_query(pattern))
-
-    logger.info("Running object range profiling query")
-    range_rows = run(build_range_profile_query(pattern))
-
-    logger.info("Running total entities query")
-    total_rows = run(build_total_entities_query(pattern))
-
-    # Build per-class maps
-    total_entities: dict[str, int] = {}
-    for row in total_rows:
-        total_entities[row["class"]] = int(row["totalEntities"])
-
-    prop_freq: dict[str, dict[str, dict]] = defaultdict(dict)
-    for row in freq_rows:
-        prop_freq[row["class"]][row["p"]] = {
-            "triple_count": int(row["tripleCount"]),
-            "entity_count": int(row["entityCount"]),
-        }
-
-    lit_dtypes: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
-    for row in lit_rows:
-        lit_dtypes[row["class"]][row["p"]].append(
-            manager.format_iri(row["datatype"], wrap=True)
-        )
-
-    range_map: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
-    for row in range_rows:
-        c, p, tc = row["class"], row["p"], row["targetClass"]
-        if tc not in range_map[c][p]:
-            range_map[c][p].append(tc)
-
-    all_concept_iris = list(prop_freq.keys())[:max_concepts]
-    logger.info(f"Emitting pseudo-ShEx for {len(all_concept_iris)} concepts")
+    all_class_iris = list(total_entities.keys())[:max_classes]
+    logger.info(f"Building shapes for {len(all_class_iris)} classes")
 
     samples = []
-    for c_iri in all_concept_iris:
-        total = total_entities.get(c_iri, 0)
+    skipped = 0
+    for c_iri in tqdm(all_class_iris, desc="Profiling classes"):
+        try:
+            freq_rows = run(build_per_class_property_frequency_query(pattern, c_iri))
+            lit_rows = run(build_per_class_literal_profile_query(pattern, c_iri))
+            range_rows = run(build_per_class_range_profile_query(pattern, c_iri))
+        except Exception as e:
+            logger.warning(
+                f"Skipping {c_iri}: profiling query failed ({e}). "
+                "To retry, increase timeouts in the shape config and re-run with --overwrite."
+            )
+            skipped += 1
+            continue
+
+        freq_map: dict[str, dict] = {}
+        for row in freq_rows:
+            freq_map[row["p"]] = {
+                "triple_count": int(row["tripleCount"]),
+                "entity_count": int(row["entityCount"]),
+            }
+
+        lit_dtypes: dict[str, list[str]] = defaultdict(list)
+        for row in lit_rows:
+            lit_dtypes[row["p"]].append(manager.format_iri(row["datatype"], wrap=True))
+
+        range_map: dict[str, list[str]] = defaultdict(list)
+        for row in range_rows:
+            p, tc = row["p"], row["targetClass"]
+            if tc not in range_map[p]:
+                range_map[p].append(tc)
+
         profile = assemble_profile(
             c_iri,
-            prop_freq.get(c_iri, {}),
-            lit_dtypes.get(c_iri, defaultdict(list)),
-            range_map.get(c_iri, defaultdict(list)),
-            total,
+            freq_map,
+            lit_dtypes,
+            range_map,
+            total_entities[c_iri],
             shape_config,
             manager,
         )
@@ -491,6 +491,9 @@ def build_shapes(
                 aliases=class_aliases,
             )
         )
+
+    if skipped:
+        logger.warning(f"Skipped {skipped:,} class(es) due to query failures")
 
     os.makedirs(shapes_dir, exist_ok=True)
     pattern_file = os.path.join(shapes_dir, "pattern.sparql")

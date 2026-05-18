@@ -12,7 +12,7 @@ class KgInfo(BaseModel):
 
 
 class ShapeConfig(BaseModel):
-    max_properties_per_concept: int = 20
+    max_properties_per_class: int = 20
     min_property_coverage: float = 0.02
     sparql_result_max_rows: int = 5_000_000
     request_timeout: float | tuple[float, float] = (3.0, 10.0)

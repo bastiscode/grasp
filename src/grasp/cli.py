@@ -556,10 +556,10 @@ def parse_args() -> argparse.Namespace:
         help="Batch size when building embedding index",
     )
     index_parser.add_argument(
-        "--max-concepts",
+        "--max-classes",
         type=int,
         default=500,
-        help="Maximum number of concepts to profile (shapes only)",
+        help="Maximum number of classes to profile (shapes only)",
     )
     add_overwrite_arg(index_parser)
 
@@ -1166,8 +1166,10 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
             shapes_dir,
             manager,
             shape_config=manager.shape_config or ShapeConfig(),
-            max_concepts=args.max_concepts,
+            max_classes=args.max_classes,
             log_level=args.log_level,
+            request_timeout=config.sparql_request_timeout,
+            read_timeout=config.sparql_read_timeout,
         )
 
     model = SentenceTransformerModel(args.emb_model)

@@ -1,7 +1,7 @@
 from unittest.mock import Mock
 
 from grasp.build.shapes import (
-    ConceptProfile,
+    ClassProfile,
     PropertyProfile,
     ShapeConfig,
     assemble_profile,
@@ -139,7 +139,7 @@ class TestAssembleProfile:
             for i in range(5)
         }
         shape_config = ShapeConfig(
-            max_properties_per_concept=3, min_property_coverage=0.0
+            max_properties_per_class=3, min_property_coverage=0.0
         )
 
         profile = assemble_profile(
@@ -167,7 +167,7 @@ class TestAssembleProfile:
             "http://ex.org/p3": {"triple_count": 1, "entity_count": 1},
         }
         shape_config = ShapeConfig(
-            max_properties_per_concept=3, min_property_coverage=0.5
+            max_properties_per_class=3, min_property_coverage=0.5
         )
 
         profile = assemble_profile(
@@ -202,7 +202,7 @@ class TestAssembleProfile:
 class TestEmitRetrievalDoc:
     def test_full_output(self):
         manager = make_manager()
-        profile = ConceptProfile(
+        profile = ClassProfile(
             iri="http://ex.org/Human",
             short_iri="ex:Human",
             total_entities=500,
@@ -273,9 +273,9 @@ class TestComputeShape:
             assert "timeout" in str(e)
 
 
-def _make_profile(with_target_iris: bool = True) -> ConceptProfile:
+def _make_profile(with_target_iris: bool = True) -> ClassProfile:
     target_iris = ["http://ex.org/Class"] if with_target_iris else []
-    return ConceptProfile(
+    return ClassProfile(
         iri="http://ex.org/Human",
         short_iri="ex:Human",
         total_entities=500,
