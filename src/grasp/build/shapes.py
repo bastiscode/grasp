@@ -336,7 +336,9 @@ def assemble_profile(
         short_iri=manager.format_iri(class_iri, wrap=True),
         total_entities=total_entities,
         properties=properties,
-        omitted_properties=max(0, len(common_props) - shape_config.max_properties_per_concept),
+        omitted_properties=max(
+            0, len(common_props) - shape_config.max_properties_per_concept
+        ),
         filtered_properties=filtered_count,
     )
 
@@ -411,7 +413,7 @@ def build_shapes(
     shape_config: ShapeConfig = ShapeConfig(),
     max_concepts: int = 500,
     log_level: str | int | None = None,
-) -> list[dict]:
+) -> list[ShapeSample]:
     logger = get_logger("GRASP SHAPES BUILD", log_level)
 
     def run(query: str) -> list[dict[str, Any]]:
