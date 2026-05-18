@@ -1135,10 +1135,8 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
     if not managers:
         logger.error("No KG managers available")
         return
-    elif len(managers) == 1:
-        manager = managers[0]
-    else:
-        manager, _ = find_manager(managers, args.knowledge_graph)
+
+    manager, _ = find_manager(managers, args.knowledge_graph)
 
     kg_dir = get_index_dir(manager.kg)
     setup_path = os.path.join(kg_dir, "shapes", "setup.json")
