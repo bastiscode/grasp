@@ -8,6 +8,7 @@ from grasp.build.shapes import (
     cardinality_tag,
     compute_shape,
     emit_pseudo_shex,
+    collect_iris,
 )
 from grasp.manager import KgManager
 from grasp.shapes import ShapeSample
@@ -252,11 +253,11 @@ class TestComputeShape:
             total_result,
         ]
 
-        doc = compute_shape(
+        profile = compute_shape(
             "http://ex.org/Human", "?instance wdt:P31 {CLASS} .", manager, ShapeConfig()
         )
 
-        assert doc == (
+        assert emit_pseudo_shex(profile, manager) == (
             "http://ex.org/Human {\n"
             "  http://ex.org/name http://www.w3.org/2001/XMLSchema#string ? ;\n"
             "}"

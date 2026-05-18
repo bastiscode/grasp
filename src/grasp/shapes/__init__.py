@@ -17,6 +17,9 @@ class ShapeSample:
         iri: str,
         short_iri: str,
         shex: str,
+        dense_shex: str | None = None,
+        iris: list[str] | None = None,
+        dense_iris: list[str] | None = None,
         label: str | None = None,
         aliases: list[str] | None = None,
         **_: object,
@@ -24,6 +27,9 @@ class ShapeSample:
         self.iri = iri
         self.short_iri = short_iri
         self.shex = shex
+        self.dense_shex = dense_shex or shex
+        self.iris = iris or []
+        self.dense_iris = dense_iris or []
         self.label = label
         self.aliases = aliases or []
 
@@ -42,6 +48,9 @@ class ShapeSample:
             "iri": self.iri,
             "short_iri": self.short_iri,
             "shex": self.shex,
+            "dense_shex": self.dense_shex,
+            "iris": self.iris,
+            "dense_iris": self.dense_iris,
             "label": self.label,
             "aliases": self.aliases,
         }

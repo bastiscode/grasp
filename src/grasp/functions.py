@@ -178,7 +178,8 @@ list(kg="wikidata", property="wdt:P19")""",
                 "name": "search_shape",
                 "description": f"""\
 Search for pseudo-ShEx schema patterns for classes in the specified knowledge \
-graph that match a semantic query.
+graph that match a semantic query. Returns a compact view per class; \
+use get_shape for a more detailed view of a specific class.
 
 Use this to discover which classes exist in the KG and what their structure looks \
 like before writing SPARQL queries.
@@ -798,7 +799,9 @@ def call_function(
         manager, _ = find_manager(managers, fn_args["kg"])
         if manager.shapes is None:
             return f"No shapes available for knowledge graph '{fn_args['kg']}'"
-        return call_shape_function(fn_name, fn_args, manager.shapes, manager, config)
+        return call_shape_function(
+            fn_name, fn_args, manager.shapes, manager, config, known
+        )
 
     elif task is not None:
         return task.call_function(fn_name, fn_args, known, example_indices)
@@ -815,9 +818,18 @@ SHAPE_NOTE = (
 
 
 def format_shapes(shapes: list[ShapeSample]) -> str:
-    result = format_enumerate(shape.shex for shape in shapes)
+    result = format_enumerate(shape.dense_shex for shape in shapes)
     result += f"\n\n{SHAPE_NOTE}"
     return result
+
+
+def update_known_from_shape_iris(
+    known: set[str],
+    iris: list[str],
+    manager: KgManager,
+) -> None:
+    update_known_from_iris(known, iris, manager.get_normalizer("entities"))
+    update_known_from_iris(known, iris, manager.get_normalizer("properties"))
 
 
 def call_shape_function(
@@ -826,6 +838,7 @@ def call_shape_function(
     shapes: "Any",
     manager: KgManager,
     config: GraspConfig,
+    known: set[str] | None = None,
 ) -> str:
     if fn_name == "search_shape":
         if shapes.index is None:
@@ -840,6 +853,9 @@ def call_shape_function(
         if not results:
             return f"No shapes (page {page})"
 
+        if known is not None:
+            for sample in results:
+                update_known_from_shape_iris(known, sample.dense_iris, manager)
         return f"Shapes (page {page}):\n" + format_shapes(results)
 
     elif fn_name == "get_shape":
@@ -860,6 +876,8 @@ def call_shape_function(
             else None
         )
         if sample is not None:
+            if known is not None:
+                update_known_from_shape_iris(known, sample.iris, manager)
             return sample.shex + "\n\n" + SHAPE_NOTE
 
         if shapes.pattern is None:
@@ -869,15 +887,18 @@ def call_shape_function(
                 "for on-the-fly computation."
             )
 
-        from grasp.build.shapes import compute_shape
+        from grasp.build.shapes import collect_iris, compute_shape, emit_pseudo_shex
 
         try:
-            result = compute_shape(
+            profile = compute_shape(
                 expanded_iri,
                 shapes.pattern,
                 manager,
                 manager.shape_config,
             )
+            if known is not None:
+                update_known_from_shape_iris(known, collect_iris(profile), manager)
+            result = emit_pseudo_shex(profile, manager)
             return result + "\n\n" + SHAPE_NOTE
         except Exception as e:
             return (

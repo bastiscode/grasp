@@ -267,6 +267,14 @@ def emit_pseudo_shex(profile: ClassProfile, manager: KgManager) -> str:
     return "\n".join(lines)
 
 
+def collect_iris(profile: ClassProfile) -> list[str]:
+    iris = []
+    for prop in profile.properties:
+        iris.append(prop.iri)
+        iris.extend(prop.target_class_iris)
+    return iris
+
+
 def assemble_profile(
     class_iri: str,
     freq_map: dict[str, dict],
@@ -334,7 +342,7 @@ def compute_shape(
     pattern: str,
     manager: KgManager,
     shape_config: ShapeConfig | None = None,
-) -> str:
+) -> ClassProfile:
     if shape_config is None:
         shape_config = ShapeConfig()
 
@@ -379,7 +387,7 @@ def compute_shape(
         if tc not in range_map[p]:
             range_map[p].append(tc)
 
-    profile = assemble_profile(
+    return assemble_profile(
         class_iri,
         freq_map,
         lit_dtypes,
@@ -388,7 +396,6 @@ def compute_shape(
         shape_config,
         manager,
     )
-    return emit_pseudo_shex(profile, manager)
 
 
 def build_shapes(
@@ -475,7 +482,22 @@ def build_shapes(
             shape_config,
             manager,
         )
+        dense_config = shape_config.model_copy(
+            update={"max_properties_per_class": shape_config.dense_max_properties_per_class}
+        )
+        dense_profile = assemble_profile(
+            c_iri,
+            freq_map,
+            lit_dtypes,
+            range_map,
+            total_entities[c_iri],
+            dense_config,
+            manager,
+        )
         shex = emit_pseudo_shex(profile, manager)
+        dense_shex = emit_pseudo_shex(dense_profile, manager)
+        iris = collect_iris(profile)
+        dense_iris = collect_iris(dense_profile)
         class_label, class_aliases = get_label_and_aliases(c_iri, "entities", manager)
         if class_label:
             derived = derive_label_from_iri(c_iri, manager.prefixes)
@@ -487,6 +509,9 @@ def build_shapes(
                 iri=c_iri,
                 short_iri=profile.short_iri,
                 shex=shex,
+                dense_shex=dense_shex,
+                iris=iris,
+                dense_iris=dense_iris,
                 label=class_label,
                 aliases=class_aliases,
             )
