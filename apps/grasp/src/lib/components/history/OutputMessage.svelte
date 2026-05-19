@@ -25,7 +25,7 @@ const shareModalTitleId = `share-modal-title-${Math.random().toString(36).slice(
 const shareModalDescriptionId = `share-modal-description-${Math.random().toString(36).slice(2, 8)}`;
 
 let primaryText = '';
-if (task === 'sparql-qa') {
+if (task === 'sparql-qa' || task === 'sparql-to-question') {
   primaryText =
     output?.type === 'answer'
       ? output?.answer ?? ''
