@@ -166,11 +166,11 @@ def load_example_indices(
 
     indices = {}
     for kg in config.knowledge_graphs:
-        if kg.example_index is None:
+        if kg.examples is None:
             continue
 
         assert model is not None, "Model must be provided to load example indices"
 
-        indices[kg.kg] = index_cls.load(kg.example_index, model)
+        indices[kg.kg] = index_cls.load(kg.examples, model)
 
     return indices
