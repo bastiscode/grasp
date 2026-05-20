@@ -3,13 +3,12 @@ from unittest.mock import Mock
 from grasp.build.shapes import (
     ClassProfile,
     PropertyProfile,
-    ShapeConfig,
     assemble_profile,
     cardinality_tag,
     compute_shape,
     emit_pseudo_shex,
-    collect_iris,
 )
+from grasp.configs import ShapeConfig
 from grasp.manager import KgManager
 from grasp.shapes import ShapeSample
 from grasp.sparql.types import SelectResult

@@ -120,13 +120,13 @@ def build_total_entities_query(pattern: str) -> str:
     )
 
 
-def _wrap(pattern: str) -> str:
+def wrap_pattern(pattern: str) -> str:
     inner = "\n".join(f"    {line}" for line in pattern.strip().splitlines())
     return f"  {{\n{inner}\n  }}"
 
 
 def build_per_class_property_frequency_query(pattern: str, class_iri: str) -> str:
-    ip = _wrap(instance_pattern(pattern, class_iri))
+    ip = wrap_pattern(instance_pattern(pattern, class_iri))
     return (
         f"SELECT ?p (COUNT(*) AS ?tripleCount) (COUNT(DISTINCT ?instance) AS ?entityCount)\n"
         f"WHERE {{\n"
@@ -139,7 +139,7 @@ def build_per_class_property_frequency_query(pattern: str, class_iri: str) -> st
 
 
 def build_per_class_literal_profile_query(pattern: str, class_iri: str) -> str:
-    ip = _wrap(instance_pattern(pattern, class_iri))
+    ip = wrap_pattern(instance_pattern(pattern, class_iri))
     return (
         f"SELECT ?p ?datatype (COUNT(*) AS ?count)\n"
         f"WHERE {{\n"
@@ -154,8 +154,8 @@ def build_per_class_literal_profile_query(pattern: str, class_iri: str) -> str:
 
 
 def build_per_class_range_profile_query(pattern: str, class_iri: str) -> str:
-    ip = _wrap(instance_pattern(pattern, class_iri))
-    op = _wrap(object_pattern(pattern))
+    ip = wrap_pattern(instance_pattern(pattern, class_iri))
+    op = wrap_pattern(object_pattern(pattern))
     return (
         f"SELECT ?p ?targetClass (COUNT(*) AS ?count)\n"
         f"WHERE {{\n"
@@ -169,7 +169,7 @@ def build_per_class_range_profile_query(pattern: str, class_iri: str) -> str:
 
 
 def build_per_class_total_query(pattern: str, class_iri: str) -> str:
-    ip = _wrap(instance_pattern(pattern, class_iri))
+    ip = wrap_pattern(instance_pattern(pattern, class_iri))
     return f"SELECT (COUNT(DISTINCT ?instance) AS ?totalEntities)\nWHERE {{\n{ip}\n}}"
 
 
@@ -483,7 +483,9 @@ def build_shapes(
             manager,
         )
         dense_config = shape_config.model_copy(
-            update={"max_properties_per_class": shape_config.dense_max_properties_per_class}
+            update={
+                "max_properties_per_class": shape_config.dense_max_properties_per_class
+            }
         )
         dense_profile = assemble_profile(
             c_iri,
