@@ -320,7 +320,7 @@ def generate_questions(
     for r in trange(config.num_rounds, desc="Generating questions"):
         output = consume_generator(
             generate(
-                "question_generation",
+                "question-generation",
                 state,
                 config,
                 managers,
@@ -332,7 +332,7 @@ def generate_questions(
 
         dump_json(
             output,
-            os.path.join(out_dir, f"output.question_generation.round_{r}.json"),
+            os.path.join(out_dir, f"question-generation.trace.round_{r}.json"),
         )
 
         for kg, kg_questions in state.questions.items():

@@ -1025,7 +1025,7 @@ def setup_grasp(args: argparse.Namespace) -> None:
             )
         )
 
-        trace_path = os.path.join(trace_dir, "auto_setup.json")
+        trace_path = os.path.join(trace_dir, "auto-setup.trace.json")
         stamped = dump_latest(trace_path, result)
         logger.info(f"Saved setup {p} trace to {stamped} (latest: {trace_path})")
 
@@ -1106,7 +1106,7 @@ def _shapes_setup_grasp(args: argparse.Namespace) -> None:
     shapes_dir = os.path.join(kg_dir, "shapes")
     os.makedirs(shapes_dir, exist_ok=True)
 
-    trace_path = os.path.join(shapes_dir, "setup.trace.json")
+    trace_path = os.path.join(shapes_dir, "shapes-setup.trace.json")
     stamped = dump_latest(trace_path, result)
     logger.info(f"Saved setup trace to {stamped} (latest: {trace_path})")
 

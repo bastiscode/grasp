@@ -72,7 +72,7 @@ def output(state: QuestionGenerationState) -> dict:
 
 
 class QuestionGenerationTask(GraspTask):
-    name = "question_generation"
+    name = "question-generation"
 
     def system_information(self) -> str:
         assert isinstance(self.config, NotesGenerateQuestionsConfig)
