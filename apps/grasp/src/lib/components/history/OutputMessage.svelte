@@ -25,16 +25,18 @@ const shareModalTitleId = `share-modal-title-${Math.random().toString(36).slice(
 const shareModalDescriptionId = `share-modal-description-${Math.random().toString(36).slice(2, 8)}`;
 
 let primaryText = '';
-if (task === 'sparql-qa' || task === 'sparql-to-question') {
+if (task === 'sparql-qa') {
   primaryText =
     output?.type === 'answer'
       ? output?.answer ?? ''
       : output?.explanation ?? '';
+} else if (task === 'sparql-to-question') {
+  primaryText = output?.formatted ?? '';
 } else if (task === 'general-qa') {
   primaryText = output?.output ?? '';
 }
 
-const sparql = output?.sparql ?? null;
+const sparql = task === 'sparql-to-question' ? null : output?.sparql ?? null;
 const selections = output?.selections ?? null;
 const result = output?.result ?? null;
 const endpoint = output?.endpoint ?? null;
