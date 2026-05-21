@@ -844,6 +844,7 @@ def call_shape_function(
         if shapes.index is None:
             return "Shape search is unavailable: the existing index was cleared after the pattern was changed. Rebuild the index to re-enable shape search."
         query = fn_args["query"]
+        validate_query(query)
         page = fn_args.get("page") or 1
         validate_page(page, config.search_max_pages)
         k = config.num_shapes
@@ -916,6 +917,11 @@ def validate_page(page: int, max_pages: int | None = None) -> None:
         raise FunctionCallException(f"Page number must be at most {max_pages}")
 
 
+def validate_query(query: str) -> None:
+    if not query.strip():
+        raise FunctionCallException("Query must not be empty")
+
+
 def search_entity(
     managers: list[KgManager],
     kg: str,
@@ -927,6 +933,7 @@ def search_entity(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
@@ -957,6 +964,7 @@ def search_property(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
@@ -987,6 +995,7 @@ def search_literal(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
@@ -1441,6 +1450,7 @@ def search_with_constraints(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
 
@@ -1561,6 +1571,7 @@ def search_with_filter(
     max_pages: int = 10,
     **search_kwargs: Any,
 ) -> str:
+    validate_query(query)
     validate_page(page, max_pages)
     manager, others = find_manager(managers, kg)
 
