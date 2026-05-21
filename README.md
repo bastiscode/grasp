@@ -2,6 +2,19 @@
 
 ## News
 
+- April 22nd 2026:
+  - arXiv preprint of GRISP (Guided Recurrent IRI Selection over SPARQL Skeletons),
+    an alternative QA baseline included in this repository, available at
+    [arxiv.org/abs/2604.21133](https://arxiv.org/abs/2604.21133)
+
+- February 16th 2026:
+  - GRASP has been used to generate WDQL, a dataset of Wikidata query logs
+  - arXiv preprint of "The Wikidata Query Logs Dataset" available at
+    [arxiv.org/abs/2602.14594](https://arxiv.org/abs/2602.14594)
+  - WDQL has been accepted to [SIGIR 2026](https://sigir2026.org/)
+  - Dataset available at
+    [github.com/ad-freiburg/wikidata-query-logs](https://github.com/ad-freiburg/wikidata-query-logs)
+
 - October 20th 2025:
   - GRASP can now be used for entity linking, in particular for
 cell entity annotation
@@ -564,6 +577,10 @@ GRISP (Guided Recurrent IRI Selection over SPARQL Skeletons) is an alternative
 question-answering baseline included in this repository. It works by fine-tuning
 a small language model to generate SPARQL skeletons, then iteratively retrieving
 and re-ranking entities using the GRASP search indices.
+
+See the arXiv preprint at [arxiv.org/abs/2604.21133](https://arxiv.org/abs/2604.21133)
+for details. The exact version of the code used in the paper is tagged
+[`GRISP`](https://github.com/ad-freiburg/grasp/tree/GRISP) in this repository.
 
 Follow [these instructions](src/grasp/baselines/grisp/README.md) to train,
 run, and evaluate GRISP. To run the GRISP web app, follow
