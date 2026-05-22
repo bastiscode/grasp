@@ -619,6 +619,10 @@ def tokenize_selection(
         return_dict=True,
         enable_thinking=False,
     )  # type: ignore
+    assert len(sample.options) >= 1, "Selection sample must have at least one option"
+    assert sample.target in sample.options, (
+        f"Target '{sample.target}' not in options {sample.options}"
+    )
     option_token_ids = [tokenizer.convert_tokens_to_ids(o) for o in sample.options]
     assert all(
         t is not None and t != tokenizer.unk_token_id for t in option_token_ids
