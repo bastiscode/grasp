@@ -121,7 +121,7 @@ def serve(config: GRISPServerConfig, log_level: int | str | None = None) -> None
 
     logger.info(
         f"GRISP server ready: kg={config.knowledge_graph.kg}, "
-        f"model={skeleton_model.config.name_or_path}"  # type: ignore
+        f"model={skeleton_model.model.config.name_or_path}"  # type: ignore
     )
 
     @app.get("/knowledge_graphs")

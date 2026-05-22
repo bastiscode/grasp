@@ -4,7 +4,7 @@ import os
 import random
 import sys
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager
 from logging import Logger
 from typing import Generator
 
@@ -220,19 +220,13 @@ class GRISPModel:
         self.model = model
         self.disable = disable and isinstance(model, PeftModel)
 
-    def ctx(self):
-        return self.model.disable_adapter() if self.disable else nullcontext()  # type: ignore
-
-    def generate(self, *args, **kwargs):
-        with self.ctx():
-            return self.model.generate(*args, **kwargs)  # type: ignore
-
-    def __call__(self, *args, **kwargs):
-        with self.ctx():
-            return self.model(*args, **kwargs)
-
-    def __getattr__(self, name):
-        return getattr(self.model, name)
+    @contextmanager
+    def get(self):
+        if self.disable:
+            with self.model.disable_adapter():  # type: ignore
+                yield self.model
+        else:
+            yield self.model
 
 
 def generate_skeletons(
@@ -246,36 +240,37 @@ def generate_skeletons(
 ) -> list[Skeleton]:
     input = get_skeleton_prompt(manager.kg, question)
 
-    device = next(model.parameters()).device
-    enc = tokenizer.apply_chat_template(
-        input,
-        add_generation_prompt=True,
-        return_tensors="pt",
-        return_dict=True,
-        enable_thinking=False,
-    ).to(device)  # type: ignore
-    prompt_length = enc["input_ids"].shape[1]  # type: ignore
+    with model.get() as m:
+        device = next(m.parameters()).device
+        enc = tokenizer.apply_chat_template(
+            input,
+            add_generation_prompt=True,
+            return_tensors="pt",
+            return_dict=True,
+            enable_thinking=False,
+        ).to(device)  # type: ignore
+        prompt_length = enc["input_ids"].shape[1]  # type: ignore
 
-    fmt = tokenizer.decode(enc["input_ids"][0])  # type: ignore
-    logger.debug(f"Generating skeletons:\n{fmt}")
+        fmt = tokenizer.decode(enc["input_ids"][0])  # type: ignore
+        logger.debug(f"Generating skeletons:\n{fmt}")
 
-    outputs = model.generate(  # type: ignore
-        **enc,
-        generation_config=GenerationConfig(
-            num_beams=cfg.skeleton_n,
-            temperature=cfg.temperature,
-            top_p=cfg.top_p,
-            top_k=cfg.top_k,
-            min_p=cfg.min_p,
-            repetition_penalty=cfg.repeat_penalty,
-            do_sample=cfg.do_sample,
-            max_new_tokens=512,
-            renormalize_logits=True,
-            num_return_sequences=cfg.skeleton_n,
-            return_dict_in_generate=True,
-            output_scores=True,
-        ),
-    )
+        outputs = m.generate(  # type: ignore
+            **enc,
+            generation_config=GenerationConfig(
+                num_beams=cfg.skeleton_n,
+                temperature=cfg.temperature,
+                top_p=cfg.top_p,
+                top_k=cfg.top_k,
+                min_p=cfg.min_p,
+                repetition_penalty=cfg.repeat_penalty,
+                do_sample=cfg.do_sample,
+                max_new_tokens=512,
+                renormalize_logits=True,
+                num_return_sequences=cfg.skeleton_n,
+                return_dict_in_generate=True,
+                output_scores=True,
+            ),
+        )
 
     skeletons = []
     seen = set()
@@ -342,24 +337,25 @@ def rerank_alternatives(
     logger.debug(f"Reranking alternatives:\n{fmt}")
     logger.debug(f"Last 10 input ids for reranking: {input_ids[-10:]}")  # type: ignore
 
-    device = next(model.parameters()).device
-    input_ids = torch.tensor(input_ids, dtype=torch.long, device=device)
-    option_ids = []
-    for option in options:
-        option_token_ids = tokenizer.encode(
-            option,
-            add_special_tokens=False,
-        )  # type: ignore
-        assert len(option_token_ids) == 1, "Option must be a single token"
-        logger.debug(f"Option '{option}' token id: {option_token_ids[0]}")
-        option_ids.append(option_token_ids[0])
+    with model.get() as m:
+        device = next(m.parameters()).device
+        input_ids = torch.tensor(input_ids, dtype=torch.long, device=device)
+        option_ids = []
+        for option in options:
+            option_token_ids = tokenizer.encode(
+                option,
+                add_special_tokens=False,
+            )  # type: ignore
+            assert len(option_token_ids) == 1, "Option must be a single token"
+            logger.debug(f"Option '{option}' token id: {option_token_ids[0]}")
+            option_ids.append(option_token_ids[0])
 
-    option_ids = torch.tensor(option_ids, dtype=torch.long, device=device)
+        option_ids = torch.tensor(option_ids, dtype=torch.long, device=device)
 
-    # shape [1, S, V]
-    with torch.inference_mode():
-        logits = model(input_ids.unsqueeze(0)).logits
-        logger.debug(f"Score logits shape: {logits.shape}")
+        # shape [1, S, V]
+        with torch.inference_mode():
+            logits = m(input_ids.unsqueeze(0)).logits
+            logger.debug(f"Score logits shape: {logits.shape}")
 
     # get last logits [V]
     logits = logits[0, -1]
@@ -800,11 +796,11 @@ def main(args: argparse.Namespace) -> None:
         selection_tokenizer = tokenizer
 
     logger.info(
-        f"Using model {skeleton_model.config.name_or_path} for skeleton generation"  # type: ignore
+        f"Using model {skeleton_model.model.config.name_or_path} for skeleton generation"  # type: ignore
         f" (adapter disabled={skeleton_model.disable})"
     )
     logger.info(
-        f"Using model {selection_model.config.name_or_path} for selection"  # type: ignore
+        f"Using model {selection_model.model.config.name_or_path} for selection"  # type: ignore
         f" (adapter disabled={selection_model.disable})"
     )
 
