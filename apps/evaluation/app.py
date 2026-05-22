@@ -178,16 +178,13 @@ def calculate_average_steps_and_time(
     count = 0
 
     for output in outputs_dict.values():
-        if "messages" not in output:
-            continue
+        if "messages" in output:
+            total_steps += sum(
+                1
+                for msg in output["messages"]
+                if msg.get("role") not in ["user", "system"]
+            )
 
-        # Count steps (messages that are not user or system)
-        steps = sum(
-            1 for msg in output["messages"] if msg.get("role") not in ["user", "system"]
-        )
-        total_steps += steps
-
-        # Get elapsed time
         if "elapsed" in output:
             total_time += output["elapsed"]
 
