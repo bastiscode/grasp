@@ -253,6 +253,47 @@ class GRISPTrainer(Trainer):
     def __init__(self, *args, epochs_trained: int = 0, **kwargs):
         super().__init__(*args, **kwargs)
         self.epochs_trained = epochs_trained
+        self._last_inputs_meta: dict[str, Any] = {}
+
+    def training_step(self, model, inputs, num_items_in_batch=None):  # type: ignore
+        self._last_inputs_meta = {
+            k: tuple(v.shape) if hasattr(v, "shape") else v
+            for k, v in inputs.items()
+        }
+        self._last_seq_lens = (
+            inputs["attention_mask"].sum(dim=1).tolist()
+            if "attention_mask" in inputs
+            else None
+        )
+        loss = super().training_step(model, inputs, num_items_in_batch=num_items_in_batch)
+
+        first_bad: tuple[str, torch.Tensor] | None = None
+        for name, p in model.named_parameters():
+            if p.grad is None:
+                continue
+            if not torch.isfinite(p.grad).all():
+                first_bad = (name, p.grad)
+                break
+        if first_bad is not None:
+            name, grad = first_bad
+            n_nan = int(torch.isnan(grad).sum().item())
+            n_inf = int(torch.isinf(grad).sum().item())
+            n_total = grad.numel()
+            finite_mask = torch.isfinite(grad)
+            finite_max = (
+                grad[finite_mask].abs().max().item() if finite_mask.any() else float("nan")
+            )
+            raise RuntimeError(
+                "Non-finite gradient detected.\n"
+                f"  first bad param: {name}\n"
+                f"  grad shape={tuple(grad.shape)}, dtype={grad.dtype}\n"
+                f"  n_nan={n_nan}/{n_total}, n_inf={n_inf}/{n_total}, "
+                f"max_finite_abs={finite_max}\n"
+                f"  loss(step return)={loss.item()}\n"
+                f"  batch shapes: {self._last_inputs_meta}\n"
+                f"  per-row seq lens (sum of attention_mask): {self._last_seq_lens}"
+            )
+        return loss
 
     def _get_train_sampler(self, dataset: Dataset | None = None) -> Sampler:  # type: ignore
         if dataset is None:
