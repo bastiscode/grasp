@@ -24,6 +24,9 @@ backtrack: env(BACKTRACK:true)
 rerank: env(RERANK:true)
 check_empty: env(CHECK_EMPTY:true)
 
+skeleton_disable_adapter: env(SKELETON_DISABLE_ADAPTER:false)
+selection_disable_adapter: env(SELECTION_DISABLE_ADAPTER:false)
+
 port: env(PORT:6790)
 max_connections: env(MAX_CONNECTIONS:10)
 max_generation_time: env(MAX_GENERATION_TIME:300)

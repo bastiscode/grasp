@@ -4,6 +4,7 @@ import os
 import random
 import sys
 import time
+from contextlib import nullcontext
 from logging import Logger
 from typing import Generator
 
@@ -210,9 +211,32 @@ class GRISPRunConfig(BaseModel):
     rerank: bool = True
     check_empty: bool = True
 
+    skeleton_disable_adapter: bool = False
+    selection_disable_adapter: bool = False
+
+
+class GRISPModel:
+    def __init__(self, model: PreTrainedModel | PeftModel, disable: bool):
+        self.model = model
+        self.disable = disable and isinstance(model, PeftModel)
+
+    def ctx(self):
+        return self.model.disable_adapter() if self.disable else nullcontext()  # type: ignore
+
+    def generate(self, *args, **kwargs):
+        with self.ctx():
+            return self.model.generate(*args, **kwargs)  # type: ignore
+
+    def __call__(self, *args, **kwargs):
+        with self.ctx():
+            return self.model(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self.model, name)
+
 
 def generate_skeletons(
-    model: PreTrainedModel | PeftModel,
+    model: GRISPModel,
     tokenizer: PreTrainedTokenizerBase,
     cfg: GRISPRunConfig,
     question: str,
@@ -288,7 +312,7 @@ def generate_skeletons(
 
 
 def rerank_alternatives(
-    model: PreTrainedModel | PeftModel,
+    model: GRISPModel,
     tokenizer: PreTrainedTokenizerBase,
     manager: KgManager,
     question: str,
@@ -373,7 +397,7 @@ def is_api_failure(exception: Exception) -> bool:
 
 def select_iris_left_to_right(
     skeleton: Skeleton,
-    model: PreTrainedModel | PeftModel,
+    model: GRISPModel,
     tokenizer: PreTrainedTokenizerBase,
     cfg: GRISPRunConfig,
     question: str,
@@ -583,14 +607,14 @@ def select_iris_left_to_right(
 
 
 def generate(
-    model: PreTrainedModel | PeftModel,
+    model: GRISPModel,
     tokenizer: PreTrainedTokenizerBase,
     cfg: GRISPRunConfig,
     question: str,
     manager: KgManager,
     parser: LR1Parser,
     logger: Logger,
-    select_model: PreTrainedModel | PeftModel | None = None,
+    select_model: GRISPModel | None = None,
     select_tokenizer: PreTrainedTokenizerBase | None = None,
     yield_output: bool = False,
 ) -> Generator[dict, None, dict]:
@@ -751,30 +775,38 @@ def main(args: argparse.Namespace) -> None:
         logger,
     )
 
-    skeleton_model, skeleton_tokenizer = model, tokenizer
-    selection_model, selection_tokenizer = None, None
+    skeleton_tokenizer = tokenizer
+    skeleton_model = GRISPModel(model, run_cfg.skeleton_disable_adapter)
 
     if train_cfg.type == "skeleton" and args.selection_run is None:
         logger.warning(
             "Main model is skeleton only, selection quality may be suboptimal"
         )
+        selection_model = GRISPModel(model, run_cfg.selection_disable_adapter)
+        selection_tokenizer = tokenizer
     elif train_cfg.type == "skeleton":
         logger.info(f"Loading selection model from {args.selection_run}")
-        selection_model, selection_tokenizer = load_model_and_tokenizer(
+        sel_model, selection_tokenizer = load_model_and_tokenizer(
             args.selection_run,
             args.device,
             args.dtype,
             logger,
         )
+        selection_model = GRISPModel(sel_model, run_cfg.selection_disable_adapter)
+    else:
+        # train_cfg.type == "both": main model handles both stages,
+        # but wrap independently so the selection adapter flag is respected
+        selection_model = GRISPModel(model, run_cfg.selection_disable_adapter)
+        selection_tokenizer = tokenizer
 
     logger.info(
         f"Using model {skeleton_model.config.name_or_path} for skeleton generation"  # type: ignore
-        + (" and selection" if selection_model is None else "")
+        f" (adapter disabled={skeleton_model.disable})"
     )
-    if selection_model is not None:
-        logger.info(
-            f"Using separate model {selection_model.config.name_or_path} for selection"  # type: ignore
-        )
+    logger.info(
+        f"Using model {selection_model.config.name_or_path} for selection"  # type: ignore
+        f" (adapter disabled={selection_model.disable})"
+    )
 
     manager = load_kg_manager(run_cfg.knowledge_graph)
     manager.load_models()

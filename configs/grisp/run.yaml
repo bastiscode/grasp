@@ -20,3 +20,6 @@ autocomplete: env(AUTOCOMPLETE:true)
 backtrack: env(BACKTRACK:true)
 rerank: env(RERANK:true)
 check_empty: env(CHECK_EMPTY:true)
+
+skeleton_disable_adapter: env(SKELETON_DISABLE_ADAPTER:false)
+selection_disable_adapter: env(SELECTION_DISABLE_ADAPTER:false)
