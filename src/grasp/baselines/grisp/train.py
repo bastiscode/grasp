@@ -279,73 +279,40 @@ class GRISPTrainer(Trainer):
 
         outputs = model(**inputs)
         logits = outputs.logits  # (B, T, V)
-        T = logits.size(1)
 
-        # Selection rows have all-IGNORE labels, so they contribute nothing.
-        shift_logits = logits[:, :-1, :]
-        shift_labels = labels[:, 1:]
-        if (shift_labels != IGNORE_INDEX).any():
-            ntp_loss = F.cross_entropy(
-                shift_logits.reshape(-1, shift_logits.size(-1)),
-                shift_labels.reshape(-1),
+        total_loss = torch.zeros((), device=logits.device, dtype=logits.dtype)
+        total_n = torch.zeros((), device=logits.device, dtype=logits.dtype)
+
+        if (~is_select).any():
+            skel_logits = logits[~is_select]
+            skel_labels = labels[~is_select]
+            shift_logits = skel_logits[:, :-1].contiguous()
+            shift_labels = skel_labels[:, 1:].contiguous()
+            ntp = F.cross_entropy(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
                 ignore_index=IGNORE_INDEX,
                 reduction="sum",
             )
-        else:
-            ntp_loss = shift_logits.new_zeros(())
-        ntp_n = (shift_labels != IGNORE_INDEX).sum().to(logits.dtype)
+            n_ntp = (shift_labels != IGNORE_INDEX).sum().to(logits.dtype)
+            total_loss = total_loss + ntp
+            total_n = total_n + n_ntp
 
-        # Drop rows whose answer position fell beyond the (possibly truncated)
-        # sequence, whose options are entirely masked, or whose target points
-        # at a masked option — any of these would push CE to NaN.
-        target_in_range = (target_idx >= 0) & (target_idx < option_mask.size(1))
-        safe_target_idx = target_idx.clamp(min=0, max=option_mask.size(1) - 1)
-        target_unmasked = option_mask.gather(1, safe_target_idx.unsqueeze(1)).squeeze(1)
-        any_option = option_mask.any(dim=1)
-        sel_valid = (
-            is_select
-            & (answer_pos >= 1)
-            & (answer_pos < T)
-            & any_option
-            & target_in_range
-            & target_unmasked
-        )
-        sel_rows = sel_valid.nonzero(as_tuple=True)[0]
-
-        sel_loss = shift_logits.new_zeros(())
-        sel_n = sel_rows.numel()
-
-        if sel_n > 0:
-            pred_pos = answer_pos[sel_rows] - 1
-            answer_logits = logits[sel_rows, pred_pos]
-
-            option_logits = answer_logits.gather(1, option_ids[sel_rows])
-            option_logits = option_logits.masked_fill(
-                ~option_mask[sel_rows], float("-inf")
+        if is_select.any():
+            sel_rows = is_select.nonzero(as_tuple=True)[0]
+            # logit at position t-1 predicts token at position t
+            pred_pos = (answer_pos[sel_rows] - 1).clamp(min=0)
+            ans_logits = logits[sel_rows, pred_pos]  # (M, V)
+            opt_logits = ans_logits.gather(1, option_ids[sel_rows])  # (M, K)
+            opt_logits = opt_logits.masked_fill(~option_mask[sel_rows], float("-inf"))
+            sel = F.cross_entropy(opt_logits, target_idx[sel_rows], reduction="sum")
+            n_sel = torch.tensor(
+                len(sel_rows), device=logits.device, dtype=logits.dtype
             )
+            total_loss = total_loss + sel
+            total_n = total_n + n_sel
 
-            sel_loss = F.cross_entropy(
-                option_logits,
-                target_idx[sel_rows],
-                reduction="sum",
-            )
-
-        loss = (ntp_loss + sel_loss) / (ntp_n + sel_n).clamp(min=1)
-
-        if not torch.isfinite(loss):
-            n_select = int(is_select.sum().item())
-            n_dropped = n_select - sel_n
-            raise RuntimeError(
-                "Non-finite loss in GRISPTrainer.compute_loss: "
-                f"loss={loss.item()}, ntp_loss={ntp_loss.item()}, "
-                f"sel_loss={sel_loss.item()}, ntp_n={ntp_n.item()}, "
-                f"sel_n={sel_n}, is_select_count={n_select}, "
-                f"dropped_select_rows={n_dropped}, "
-                f"option_mask_sums={option_mask.sum(dim=1).tolist()}, "
-                f"target_idx={target_idx.tolist()}, "
-                f"answer_pos={answer_pos.tolist()}, T={T}"
-            )
-
+        loss = total_loss / total_n.clamp(min=1)
         return (loss, outputs) if return_outputs else loss
 
 
