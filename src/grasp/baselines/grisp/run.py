@@ -205,7 +205,7 @@ class GRISPRunConfig(BaseModel):
     skeleton_top_k: int = 3
 
     selection_max_time: float = 60.0
-    selection_top_k: int = 3
+    selection_top_k: int = 10
     constrain: bool = True
     backtrack: bool = True
     rerank: bool = True

@@ -16,7 +16,7 @@ skeleton_n: env(SKELETON_N:8)
 skeleton_top_k: env(SKELETON_TOP_K:3)
 
 selection_top_k: env(SELECTION_TOP_K:10)
-autocomplete: env(AUTOCOMPLETE:true)
+constrain: env(CONSTRAIN:true)
 backtrack: env(BACKTRACK:true)
 rerank: env(RERANK:true)
 check_empty: env(CHECK_EMPTY:true)
