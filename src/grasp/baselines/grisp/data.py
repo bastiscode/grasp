@@ -470,6 +470,52 @@ fitting alternative."""
     return messages, list(options)
 
 
+class OracleSkeletonUnavailable(Exception):
+    pass
+
+
+def gold_sparql_to_nl_skeleton(sparql: str, manager: KgManager) -> str:
+    # match the training data pipeline (see preparation in main below):
+    # fix/strip known prefixes and prettify before extracting items, so the
+    # resulting NL skeleton lies on the training distribution.
+    sparql = manager.fix_prefixes(sparql, remove_known=True)
+    sparql = manager.prettify(sparql)
+    sparql, items = extract_sparql_items(sparql, manager)
+
+    # same validity rules as training data prep (main below):
+    # unindexed items must have a label, and unknown items are not allowed
+    invalid = [
+        item
+        for item in items
+        if (item.is_unindexed and not item.has_label) or item.is_unknown
+    ]
+    if invalid:
+        raise OracleSkeletonUnavailable(
+            "invalid items: "
+            + ", ".join(
+                f"{it.alternative.get_identifier()} ({it.obj_type.name})"
+                for it in invalid
+            )
+        )
+
+    parts: list[str | IRI] = []
+    cursor = 0
+    for item in items:
+        # literals/common/unknown are emitted as-is; everything else becomes a placeholder
+        if item.is_literal or item.is_common or item.is_unknown:
+            continue
+
+        start, end = item.item_span
+        parts.append(sparql[cursor:start])
+        parts.append(IRI.from_item(item, manager))
+        cursor = end
+
+    parts.append(sparql[cursor:])
+
+    # is_val=True -> deterministic canonical label, no alias sampling
+    return materialize_skeleton(parts, is_val=True)
+
+
 def materialize_skeleton(
     parts: list[str | IRI],
     is_val: bool = False,

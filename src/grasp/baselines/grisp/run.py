@@ -27,12 +27,14 @@ from universal_ml_utils.ops import consume_generator, extract_field, map_generat
 
 from grasp.baselines.grisp.data import (
     ALT_LABELS,
+    OracleSkeletonUnavailable,
     OrderedAlternatives,
     Skeleton,
     count_alternatives,
     find_alternative_groups,
     get_selection_prompt_and_options,
     get_skeleton_prompt,
+    gold_sparql_to_nl_skeleton,
     ordered_alternatives_with_interleave,
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
@@ -160,6 +162,18 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="question",
         help="Field to extract input from",
+    )
+    file_parser.add_argument(
+        "--oracle-skeleton",
+        action="store_true",
+        help="Skip skeleton generation; derive the skeleton from each sample's "
+        "gold 'sparql' field. Used to isolate IRI-selection errors.",
+    )
+    file_parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Persist every intermediate event (selections, backtracks, fails, "
+        "validations) as a 'trace' list on each sample's output.",
     )
     file_parser.add_argument(
         "-o",
@@ -613,21 +627,27 @@ def generate(
     select_model: GRISPModel | None = None,
     select_tokenizer: PreTrainedTokenizerBase | None = None,
     yield_output: bool = False,
+    gold_sparql: str | None = None,
 ) -> Generator[dict, None, dict]:
     sparql = None
     error = None
     start = time.monotonic()
 
     try:
-        skeletons = generate_skeletons(
-            model,
-            tokenizer,
-            cfg,
-            question,
-            manager,
-            parser,
-            logger,
-        )
+        if gold_sparql is not None:
+            logger.debug("Using oracle skeleton from gold SPARQL")
+            nl = gold_sparql_to_nl_skeleton(gold_sparql, manager)
+            skeletons = [Skeleton.parse(nl, parser)]
+        else:
+            skeletons = generate_skeletons(
+                model,
+                tokenizer,
+                cfg,
+                question,
+                manager,
+                parser,
+                logger,
+            )
 
         yield {
             "type": "skeletons",
@@ -658,6 +678,12 @@ def generate(
             if sparql is not None:
                 break
 
+    except OracleSkeletonUnavailable as e:
+        logger.warning(f"Skipping sample, oracle skeleton unavailable: {e}")
+        error = {
+            "reason": "oracle_skeleton_unavailable",
+            "content": str(e),
+        }
     except Exception as e:
         logger.error(f"Error generating SPARQL query: {e}")
         error = {
@@ -862,8 +888,19 @@ def main(args: argparse.Namespace) -> None:
             inputs = [{"question": ipt}]
             args.input_field = "question"  # overwrite
 
+    oracle_skeleton = run_on_file and args.oracle_skeleton
+    trace = run_on_file and args.trace
+
     for i, ipt in enumerate(inputs):
         id = extract_field(ipt, "id") or "unknown"
+
+        gold_sparql = None
+        if oracle_skeleton:
+            gold_sparql = extract_field(ipt, "sparql")
+            assert gold_sparql is not None, (
+                f"--oracle-skeleton requires a 'sparql' field on every sample, "
+                f"missing on input {i:,} (id={id})"
+            )
 
         ipt = extract_field(ipt, args.input_field)
         assert ipt is not None, f"Question not found for input {i:,}"
@@ -878,19 +915,28 @@ def main(args: argparse.Namespace) -> None:
             ):
                 continue
 
-        output = consume_generator(
-            generate(
-                skeleton_model,
-                skeleton_tokenizer,
-                run_cfg,
-                ipt,
-                manager,
-                parser,
-                logger,
-                selection_model,
-                selection_tokenizer,
-            )
+        gen = generate(
+            skeleton_model,
+            skeleton_tokenizer,
+            run_cfg,
+            ipt,
+            manager,
+            parser,
+            logger,
+            selection_model,
+            selection_tokenizer,
+            gold_sparql=gold_sparql,
         )
+        if trace:
+            events: list[dict] = []
+            try:
+                while True:
+                    events.append(next(gen))
+            except StopIteration as e:
+                output = e.value
+            output["output"]["trace"] = events
+        else:
+            output = consume_generator(gen)
 
         output["config"] = run_cfg.model_dump()
         output["id"] = id
