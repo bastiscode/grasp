@@ -817,8 +817,15 @@ SHAPE_NOTE = (
 )
 
 
-def format_shapes(shapes: list[ShapeSample]) -> str:
-    result = format_enumerate(shape.dense_shex for shape in shapes)
+def format_shapes(shapes: list[ShapeSample], manager: KgManager) -> str:
+    from grasp.build.shapes import emit_pseudo_shex
+    from grasp.configs import ShapeConfig
+
+    shape_config = manager.shape_config or ShapeConfig()
+    result = format_enumerate(
+        emit_pseudo_shex(shape.profile, manager, shape_config, dense=True)
+        for shape in shapes
+    )
     result += f"\n\n{SHAPE_NOTE}"
     return result
 
@@ -854,10 +861,18 @@ def call_shape_function(
         if not results:
             return f"No shapes (page {page})"
 
+        from grasp.build.shapes import collect_iris
+        from grasp.configs import ShapeConfig
+
+        shape_config = manager.shape_config or ShapeConfig()
         if known is not None:
             for sample in results:
-                update_known_from_shape_iris(known, sample.dense_iris, manager)
-        return f"Shapes (page {page}):\n" + format_shapes(results)
+                update_known_from_shape_iris(
+                    known,
+                    collect_iris(sample.profile, manager, shape_config, dense=True),
+                    manager,
+                )
+        return f"Shapes (page {page}):\n" + format_shapes(results, manager)
 
     elif fn_name == "get_shape":
         iri_arg = fn_args["iri"]
@@ -877,9 +892,21 @@ def call_shape_function(
             else None
         )
         if sample is not None:
+            from grasp.build.shapes import collect_iris, emit_pseudo_shex
+            from grasp.configs import ShapeConfig
+
+            shape_config = manager.shape_config or ShapeConfig()
             if known is not None:
-                update_known_from_shape_iris(known, sample.iris, manager)
-            return sample.shex + "\n\n" + SHAPE_NOTE
+                update_known_from_shape_iris(
+                    known,
+                    collect_iris(sample.profile, manager, shape_config),
+                    manager,
+                )
+            return (
+                emit_pseudo_shex(sample.profile, manager, shape_config)
+                + "\n\n"
+                + SHAPE_NOTE
+            )
 
         if shapes.pattern is None:
             return (
@@ -889,17 +916,23 @@ def call_shape_function(
             )
 
         from grasp.build.shapes import collect_iris, compute_shape, emit_pseudo_shex
+        from grasp.configs import ShapeConfig
 
+        shape_config = manager.shape_config or ShapeConfig()
         try:
             profile = compute_shape(
                 expanded_iri,
                 shapes.pattern,
                 manager,
-                manager.shape_config,
+                shape_config,
             )
             if known is not None:
-                update_known_from_shape_iris(known, collect_iris(profile), manager)
-            result = emit_pseudo_shex(profile, manager)
+                update_known_from_shape_iris(
+                    known,
+                    collect_iris(profile, manager, shape_config),
+                    manager,
+                )
+            result = emit_pseudo_shex(profile, manager, shape_config)
             return result + "\n\n" + SHAPE_NOTE
         except Exception as e:
             return (

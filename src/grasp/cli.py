@@ -1159,7 +1159,7 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
 
     if os.path.exists(samples_file) and not args.overwrite:
         logger.info(f"Shapes already exist at {samples_file}, skipping profiling")
-        samples = [ShapeSample(**s) for s in load_jsonl(samples_file)]
+        samples = [ShapeSample.model_validate(s) for s in load_jsonl(samples_file)]
     else:
         samples = build_shapes(
             pattern,

@@ -1,6 +1,5 @@
 import os
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Any
 
 from tqdm import tqdm
@@ -9,31 +8,17 @@ from universal_ml_utils.logging import get_logger
 
 from grasp.configs import ShapeConfig
 from grasp.manager import KgManager
-from grasp.shapes import ShapeSample
+from grasp.shapes import (
+    ClassProfile,
+    PropertyProfile,
+    ShapeSample,
+    Target,
+    TargetClass,
+    TargetIri,
+    TargetLiteral,
+)
 from grasp.sparql.types import SelectResult
 from grasp.utils import derive_label_from_iri, get_local_name_from_iri
-
-
-@dataclass
-class PropertyProfile:
-    iri: str
-    short_iri: str
-    triple_count: int = 0
-    entity_count: int = 0
-    cardinality_tag: str = ""
-    literal_datatypes: list[str] = field(default_factory=list)
-    target_class_iris: list[str] = field(default_factory=list)
-    target_class_short_iris: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ClassProfile:
-    iri: str
-    short_iri: str
-    total_entities: int = 0
-    properties: list[PropertyProfile] = field(default_factory=list)
-    omitted_properties: int = 0
-    filtered_properties: int = 0
 
 
 def class_pattern(pattern: str) -> str:
@@ -200,15 +185,25 @@ def resolve_label(
     index_name: str,
     short_iri: str,
     manager: KgManager,
+    variants: list[str] | None = None,
 ) -> str:
     label = manager.get_label(iri, index_name)
-    if not label:
-        return short_iri
-    local_name = get_local_name_from_iri(iri, manager.prefixes)
-    derived = derive_label_from_iri(iri, manager.prefixes)
-    if local_name.lower() == label.lower() or derived.lower() == label.lower():
-        return short_iri
-    return f"{short_iri} ({label})"
+    if label:
+        local_name = get_local_name_from_iri(iri, manager.prefixes)
+        derived = derive_label_from_iri(iri, manager.prefixes)
+        if local_name.lower() == label.lower() or derived.lower() == label.lower():
+            label = None
+
+    parts: list[str] = []
+    if label:
+        parts.append(label)  # type: ignore[arg-type]
+    if variants:
+        parts.append(f"as {'/'.join(variants)}")
+
+    if parts:
+        return f"{short_iri} ({', '.join(parts)})"
+
+    return short_iri
 
 
 def get_label_and_aliases(
@@ -227,65 +222,224 @@ def get_label_and_aliases(
     return data.main_field(id) or data.field(id, 0), data.fields(id) or []
 
 
-def _target_class_parts(prop: "PropertyProfile", manager: KgManager) -> list[str]:
-    if prop.target_class_iris:
-        return [
-            resolve_label(t_iri, "entities", t_short, manager)
-            for t_iri, t_short in zip(
-                prop.target_class_iris, prop.target_class_short_iris
-            )
-        ]
-    return prop.target_class_short_iris[:3]
+def bracketed(items: list[str]) -> str:
+    if len(items) == 1:
+        return items[0]
+    return f"[ {' '.join(items)} ]"
 
 
-def emit_pseudo_shex(profile: ClassProfile, manager: KgManager) -> str:
+def render_target(target: Target, manager: KgManager) -> str:
+    if isinstance(target, TargetLiteral):
+        return target.datatype
+    if isinstance(target, TargetClass):
+        return resolve_label(
+            target.iri,
+            "entities",
+            target.short_iri,
+            manager,
+            variants=target.variants or None,
+        )
+    return "IRI"
+
+
+def select_properties(
+    profile: ClassProfile,
+    shape_config: ShapeConfig,
+    dense: bool,
+) -> tuple[list[PropertyProfile], int, int]:
+    cap = (
+        shape_config.dense_max_properties_per_class
+        if dense
+        else shape_config.max_properties_per_class
+    )
+    candidates = profile.properties[:cap]
+    omitted = max(0, len(profile.properties) - cap)
+
+    kept: list[PropertyProfile] = []
+    filtered = 0
+    for prop in candidates:
+        if profile.total_entities > 0:
+            coverage = prop.entity_count / profile.total_entities
+            if coverage < shape_config.min_property_share:
+                filtered += 1
+                continue
+        kept.append(prop)
+
+    return kept, omitted, filtered
+
+
+def cardinality_tag_for_property(prop: PropertyProfile, total_entities: int) -> str:
+    if total_entities <= 0:
+        return ""
+    coverage = prop.entity_count / total_entities
+    avg_vals = prop.triple_count / prop.entity_count if prop.entity_count > 0 else 1.0
+    return cardinality_tag(coverage, avg_vals)
+
+
+def emit_pseudo_shex(
+    profile: ClassProfile,
+    manager: KgManager,
+    shape_config: ShapeConfig,
+    dense: bool = False,
+) -> str:
     header = resolve_label(profile.iri, "entities", profile.short_iri, manager)
     lines = [f"{header} {{"]
 
-    for prop in profile.properties:
-        prop_str = resolve_label(prop.iri, "properties", prop.short_iri, manager)
-        tag = prop.cardinality_tag
+    kept, omitted, filtered = select_properties(profile, shape_config, dense)
+
+    for prop in kept:
+        prop_str = resolve_label(
+            prop.iri,
+            "properties",
+            prop.short_iri,
+            manager,
+            variants=prop.variants or None,
+        )
+        tag = cardinality_tag_for_property(prop, profile.total_entities)
         tag_suffix = f" {tag}" if tag else ""
 
-        if prop.literal_datatypes:
-            dtype = prop.literal_datatypes[0]
-            lines.append(f"  {prop_str} {dtype}{tag_suffix} ;")
-        elif prop.target_class_short_iris:
-            target_str = " ".join(_target_class_parts(prop, manager))
-            lines.append(f"  {prop_str} [ {target_str} ]{tag_suffix} ;")
+        if prop.targets:
+            value_str = bracketed([render_target(t, manager) for t in prop.targets])
         else:
-            lines.append(f"  {prop_str} IRI{tag_suffix} ;")
+            value_str = "IRI"
+        lines.append(f"  {prop_str} {value_str}{tag_suffix} ;")
 
-    if profile.omitted_properties or profile.filtered_properties:
+    if omitted or filtered:
         parts = []
-        if profile.omitted_properties:
-            parts.append(f"{profile.omitted_properties:,} omitted (cap)")
-        if profile.filtered_properties:
-            parts.append(f"{profile.filtered_properties:,} filtered (low coverage)")
+        if omitted:
+            parts.append(f"{omitted:,} omitted (cap)")
+        if filtered:
+            parts.append(f"{filtered:,} filtered (low coverage)")
         lines.append(f"  # ... {', '.join(parts)}")
+
     lines.append("}")
+
     return "\n".join(lines)
 
 
-def collect_iris(profile: ClassProfile) -> list[str]:
-    iris = []
-    for prop in profile.properties:
+def collect_iris(
+    profile: ClassProfile,
+    manager: KgManager,
+    shape_config: ShapeConfig,
+    dense: bool = False,
+) -> list[str]:
+    iris: list[str] = []
+    prop_norm = manager.get_normalizer("properties")
+    ent_norm = manager.get_normalizer("entities")
+    kept, _, _ = select_properties(profile, shape_config, dense)
+    for prop in kept:
         iris.append(prop.iri)
-        iris.extend(prop.target_class_iris)
+        for v in prop.variants:
+            denorm = prop_norm.denormalize(prop.iri, v)
+            if denorm:
+                iris.append(denorm)
+        for t in prop.targets:
+            if not isinstance(t, TargetClass):
+                continue
+            iris.append(t.iri)
+            for v in t.variants:
+                denorm = ent_norm.denormalize(t.iri, v)
+                if denorm:
+                    iris.append(denorm)
     return iris
+
+
+def group_by_normalized(
+    freq_map: dict[str, dict],
+    lit_counts: dict[str, dict[str, int]],
+    range_counts: dict[str, dict[str, int]],
+    manager: KgManager,
+) -> tuple[
+    dict[str, dict],
+    dict[str, dict[str, int]],
+    dict[str, dict[str, int]],
+    dict[str, list[str]],
+    dict[str, dict[str, list[str]]],
+]:
+    """Group property IRIs (and target-class IRIs) by their normalized form.
+
+    Returns regrouped freq_map / literal-count map / range-count map keyed on
+    the normalized property IRI, plus a prop_variants map
+    (normalized prop iri -> ordered variant short names) and a target_variants
+    map (normalized prop iri -> normalized target iri -> ordered variants).
+    Counts are summed when merging variants.
+    """
+    prop_normalizer = manager.get_normalizer("properties")
+    ent_normalizer = manager.get_normalizer("entities")
+
+    def prop_key(iri: str) -> tuple[str, str | None]:
+        norm = prop_normalizer.normalize(iri)
+        if isinstance(norm, tuple) and len(norm) == 2:
+            return norm[0], norm[1]
+        return iri, None
+
+    def ent_key(iri: str) -> tuple[str, str | None]:
+        norm = ent_normalizer.normalize(iri)
+        if isinstance(norm, tuple) and len(norm) == 2:
+            return norm[0], norm[1]
+        return iri, None
+
+    prop_default = prop_normalizer.default_variants() or []
+    ent_default = ent_normalizer.default_variants() or []
+
+    def sort_variants(vs: list[str], order: list[str]) -> list[str]:
+        if not order:
+            return vs
+        order_idx = {v: i for i, v in enumerate(order)}
+        return sorted(vs, key=lambda v: order_idx.get(v, len(order)))
+
+    new_freq: dict[str, dict] = {}
+    new_lit: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    new_range: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    prop_variants: dict[str, list[str]] = defaultdict(list)
+    target_variants: dict[str, dict[str, list[str]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
+    for p_iri, freq in freq_map.items():
+        k, v = prop_key(p_iri)
+        if k not in new_freq:
+            new_freq[k] = {"triple_count": 0, "entity_count": 0}
+        new_freq[k]["triple_count"] += freq.get("triple_count", 0)
+        new_freq[k]["entity_count"] += freq.get("entity_count", 0)
+        if v is not None and v not in prop_variants[k]:
+            prop_variants[k].append(v)
+
+    for p_iri, dtype_counts in lit_counts.items():
+        k, _ = prop_key(p_iri)
+        for dt, c in dtype_counts.items():
+            new_lit[k][dt] += c
+
+    for p_iri, tc_counts in range_counts.items():
+        k, _ = prop_key(p_iri)
+        for t_iri, c in tc_counts.items():
+            tk, tv = ent_key(t_iri)
+            new_range[k][tk] += c
+            if tv is not None and tv not in target_variants[k][tk]:
+                target_variants[k][tk].append(tv)
+
+    # canonicalize variant order
+    for k in list(prop_variants.keys()):
+        prop_variants[k] = sort_variants(prop_variants[k], prop_default)
+    for k in list(target_variants.keys()):
+        for tk in list(target_variants[k].keys()):
+            target_variants[k][tk] = sort_variants(target_variants[k][tk], ent_default)
+
+    return new_freq, new_lit, new_range, prop_variants, target_variants
 
 
 def assemble_profile(
     class_iri: str,
     freq_map: dict[str, dict],
-    lit_dtypes: dict[str, list[str]],
-    range_map: dict[str, list[str]],
+    lit_counts: dict[str, dict[str, int]],
+    range_counts: dict[str, dict[str, int]],
     total_entities: int,
     shape_config: ShapeConfig,
     manager: KgManager,
 ) -> ClassProfile:
-    properties: list[PropertyProfile] = []
-    filtered_count = 0
+    freq_map, lit_counts, range_counts, prop_variants, target_variants = (
+        group_by_normalized(freq_map, lit_counts, range_counts, manager)
+    )
 
     common_props = sorted(
         freq_map.items(),
@@ -295,45 +449,55 @@ def assemble_profile(
         ),
     )
 
-    for p_iri, freq in common_props[: shape_config.max_properties_per_class]:
-        entity_count = freq.get("entity_count", 0)
+    properties: list[PropertyProfile] = []
+    for p_iri, freq in common_props:
         triple_count = freq.get("triple_count", 0)
+        targets: list[Target] = []
 
-        if total_entities > 0:
-            coverage = entity_count / total_entities
-            if coverage < shape_config.min_property_coverage:
-                filtered_count += 1
-                continue
-            avg_vals = triple_count / entity_count if entity_count > 0 else 1.0
-            tag = cardinality_tag(coverage, avg_vals)
-        else:
-            tag = ""
+        for dt, c in lit_counts.get(p_iri, {}).items():
+            targets.append(TargetLiteral(datatype=dt, triple_count=c))
 
-        p_short = manager.format_iri(p_iri, wrap=True)
-        target_iris = range_map.get(p_iri, [])[:5]
-        prop = PropertyProfile(
-            iri=p_iri,
-            short_iri=p_short,
-            triple_count=triple_count,
-            entity_count=entity_count,
-            cardinality_tag=tag,
-            literal_datatypes=lit_dtypes.get(p_iri, []),
-            target_class_iris=target_iris,
-            target_class_short_iris=[
-                manager.format_iri(t, wrap=True) for t in target_iris
-            ],
+        for t_iri, c in range_counts.get(p_iri, {}).items():
+            targets.append(
+                TargetClass(
+                    iri=t_iri,
+                    short_iri=manager.format_iri(t_iri, wrap=True),
+                    variants=target_variants.get(p_iri, {}).get(t_iri, []),
+                    triple_count=c,
+                )
+            )
+
+        # gap between total triples and the typed buckets is "untyped IRI" traffic.
+        # truncated/approximate count queries can produce small spurious gaps, so
+        # require the gap to be both positive and a meaningful share of total.
+        typed_sum = sum(t.triple_count for t in targets)
+        gap = triple_count - typed_sum
+        if (
+            gap > 0
+            and triple_count > 0
+            and gap / triple_count >= shape_config.min_target_share
+        ):
+            targets.append(TargetIri(triple_count=gap))
+
+        targets.sort(key=lambda t: t.triple_count, reverse=True)
+        targets = targets[: shape_config.max_targets_per_property]
+
+        properties.append(
+            PropertyProfile(
+                iri=p_iri,
+                short_iri=manager.format_iri(p_iri, wrap=True),
+                triple_count=triple_count,
+                entity_count=freq.get("entity_count", 0),
+                variants=prop_variants.get(p_iri, []),
+                targets=targets,
+            )
         )
-        properties.append(prop)
 
     return ClassProfile(
         iri=class_iri,
         short_iri=manager.format_iri(class_iri, wrap=True),
         total_entities=total_entities,
         properties=properties,
-        omitted_properties=max(
-            0, len(common_props) - shape_config.max_properties_per_class
-        ),
-        filtered_properties=filtered_count,
     )
 
 
@@ -377,21 +541,20 @@ def compute_shape(
             "entity_count": int(row["entityCount"]),
         }
 
-    lit_dtypes: dict[str, list[str]] = defaultdict(list)
+    lit_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for row in lit_rows:
-        lit_dtypes[row["p"]].append(manager.format_iri(row["datatype"], wrap=True))
+        dt = manager.format_iri(row["datatype"], wrap=True)
+        lit_counts[row["p"]][dt] += int(row["count"])
 
-    range_map: dict[str, list[str]] = defaultdict(list)
+    range_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for row in range_rows:
-        p, tc = row["p"], row["targetClass"]
-        if tc not in range_map[p]:
-            range_map[p].append(tc)
+        range_counts[row["p"]][row["targetClass"]] += int(row["count"])
 
     return assemble_profile(
         class_iri,
         freq_map,
-        lit_dtypes,
-        range_map,
+        lit_counts,
+        range_counts,
         total,
         shape_config,
         manager,
@@ -463,43 +626,24 @@ def build_shapes(
                 "entity_count": int(row["entityCount"]),
             }
 
-        lit_dtypes: dict[str, list[str]] = defaultdict(list)
+        lit_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for row in lit_rows:
-            lit_dtypes[row["p"]].append(manager.format_iri(row["datatype"], wrap=True))
+            dt = manager.format_iri(row["datatype"], wrap=True)
+            lit_counts[row["p"]][dt] += int(row["count"])
 
-        range_map: dict[str, list[str]] = defaultdict(list)
+        range_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for row in range_rows:
-            p, tc = row["p"], row["targetClass"]
-            if tc not in range_map[p]:
-                range_map[p].append(tc)
+            range_counts[row["p"]][row["targetClass"]] += int(row["count"])
 
         profile = assemble_profile(
             c_iri,
             freq_map,
-            lit_dtypes,
-            range_map,
+            lit_counts,
+            range_counts,
             total_entities[c_iri],
             shape_config,
             manager,
         )
-        dense_config = shape_config.model_copy(
-            update={
-                "max_properties_per_class": shape_config.dense_max_properties_per_class
-            }
-        )
-        dense_profile = assemble_profile(
-            c_iri,
-            freq_map,
-            lit_dtypes,
-            range_map,
-            total_entities[c_iri],
-            dense_config,
-            manager,
-        )
-        shex = emit_pseudo_shex(profile, manager)
-        dense_shex = emit_pseudo_shex(dense_profile, manager)
-        iris = collect_iris(profile)
-        dense_iris = collect_iris(dense_profile)
         class_label, class_aliases = get_label_and_aliases(c_iri, "entities", manager)
         if class_label:
             derived = derive_label_from_iri(c_iri, manager.prefixes)
@@ -510,12 +654,9 @@ def build_shapes(
             ShapeSample(
                 iri=c_iri,
                 short_iri=profile.short_iri,
-                shex=shex,
-                dense_shex=dense_shex,
-                iris=iris,
-                dense_iris=dense_iris,
+                profile=profile,
                 label=class_label,
-                aliases=class_aliases,
+                aliases=class_aliases or [],
             )
         )
 

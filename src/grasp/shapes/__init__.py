@@ -2,36 +2,61 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from typing import Literal
 
+from pydantic import BaseModel, Field
 from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex
 from search_rdf.model import SentenceTransformerModel
-from universal_ml_utils.io import dump_jsonl, load_jsonl
+from universal_ml_utils.io import dump_jsonl, load_jsonl, load_text
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import flatten
 
 
-class ShapeSample:
-    def __init__(
-        self,
-        iri: str,
-        short_iri: str,
-        shex: str,
-        dense_shex: str | None = None,
-        iris: list[str] | None = None,
-        dense_iris: list[str] | None = None,
-        label: str | None = None,
-        aliases: list[str] | None = None,
-        **_: object,
-    ) -> None:
-        self.iri = iri
-        self.short_iri = short_iri
-        self.shex = shex
-        self.dense_shex = dense_shex or shex
-        self.iris = iris or []
-        self.dense_iris = dense_iris or []
-        self.label = label
-        self.aliases = aliases or []
+class TargetClass(BaseModel):
+    type: Literal["class"] = "class"
+    iri: str
+    short_iri: str
+    variants: list[str] = Field(default_factory=list)
+    triple_count: int = 0
+
+
+class TargetLiteral(BaseModel):
+    type: Literal["literal"] = "literal"
+    datatype: str
+    triple_count: int = 0
+
+
+class TargetIri(BaseModel):
+    type: Literal["iri"] = "iri"
+    triple_count: int = 0
+
+
+Target = TargetClass | TargetLiteral | TargetIri
+
+
+class PropertyProfile(BaseModel):
+    iri: str
+    short_iri: str
+    triple_count: int = 0
+    entity_count: int = 0
+    variants: list[str] = Field(default_factory=list)
+    targets: list[Target] = Field(default_factory=list)
+
+
+class ClassProfile(BaseModel):
+    iri: str
+    short_iri: str
+    total_entities: int = 0
+    properties: list[PropertyProfile] = Field(default_factory=list)
+
+
+class ShapeSample(BaseModel):
+    iri: str
+    short_iri: str
+    profile: ClassProfile
+    label: str | None = None
+    aliases: list[str] = Field(default_factory=list)
 
     def queries(self) -> list[str]:
         from grasp.utils import ordered_unique
@@ -42,18 +67,6 @@ class ShapeSample:
         candidates.extend(self.aliases)
         candidates.append(self.short_iri)
         return ordered_unique(candidates)
-
-    def model_dump(self) -> dict:
-        return {
-            "iri": self.iri,
-            "short_iri": self.short_iri,
-            "shex": self.shex,
-            "dense_shex": self.dense_shex,
-            "iris": self.iris,
-            "dense_iris": self.dense_iris,
-            "label": self.label,
-            "aliases": self.aliases,
-        }
 
 
 class ShapeIndex:
@@ -75,7 +88,7 @@ class ShapeIndex:
         matches = self.index.search(embedding, k)
         return [self.samples[id] for id, *_ in matches]
 
-    def get_by_iri(self, iri: str) -> "ShapeSample | None":
+    def get_by_iri(self, iri: str) -> ShapeSample | None:
         return self._iri_map.get(iri)
 
     @classmethod
@@ -91,7 +104,8 @@ class ShapeIndex:
         )
 
         samples = [
-            ShapeSample(**s) for s in load_jsonl(os.path.join(dir, "samples.jsonl"))
+            ShapeSample.model_validate(s)
+            for s in load_jsonl(os.path.join(dir, "samples.jsonl"))
         ]
 
         return cls(data, index, model, samples)
@@ -125,7 +139,7 @@ class ShapeIndex:
 
         items = []
         for i, sample in enumerate(samples):
-            identifier = f"sample-{i}"
+            identifier = f"shape-{i}"
             fields = [{"type": "text", "value": q} for q in sample.queries()]
             items.append({"identifier": identifier, "fields": fields})
 
@@ -157,12 +171,11 @@ class Shapes:
     index: ShapeIndex | None = None
 
 
-def load_shapes(shapes_dir: str, model: SentenceTransformerModel) -> "Shapes | None":
+def load_shapes(shapes_dir: str, model: SentenceTransformerModel) -> Shapes | None:
     pattern = None
     pattern_file = os.path.join(shapes_dir, "pattern.sparql")
     if os.path.exists(pattern_file):
-        with open(pattern_file) as f:
-            pattern = f.read().strip() or None
+        pattern = load_text(pattern_file)
 
     index = None
     index_dir = os.path.join(shapes_dir, "index")
@@ -171,4 +184,5 @@ def load_shapes(shapes_dir: str, model: SentenceTransformerModel) -> "Shapes | N
 
     if pattern is None and index is None:
         return None
+
     return Shapes(pattern=pattern, index=index)
