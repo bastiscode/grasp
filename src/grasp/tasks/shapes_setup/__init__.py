@@ -91,6 +91,7 @@ Reference description:
     def rules(self) -> list[str]:
         return [
             "If the user provides additional notes about the desired setup, make sure to follow them.",
+            "The pattern should be single-hop; multi-hop instance-class relations may not yield sensible automatic shape computations.",
         ]
 
     def function_definitions(self) -> list[dict]:
