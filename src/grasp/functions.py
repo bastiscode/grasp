@@ -963,7 +963,6 @@ def search_entity(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-    **search_kwargs: Any,
 ) -> str:
     validate_query(query)
     validate_page(page, max_pages)
@@ -974,7 +973,6 @@ def search_entity(
         query=query,
         k=k * page,
         query_type=query_type,
-        **search_kwargs,
     )
     alts = alts[(page - 1) * k : page * k]
 
@@ -994,7 +992,6 @@ def search_property(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-    **search_kwargs: Any,
 ) -> str:
     validate_query(query)
     validate_page(page, max_pages)
@@ -1005,7 +1002,6 @@ def search_property(
         query=query,
         k=k * page,
         query_type=query_type,
-        **search_kwargs,
     )
     alts = alts[(page - 1) * k : page * k]
 
@@ -1025,7 +1021,6 @@ def search_literal(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-    **search_kwargs: Any,
 ) -> str:
     validate_query(query)
     validate_page(page, max_pages)
@@ -1036,7 +1031,6 @@ def search_literal(
         query=query,
         k=k * page,
         query_type=query_type,
-        **search_kwargs,
     )
     alts = alts[(page - 1) * k : page * k]
 
@@ -1480,7 +1474,6 @@ def search_with_constraints(
     read_timeout: float | None = None,
     page: int = 1,
     max_pages: int = 10,
-    **search_kwargs: Any,
 ) -> str:
     validate_query(query)
     validate_page(page, max_pages)
@@ -1560,7 +1553,6 @@ search index due to:
         k * page,
         identifier_map,
         query_type=query_type,
-        **search_kwargs,
     )
     alternatives = alternatives[(page - 1) * k : page * k]
 
@@ -1601,7 +1593,6 @@ def search_with_filter(
     read_timeout: float | None = None,
     page: int = 1,
     max_pages: int = 10,
-    **search_kwargs: Any,
 ) -> str:
     validate_query(query)
     validate_page(page, max_pages)
@@ -1640,7 +1631,6 @@ search index due to:
         k=k * page,
         identifier_map=identifier_map,
         query_type=query_type,
-        **search_kwargs,
     )
     alternatives = alternatives[(page - 1) * k : page * k]
 

@@ -24,6 +24,7 @@ class Sample(BaseModel):
 
 
 class ExampleIndex:
+    min_score: float = 0.5
     sample_cls: Type[Sample]
 
     def __init__(
@@ -54,7 +55,7 @@ class ExampleIndex:
     ) -> list:
         embedding = self.model.embed([question])[0]
         matches = self.index.search(embedding, k, **kwargs)
-        return [self.samples[id] for id, *_ in matches]
+        return [self.samples[id] for id, _, score in matches if score >= self.min_score]
 
     @classmethod
     def load(cls, dir: str, model: SentenceTransformerModel) -> "ExampleIndex":

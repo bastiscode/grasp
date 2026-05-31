@@ -75,6 +75,8 @@ class ShapeSample(BaseModel):
 
 
 class ShapeIndex:
+    min_score: float = 0.5
+
     def __init__(
         self,
         data: Data,
@@ -89,15 +91,15 @@ class ShapeIndex:
         self.samples = samples
         self.total_classes = total_classes
         self.indexed_classes = len(samples)
-        self._iri_map: dict[str, ShapeSample] = {s.iri: s for s in samples}
+        self.iri_map: dict[str, ShapeSample] = {s.iri: s for s in samples}
 
     def search(self, query: str, k: int = 10) -> list[ShapeSample]:
         embedding = self.model.embed([query])[0]
         matches = self.index.search(embedding, k)
-        return [self.samples[id] for id, *_ in matches]
+        return [self.samples[id] for id, _, score in matches if score >= self.min_score]
 
     def get_by_iri(self, iri: str) -> ShapeSample | None:
-        return self._iri_map.get(iri)
+        return self.iri_map.get(iri)
 
     @classmethod
     def load(cls, dir: str, model: SentenceTransformerModel) -> "ShapeIndex":

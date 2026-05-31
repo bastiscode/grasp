@@ -505,7 +505,7 @@ class KgManager:
             matched_label=matched_via,
         )
 
-    def _embed_query(
+    def embed_query(
         self,
         index: EmbeddingIndex,
         query: str,
@@ -549,7 +549,6 @@ class KgManager:
         k: int = 10,
         identifier_map: dict[str, list[str]] | None = None,
         query_type: str = "text",
-        **search_kwargs: Any,
     ) -> list[Alternative]:
         index = self.get_index(index_name)
         data = self.get_data(index_name)
@@ -568,10 +567,11 @@ class KgManager:
         else:
             kwargs = {}
             if index.index_type == "embedding":
-                kwargs["min_score"] = search_kwargs.get("min_score")
                 assert isinstance(index, EmbeddingIndex)
-                embedding = self._embed_query(index, query, query_type)
+                embedding = self.embed_query(index, query, query_type)
                 kwargs["embedding"] = embedding
+                # TODO: improve setting min score dynamically
+                kwargs["min_score"] = 0.5
                 # always perform exact search and a bit of re-ranking
                 # to improve quality
                 kwargs["exact"] = True
