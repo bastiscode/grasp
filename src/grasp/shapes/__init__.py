@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from dataclasses import dataclass
@@ -8,7 +7,13 @@ from pydantic import BaseModel, Field
 from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex
 from search_rdf.model import SentenceTransformerModel
-from universal_ml_utils.io import dump_jsonl, load_jsonl, load_text
+from universal_ml_utils.io import (
+    dump_json,
+    dump_jsonl,
+    load_json,
+    load_jsonl,
+    load_text,
+)
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.ops import flatten
 
@@ -76,11 +81,14 @@ class ShapeIndex:
         index: EmbeddingIndex,
         model: SentenceTransformerModel,
         samples: list[ShapeSample],
+        total_classes: int | None = None,
     ) -> None:
         self.data = data
         self.index = index
         self.model = model
         self.samples = samples
+        self.total_classes = total_classes
+        self.indexed_classes = len(samples)
         self._iri_map: dict[str, ShapeSample] = {s.iri: s for s in samples}
 
     def search(self, query: str, k: int = 10) -> list[ShapeSample]:
@@ -108,7 +116,12 @@ class ShapeIndex:
             for s in load_jsonl(os.path.join(dir, "samples.jsonl"))
         ]
 
-        return cls(data, index, model, samples)
+        total_classes: int | None = None
+        info_path = os.path.join(dir, "info.json")
+        if os.path.exists(info_path):
+            total_classes = load_json(info_path).get("total_classes")
+
+        return cls(data, index, model, samples, total_classes=total_classes)
 
     @classmethod
     def build(
@@ -119,6 +132,7 @@ class ShapeIndex:
         batch_size: int = 256,
         overwrite: bool = False,
         log_level: str | int | None = None,
+        total_classes: int | None = None,
     ) -> None:
         logger = get_logger("SHAPE INDEX BUILD", log_level)
 
@@ -158,8 +172,10 @@ class ShapeIndex:
 
         EmbeddingIndex.build(data, embedding_path, index_dir)
 
-        with open(os.path.join(output_dir, "info.json"), "w") as f:
-            json.dump({}, f)
+        info: dict = {"indexed_classes": len(samples)}
+        if total_classes is not None:
+            info["total_classes"] = total_classes
+        dump_json(info, os.path.join(output_dir, "info.json"))
 
         end = time.monotonic()
         logger.info(f"Shape index built in {end - start:.2f} seconds")
@@ -169,6 +185,15 @@ class ShapeIndex:
 class Shapes:
     pattern: str | None = None
     index: ShapeIndex | None = None
+    description: str | None = None
+    total_classes: int | None = None
+
+
+def load_setup_description(shapes_dir: str) -> str | None:
+    setup_path = os.path.join(shapes_dir, "setup.json")
+    if not os.path.exists(setup_path):
+        return None
+    return load_json(setup_path).get("description")
 
 
 def load_shapes(shapes_dir: str, model: SentenceTransformerModel) -> Shapes | None:
@@ -185,4 +210,9 @@ def load_shapes(shapes_dir: str, model: SentenceTransformerModel) -> Shapes | No
     if pattern is None and index is None:
         return None
 
-    return Shapes(pattern=pattern, index=index)
+    return Shapes(
+        pattern=pattern,
+        index=index,
+        description=load_setup_description(shapes_dir),
+        total_classes=index.total_classes if index is not None else None,
+    )

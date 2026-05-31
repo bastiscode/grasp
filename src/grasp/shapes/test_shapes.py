@@ -12,7 +12,7 @@ from grasp.build.shapes import (
 from grasp.configs import ShapeConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer, WikidataPropertyNormalizer
-from grasp.shapes import ShapeSample, TargetClass, TargetLiteral
+from grasp.shapes import ShapeSample, Target, TargetClass, TargetLiteral
 from grasp.sparql.types import SelectResult
 
 
@@ -358,7 +358,7 @@ class TestComputeShape:
 
 
 def _make_profile(with_target_iris: bool = True) -> ClassProfile:
-    type_targets = (
+    type_targets: list[Target] = (
         [TargetClass(iri="http://ex.org/Class", short_iri="ex:Class")]
         if with_target_iris
         else []

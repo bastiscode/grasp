@@ -10,6 +10,7 @@ from search_rdf.model import (
     OpenClipModel,
     SentenceTransformerModel,
 )
+from universal_ml_utils.io import load_text
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.table import generate_table
 
@@ -31,7 +32,7 @@ from grasp.manager.utils import (
     merge_prefixes,
     try_load_search_index,
 )
-from grasp.shapes import Shapes, load_shapes
+from grasp.shapes import Shapes, load_setup_description, load_shapes
 from grasp.sparql.types import (
     Alternative,
     AskResult,
@@ -900,13 +901,30 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     manager = KgManager(cfg.kg, indices, **info.model_dump())
     manager.shape_config = cfg.shapes
     if cfg.shapes is not None:
-        pattern_file = os.path.join(get_index_dir(cfg.kg), "shapes", "pattern.sparql")
+        shapes_dir = os.path.join(get_index_dir(cfg.kg), "shapes")
+        pattern_file = os.path.join(shapes_dir, "pattern.sparql")
         if os.path.exists(pattern_file):
-            with open(pattern_file) as f:
-                pattern = f.read().strip() or None
-            if pattern:
-                manager.shapes = Shapes(pattern=pattern)
+            pattern = load_text(pattern_file)
+            manager.shapes = Shapes(
+                pattern=pattern,
+                description=load_setup_description(shapes_dir),
+            )
     return manager
+
+
+def format_shapes_index(shapes: Shapes) -> str:
+    desc = shapes.description or "Class shape index."
+    coverage = ""
+    if shapes.index is not None:
+        indexed = shapes.index.indexed_classes
+        total = shapes.total_classes
+        if total is None:
+            coverage = f" ({indexed:,} class shapes indexed)"
+        elif indexed >= total:
+            coverage = f" (all {total:,} class shapes indexed)"
+        else:
+            coverage = f" (top {indexed:,} out of {total:,} class shapes indexed)"
+    return f'"shapes" index (type="embedding", modalities="text"): {desc}{coverage}'
 
 
 def format_kgs(
@@ -945,6 +963,8 @@ def format_kg(
         indices.append(
             f'"examples" index ({format_index_meta(example_index.index)}): {example_index.description}'
         )
+    if manager.shapes is not None:
+        indices.append(format_shapes_index(manager.shapes))
 
     if indices:
         msg += "\n  Search indices:\n" + format_list(indices, indent=4)

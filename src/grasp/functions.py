@@ -8,7 +8,7 @@ from grammar_utils.parse import LR1Parser  # type: ignore
 from search_rdf import EmbeddingIndex
 from universal_ml_utils.ops import partition_by
 
-from grasp.configs import GraspConfig
+from grasp.configs import GraspConfig, ShapeConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import get_common_sparql_prefixes
@@ -819,7 +819,6 @@ SHAPE_NOTE = (
 
 def format_shapes(shapes: list[ShapeSample], manager: KgManager) -> str:
     from grasp.build.shapes import emit_pseudo_shex
-    from grasp.configs import ShapeConfig
 
     shape_config = manager.shape_config or ShapeConfig()
     result = format_enumerate(

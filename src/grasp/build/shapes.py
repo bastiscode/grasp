@@ -570,7 +570,7 @@ def build_shapes(
     log_level: str | int | None = None,
     request_timeout: float | tuple[float, float] | None = None,
     read_timeout: float | None = None,
-) -> list[ShapeSample]:
+) -> tuple[list[ShapeSample], int]:
     logger = get_logger("GRASP SHAPES BUILD", log_level)
 
     def run(query: str) -> list[dict[str, Any]]:
@@ -667,4 +667,4 @@ def build_shapes(
     pattern_file = os.path.join(shapes_dir, "pattern.sparql")
     dump_text(pattern, pattern_file)
     logger.info(f"Wrote {len(samples)} shapes and pattern to {shapes_dir}")
-    return samples
+    return samples, len(total_entities)

@@ -1157,11 +1157,15 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
     index_dir = os.path.join(shapes_dir, "index")
     samples_file = os.path.join(index_dir, "samples.jsonl")
 
+    total_classes: int | None = None
     if os.path.exists(samples_file) and not args.overwrite:
         logger.info(f"Shapes already exist at {samples_file}, skipping profiling")
         samples = [ShapeSample.model_validate(s) for s in load_jsonl(samples_file)]
+        info_path = os.path.join(index_dir, "info.json")
+        if os.path.exists(info_path):
+            total_classes = load_json(info_path).get("total_classes")
     else:
-        samples = build_shapes(
+        samples, total_classes = build_shapes(
             pattern,
             shapes_dir,
             manager,
@@ -1180,6 +1184,7 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
         args.emb_batch_size,
         args.overwrite,
         args.log_level,
+        total_classes=total_classes,
     )
 
 
