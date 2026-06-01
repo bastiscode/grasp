@@ -32,6 +32,7 @@ from grasp.manager.utils import (
     merge_prefixes,
     try_load_search_index,
 )
+from grasp.search_params import EmbeddingSearchParams, load_search_params
 from grasp.shapes import Shapes, load_setup_description, load_shapes
 from grasp.sparql.types import (
     Alternative,
@@ -550,8 +551,9 @@ class KgManager:
         identifier_map: dict[str, list[str]] | None = None,
         query_type: str = "text",
     ) -> list[Alternative]:
-        index = self.get_index(index_name)
-        data = self.get_data(index_name)
+        kg_index = self.get(index_name)
+        index = kg_index.index
+        data = kg_index.data
         normalizer = self.get_normalizer(index_name)
 
         field_map = {}
@@ -570,13 +572,11 @@ class KgManager:
                 assert isinstance(index, EmbeddingIndex)
                 embedding = self.embed_query(index, query, query_type)
                 kwargs["embedding"] = embedding
-                # TODO: improve setting min score dynamically
-                kwargs["min_score"] = 0.5
-                # always perform exact search and a bit of re-ranking
-                # to improve quality
-                kwargs["exact"] = True
-                # factor of oversampling for re-ranking
-                kwargs["rerank"] = 2.0
+                params = kg_index.search_params or EmbeddingSearchParams()
+                assert isinstance(params, EmbeddingSearchParams)
+                kwargs["min_score"] = params.min_score
+                kwargs["exact"] = params.exact
+                kwargs["rerank"] = params.rerank
             else:
                 kwargs["query"] = query
 
@@ -849,6 +849,10 @@ def try_load_index(
     else:
         normalizer = None
 
+    search_params = None
+    if isinstance(index, EmbeddingIndex):
+        search_params = load_search_params(os.path.join(index_dir, "embedding"))
+
     return KgIndex(
         description=description
         or DEFAULT_DESCRIPTIONS.get(index_name, "No description available"),
@@ -856,6 +860,7 @@ def try_load_index(
         data=index.data(),
         info_sparql=info_sparql,
         normalizer=normalizer,
+        search_params=search_params,
     )
 
 
