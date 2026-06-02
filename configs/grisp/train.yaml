@@ -32,11 +32,6 @@ selection_p: env(SELECTION_P:0.2)
 
 lr: env(LR:1e-4)
 
-# when `model` points to a previous run dir using LoRA: merge its adapter into
-# the base before adding the adapter below; set false to continue training the
-# existing adapter (then `lora` must match it)
-merge_adapter: env(MERGE_ADAPTER:true)
-
 lora:
   r: env(LORA_R:32)
   alpha: env(LORA_ALPHA:32)

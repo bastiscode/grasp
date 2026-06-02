@@ -39,7 +39,7 @@ dependencies = [
 # scripts/extract_uniprot_examples.py, and scripts/fix_uniprot_examples.py
 data = ["datasets>=3.3.0", "beautifulsoup4>=4.12.0"]
 grisp = ["transformers>=5", "wandb>=0.24.0", "peft>=0.15.0"]
-expert = ["streamlit>=1.50.0"]
+evaluation = ["streamlit>=1.50.0"]
 
 [project.scripts]
 "grasp" = "grasp.cli:main"

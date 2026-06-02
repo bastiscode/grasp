@@ -57,10 +57,6 @@ class GRISPTrainConfig(BaseModel):
     overwrite_chat_template: bool = False
     do_compile: bool = False
     lora: Lora | None = None
-    # when `model` points to a previous GRISP run dir whose model uses LoRA,
-    # merge those adapters into the base weights before adding new ones;
-    # set false to keep training the existing adapter instead
-    merge_adapter: bool = True
 
     # data
     type: str
@@ -112,7 +108,7 @@ def parse_args() -> argparse.Namespace:
 
 def load_from_run_directory(
     directory: str,
-) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
+) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase, Lora | None]:
     # warm-start from a previous GRISP run dir, mirroring run.py: pick its best
     # checkpoint and load base+adapter (if it was LoRA) or the full model.
     checkpoint = find_best_checkpoint(directory)
@@ -127,48 +123,19 @@ def load_from_run_directory(
         model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype="auto")
 
     tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)  # type: ignore
-    return model, tokenizer
-
-
-def check_lora_matches(model: PeftModel, lora: Lora) -> None:
-    # when continuing an existing adapter, the loaded adapter's structure is
-    # fixed, so the configured `lora` must match it exactly (it cannot be
-    # applied, only validated and recorded in the saved run config).
-    loaded = next(iter(model.peft_config.values()))
-
-    def norm(x: list[str] | str | None) -> set[str] | str:
-        return x if isinstance(x, str) else set(x or [])
-
-    checks = {
-        "r": (loaded.r, lora.r),
-        "lora_alpha": (loaded.lora_alpha, lora.lora_alpha),
-        "dropout": (loaded.lora_dropout, lora.dropout),
-        "target_modules": (norm(loaded.target_modules), norm(lora.target_modules)),
-        "save_modules": (norm(loaded.modules_to_save), norm(lora.save_modules)),
-    }
-    mismatches = [
-        f"{name}: existing={existing!r} vs config={configured!r}"
-        for name, (existing, configured) in checks.items()
-        if existing != configured
-    ]
-    if mismatches:
-        raise ValueError(
-            "merge_adapter is false (continuing the existing LoRA adapter), but the "
-            "configured `lora` does not match the loaded adapter:\n  "
-            + "\n  ".join(mismatches)
-        )
+    return model, tokenizer, train_cfg.lora
 
 
 def load_model_and_tokenizer(
     config: GRISPTrainConfig,
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
+    logger = get_logger("GRISP TRAIN")
     is_run_dir = os.path.isdir(config.model) and os.path.exists(
         os.path.join(config.model, "config.yaml")
     )
+    loaded_lora: Lora | None = None
     if is_run_dir:
-        model, tokenizer = load_from_run_directory(config.model)
-        if isinstance(model, PeftModel) and config.merge_adapter:
-            model = model.merge_and_unload()
+        model, tokenizer, loaded_lora = load_from_run_directory(config.model)
     else:
         model = AutoModelForCausalLM.from_pretrained(config.model, dtype="auto")
         tokenizer = AutoTokenizer.from_pretrained(config.model)
@@ -177,16 +144,19 @@ def load_model_and_tokenizer(
         tokenizer = set_chat_template(tokenizer)
 
     if isinstance(model, PeftModel):
-        # merge_adapter is false and we loaded an existing adapter: continue
-        # training it as is. `lora` must be set and match so the saved run config
-        # records it as LoRA (run.py keys its loading on train_cfg.lora).
-        if config.lora is None:
-            raise ValueError(
-                f"Model loaded from {config.model} has LoRA adapters and "
-                "merge_adapter is false. Set `lora` to match the existing adapter "
-                "to keep training it, or merge_adapter: true to merge and replace it."
+        # warm-started from a previous LoRA run: continue training the loaded
+        # adapter as is. Its structure is fixed, so adopt the loaded run's lora
+        # config (comparing against the saved config, not the adapter, since e.g.
+        # "all-linear" gets expanded into a concrete module list on save).
+        # Adopting it also keeps the saved run marked as LoRA, which run.py keys
+        # its loading on.
+        if config.lora is not None and config.lora != loaded_lora:
+            logger.warning(
+                "Specified `lora` differs from the loaded adapter; continuing with "
+                "the loaded run's lora config instead.\n"
+                f"  loaded:    {loaded_lora}\n  specified: {config.lora}"
             )
-        check_lora_matches(model, config.lora)
+        config.lora = loaded_lora
     elif config.lora is not None:
         peft_config = LoraConfig(
             task_type="CAUSAL_LM",
