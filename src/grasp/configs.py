@@ -59,7 +59,7 @@ class ModelConfig(BaseModel):
     # important inference parameters, supported by almost
     # all providers and models
     parallel_tool_calls: bool = False
-    tool_choice: Literal["auto", "required"] = "required"
+    tool_choice: Literal["auto", "required"] = "auto"
     max_completion_tokens: int = 8192  # 8k, leaves enough space for reasoning models
     num_retries: int = 2
 
