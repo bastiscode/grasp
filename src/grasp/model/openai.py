@@ -106,10 +106,13 @@ class OpenAICompletionsModel(Model):
 
         message = strip_none(choice.message.content)
         reasoning = None
-        if hasattr(choice.message, "reasoning_content"):
+        reasoning_content = getattr(
+            choice.message, "reasoning_content", None
+        ) or getattr(choice.message, "reasoning", None)
+        if reasoning_content is not None:
             reasoning = Reasoning(
                 id=uuid4().hex,
-                content=strip_none(choice.message.reasoning_content),  # type: ignore
+                content=strip_none(reasoning_content),
             )
 
         tool_calls = []
