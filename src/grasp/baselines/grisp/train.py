@@ -8,7 +8,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 import yaml
-from peft import LoraConfig, PeftModel, get_peft_model
+from peft import AutoPeftModelForCausalLM, LoraConfig, PeftModel, get_peft_model
 from pydantic import BaseModel
 from torch.utils.data import ConcatDataset, Dataset, Sampler
 from transformers import (
@@ -35,6 +35,7 @@ from grasp.baselines.grisp.data import (
 )
 from grasp.baselines.grisp.utils import (
     SeededRandomSampler,
+    find_best_checkpoint,
     find_latest_checkpoint,
     set_chat_template,
 )
@@ -56,6 +57,10 @@ class GRISPTrainConfig(BaseModel):
     overwrite_chat_template: bool = False
     do_compile: bool = False
     lora: Lora | None = None
+    # when `model` points to a previous GRISP run dir whose model uses LoRA,
+    # merge those adapters into the base weights before adding new ones;
+    # set false to keep training the existing adapter instead
+    merge_adapter: bool = True
 
     # data
     type: str
@@ -105,15 +110,84 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def load_from_run_directory(
+    directory: str,
+) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
+    # warm-start from a previous GRISP run dir, mirroring run.py: pick its best
+    # checkpoint and load base+adapter (if it was LoRA) or the full model.
+    checkpoint = find_best_checkpoint(directory)
+    assert checkpoint is not None, f"No checkpoint found in run directory {directory}"
+
+    train_cfg = GRISPTrainConfig(**load_config(os.path.join(directory, "config.yaml")))
+    if train_cfg.lora is not None:
+        model = AutoPeftModelForCausalLM.from_pretrained(
+            checkpoint, dtype="auto", is_trainable=True
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype="auto")
+
+    tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)  # type: ignore
+    return model, tokenizer
+
+
+def check_lora_matches(model: PeftModel, lora: Lora) -> None:
+    # when continuing an existing adapter, the loaded adapter's structure is
+    # fixed, so the configured `lora` must match it exactly (it cannot be
+    # applied, only validated and recorded in the saved run config).
+    loaded = next(iter(model.peft_config.values()))
+
+    def norm(x: list[str] | str | None) -> set[str] | str:
+        return x if isinstance(x, str) else set(x or [])
+
+    checks = {
+        "r": (loaded.r, lora.r),
+        "lora_alpha": (loaded.lora_alpha, lora.lora_alpha),
+        "dropout": (loaded.lora_dropout, lora.dropout),
+        "target_modules": (norm(loaded.target_modules), norm(lora.target_modules)),
+        "save_modules": (norm(loaded.modules_to_save), norm(lora.save_modules)),
+    }
+    mismatches = [
+        f"{name}: existing={existing!r} vs config={configured!r}"
+        for name, (existing, configured) in checks.items()
+        if existing != configured
+    ]
+    if mismatches:
+        raise ValueError(
+            "merge_adapter is false (continuing the existing LoRA adapter), but the "
+            "configured `lora` does not match the loaded adapter:\n  "
+            + "\n  ".join(mismatches)
+        )
+
+
 def load_model_and_tokenizer(
     config: GRISPTrainConfig,
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
-    model = AutoModelForCausalLM.from_pretrained(config.model, dtype="auto")
-    tokenizer = AutoTokenizer.from_pretrained(config.model)
+    is_run_dir = os.path.isdir(config.model) and os.path.exists(
+        os.path.join(config.model, "config.yaml")
+    )
+    if is_run_dir:
+        model, tokenizer = load_from_run_directory(config.model)
+        if isinstance(model, PeftModel) and config.merge_adapter:
+            model = model.merge_and_unload()
+    else:
+        model = AutoModelForCausalLM.from_pretrained(config.model, dtype="auto")
+        tokenizer = AutoTokenizer.from_pretrained(config.model)
+
     if config.overwrite_chat_template:
         tokenizer = set_chat_template(tokenizer)
 
-    if config.lora is not None:
+    if isinstance(model, PeftModel):
+        # merge_adapter is false and we loaded an existing adapter: continue
+        # training it as is. `lora` must be set and match so the saved run config
+        # records it as LoRA (run.py keys its loading on train_cfg.lora).
+        if config.lora is None:
+            raise ValueError(
+                f"Model loaded from {config.model} has LoRA adapters and "
+                "merge_adapter is false. Set `lora` to match the existing adapter "
+                "to keep training it, or merge_adapter: true to merge and replace it."
+            )
+        check_lora_matches(model, config.lora)
+    elif config.lora is not None:
         peft_config = LoraConfig(
             task_type="CAUSAL_LM",
             r=config.lora.r,
