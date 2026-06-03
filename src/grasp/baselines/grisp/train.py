@@ -117,10 +117,17 @@ def load_from_run_directory(
     train_cfg = GRISPTrainConfig(**load_config(os.path.join(directory, "config.yaml")))
     if train_cfg.lora is not None:
         model = AutoPeftModelForCausalLM.from_pretrained(
-            checkpoint, dtype="auto", is_trainable=True
+            checkpoint,
+            dtype="auto",
+            is_trainable=True,
+            attn_implementation="eager",
         )
     else:
-        model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype="auto")
+        model = AutoModelForCausalLM.from_pretrained(
+            checkpoint,
+            dtype="auto",
+            attn_implementation="eager",
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(model.config.name_or_path)  # type: ignore
     return model, tokenizer, train_cfg.lora
@@ -137,7 +144,11 @@ def load_model_and_tokenizer(
     if is_run_dir:
         model, tokenizer, loaded_lora = load_from_run_directory(config.model)
     else:
-        model = AutoModelForCausalLM.from_pretrained(config.model, dtype="auto")
+        model = AutoModelForCausalLM.from_pretrained(
+            config.model,
+            dtype="auto",
+            attn_implementation="eager",
+        )
         tokenizer = AutoTokenizer.from_pretrained(config.model)
 
     if config.overwrite_chat_template:
