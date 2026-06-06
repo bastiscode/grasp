@@ -28,7 +28,9 @@ def format_value(value: Any, indent: int = 0) -> str:
         return "[" + ", ".join(format_value(v, indent) for v in value) + "]"
     elif isinstance(value, dict):
         return (
-            "{" + ", ".join(f"{k}: {format_value(v, indent)}" for k, v in value.items()) + "}"
+            "{"
+            + ", ".join(f"{k}: {format_value(v, indent)}" for k, v in value.items())
+            + "}"
         )
     else:
         # None, bool, int, float, ...
