@@ -869,6 +869,10 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
 
     info = load_kg_info(cfg.kg, logger)
     if cfg.info is not None:
+        logger.info(
+            f"Existing knowledge graph info:\n{info.model_dump_json(indent=2)}\n\n"
+            f"Overwriting with info set in config:\n{cfg.info.model_dump_json(exclude_unset=True, indent=2)}"
+        )
         info = info.model_copy(update=cfg.info.model_dump(exclude_unset=True))
 
     indices: dict[str, KgIndex] = {}
