@@ -2,8 +2,10 @@ import logging
 import os
 import sys
 from dataclasses import replace
+from threading import RLock
 from typing import Any, Iterable
 
+from cachetools import LRUCache
 from search_rdf import Data, EmbeddingIndex
 from search_rdf.model import (
     HuggingFaceImageModel,
@@ -65,6 +67,7 @@ from grasp.sparql.utils import (
 )
 from grasp.utils import (
     clip,
+    format_enumerate,
     format_list,
     format_prefixes,
     get_index_dir,
@@ -106,6 +109,9 @@ class KgManager:
         self.embedding_models: dict[str, EmbeddingModel] = {}
         self.shapes: Shapes | None = None
         self.shape_config: ShapeConfig | None = None
+
+        self.search_cache = LRUCache(maxsize=1024)
+        self.search_lock = RLock()
 
     def load_models(
         self,
@@ -551,6 +557,14 @@ class KgManager:
         identifier_map: dict[str, list[str]] | None = None,
         query_type: str = "text",
     ) -> list[Alternative]:
+        cache_key = None
+        if identifier_map is None:
+            cache_key = (index_name, query, k, query_type)
+            with self.search_lock:
+                if cache_key in self.search_cache:
+                    self.logger.debug(f"Cache hit for search with key {cache_key}")
+                    return self.search_cache[cache_key]
+
         kg_index = self.get(index_name)
         index = kg_index.index
         data = kg_index.data
@@ -615,6 +629,10 @@ class KgManager:
                 matched_via,
             )
             alternatives.append(alternative)
+
+        if cache_key is not None:
+            with self.search_lock:
+                self.search_cache[cache_key] = alternatives
 
         return alternatives
 
@@ -941,7 +959,7 @@ def format_kgs(
     notes: dict[str, list[str]],
     example_indices: "dict[str, Any] | None" = None,
 ) -> str:
-    return format_list(
+    return "\n\n".join(
         format_kg(
             manager,
             notes.get(manager.kg),
@@ -958,9 +976,11 @@ def format_kg(
     notes: list[str] | None = None,
     example_index: "Any | None" = None,
 ) -> str:
-    msg = f'"{manager.kg}" at {manager.endpoint}'
+    head = f"### {manager.kg}\nEndpoint: {manager.endpoint}"
     if manager.description:
-        msg += f": {manager.description}"
+        head += f"\n{manager.description}"
+
+    parts = [head]
 
     indices = []
     for name in manager.index_names:
@@ -976,12 +996,14 @@ def format_kg(
         indices.append(format_shapes_index(manager.shapes))
 
     if indices:
-        msg += "\n  Search indices:\n" + format_list(indices, indent=4)
+        parts.append("**Search indices**\n" + "\n".join(indices))
 
     if manager.kg_prefixes:
-        msg += f"\n  SPARQL prefixes:\n{format_prefixes(manager.kg_prefixes, indent=4)}"
+        parts.append(
+            "**SPARQL prefixes**\n" + format_prefixes(manager.kg_prefixes, bullet="")
+        )
 
     if notes:
-        msg += "\n  Notes:\n" + format_list(notes, indent=4)
+        parts.append("**Notes**\n" + format_enumerate(notes))
 
-    return msg
+    return "\n\n".join(parts)

@@ -48,6 +48,7 @@ class ModelConfig(BaseModel):
     model_provider: Literal[
         "openai/completions",
         "openai/responses",
+        "anthropic",
     ] = "openai/completions"
     model_endpoint: str | None = None
     model_api_key: str | None = Field(default=None, exclude=True)

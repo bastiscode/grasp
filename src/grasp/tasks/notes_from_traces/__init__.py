@@ -11,7 +11,7 @@ from grasp.tasks.exploration.functions import (
 from grasp.tasks.exploration.functions import (
     note_function_definitions,
 )
-from grasp.utils import format_kg_notes, format_notes
+from grasp.utils import format_kg_notes, format_notes, format_section
 
 
 def format_value(value: Any, indent: int = 0) -> str:
@@ -52,16 +52,20 @@ def format_call(name: str, args: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def format_output(output: Any | None, messages: list[Message]) -> str:
+def format_output(
+    output: Any | None,
+    messages: list[Message],
+    level: int = 4,
+) -> str:
     fmt = []
     step = 1
     for message in messages[2:]:
         if message.role == "feedback":
-            fmt.append(f"Feedback:\n{message.content}")
+            fmt.append(format_section("Feedback", message.content, level))  # type: ignore
             continue
 
         elif message.role == "user":
-            fmt.append(f"User:\n{message.content}")
+            fmt.append(format_section("User", message.content, level))  # type: ignore
             continue
 
         assert isinstance(message.content, Response)
@@ -80,12 +84,15 @@ def format_output(output: Any | None, messages: list[Message]) -> str:
             call = format_call(tool_call.name, tool_call.args)
             blocks.append(f"{call}:\n{tool_call.result}")
 
-        content = f"Step {step}:\n" + "\n\n".join(blocks)
-        fmt.append(content)
+        fmt.append(format_section(f"Step {step}", "\n\n".join(blocks), level))
         step += 1
 
     if output is not None and "formatted" in output:
-        fmt.append(f"Output after {step} steps:\n{output['formatted']}")
+        fmt.append(
+            format_section(
+                f"Output after {step} steps", output["formatted"], level
+            )
+        )
 
     return "\n\n".join(fmt)
 
@@ -150,20 +157,32 @@ def note_taking_instructions(
 
         if i == 0:
             assert messages[0].role == "system"
-            formatted.append(f"Task instructions for the agent:\n{messages[0].content}")
+            formatted.append(
+                format_section(
+                    "Task instructions for the agent",
+                    messages[0].content,  # type: ignore
+                )
+            )
 
         assert messages[1].role == "user"
         input = messages[1].content
 
-        content = f"Input {i + 1}:\n{input}"
-
+        parts = []
         if ground_truths is not None:
-            gt = ground_truths[i]
-            content += f"\n\nReference output:\n{gt}"
+            parts.append(
+                format_section("Reference output", ground_truths[i], level=3)
+            )
 
-        content += f"\n\nAgent trace:\n{format_output(output['output'], messages)}"
+        parts.append(
+            format_section(
+                "Agent trace",
+                format_output(output["output"], messages),
+                level=3,
+            )
+        )
 
-        formatted.append(content)
+        body = "\n\n".join([str(input), *parts])
+        formatted.append(format_section(f"Input {i + 1}", body))
 
     fmt = "\n\n".join(formatted)
 
@@ -177,14 +196,16 @@ functions where it helps you verify or refine a note.
 
 
 def output(state: NotesFromTracesState) -> dict:
-    formatted = f"""\
-Note taking completed.
-
-Notes for knowledge graphs:
-{format_kg_notes(state.kg_notes)}
-
-General notes:
-{format_notes(state.notes)}"""
+    formatted = "\n\n".join(
+        [
+            "Note taking completed.",
+            format_section(
+                "Notes for knowledge graphs",
+                format_kg_notes(state.kg_notes),
+            ),
+            format_section("General notes", format_notes(state.notes)),
+        ]
+    )
 
     return {
         "type": "output",
