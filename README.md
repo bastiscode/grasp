@@ -593,8 +593,10 @@ evaluation app for the SPARQL QA task.
 
 ## Supported models
 
-GRASP uses the OpenAI Python SDK and supports any OpenAI-compatible API endpoint.
-The model name and provider are set separately in the config file (or via env variables):
+GRASP supports OpenAI models (via the Responses or Chat Completions API), Anthropic
+models (via the Messages API), and any OpenAI-compatible API endpoint (vLLM, Ollama,
+SGLang, Gemini, etc.). The model name and provider are set separately in the config
+file (or via env variables):
 
 - `model`: the model name as expected by the API (e.g. `gpt-5.4-mini`, `Qwen/Qwen3.5-27B`)
 - `model_provider`: `openai/responses` (default, uses the Responses API), `openai/completions` (uses the Chat Completions API), or `anthropic` (uses the Anthropic Messages API)
