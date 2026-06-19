@@ -1,15 +1,18 @@
-model: Qwen/Qwen3-Next-80B-A3B-Instruct-FP8
+model: Qwen/Qwen3.6-27B
 model_endpoint: env(MODEL_ENDPOINT:http://localhost:8337/v1)
 model_api: openai/completions
 model_api_key: dummy
 model_kwargs:
-  temperature: 0.2
+  temperature: 0.4
   top_p: 0.8
   extra_body:
     top_k: 20
     min_p: 0.0
     chat_template_kwargs:
       enable_thinking: false
+      preserve_thinking: false
+
+tool_choice: env(TOOL_CHOICE:auto)
 
 task_kwargs:
   wikidata-query-logs:
@@ -17,13 +20,16 @@ task_kwargs:
 
 seed: env(SEED:22)
 
-fn_set: env(FN_SET:all)
+fn_set: env(FN_SET:search_extended)
 feedback: env(FEEDBACK:false)
 max_feedbacks: env(MAX_FEEDBACKS:1)
 know_before_use: env(KNOW_BEFORE_USE:false)
 notes_file: env(NOTES_FILE:null)
 
 max_steps: env(MAX_STEPS:1024)
+
+sparql_query_timeout: env(SPARQL_QUERY_TIMEOUT:60)
+sparql_read_timeout: env(SPARQL_READ_TIMEOUT:30)
 
 list_k: env(LIST_K:10)
 search_top_k: env(SEARCH_TOP_K:10)
@@ -42,3 +48,4 @@ knowledge_graphs:
       endpoint: env(KG_ENDPOINT:http://localhost:7001)
 
 port: env(PORT:12345)
+max_generation_time: env(MAX_GENERATION_TIME:600)

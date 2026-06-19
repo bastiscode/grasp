@@ -3,18 +3,16 @@ model_endpoint: env(MODEL_ENDPOINT:http://localhost:8337/v1)
 model_api: openai/completions
 model_api_key: dummy
 model_kwargs:
-  temperature: 0.6
-  top_p: 0.95
-  presence_penalty: 0.0
+  temperature: 0.4
+  top_p: 0.8
   extra_body:
     top_k: 20
     min_p: 0.0
-    repetition_penalty: 1.0
     chat_template_kwargs:
-      enable_thinking: true
-      preserve_thinking: true
+      enable_thinking: false
+      preserve_thinking: false
 
-tool_choice: required
+tool_choice: env(TOOL_CHOICE:auto)
 
 task_kwargs:
   wikidata-query-logs:
