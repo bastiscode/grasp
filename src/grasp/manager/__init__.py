@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import time
 from dataclasses import replace
 from threading import RLock
 from typing import Any, Iterable
@@ -12,7 +13,6 @@ from search_rdf.model import (
     OpenClipModel,
     SentenceTransformerModel,
 )
-from universal_ml_utils.io import load_text
 from universal_ml_utils.logging import get_logger
 from universal_ml_utils.table import generate_table
 
@@ -35,7 +35,12 @@ from grasp.manager.utils import (
     try_load_search_index,
 )
 from grasp.search_params import EmbeddingSearchParams, load_search_params
-from grasp.shapes import Shapes, load_setup_description, load_shapes
+from grasp.shapes import (
+    Shapes,
+    load_setup_description,
+    load_setup_patterns,
+    load_shapes,
+)
 from grasp.sparql.types import (
     Alternative,
     AskResult,
@@ -74,6 +79,9 @@ from grasp.utils import (
     ordered_unique,
 )
 
+SEARCH_CACHE_MAX_SIZE = int(os.getenv("GRASP_SEARCH_CACHE_MAX_SIZE", "1024"))
+SEARCH_CACHE_MIN_MS = float(os.getenv("GRASP_SEARCH_CACHE_MIN_MS", "100"))
+
 
 class KgManager:
     def __init__(
@@ -110,7 +118,7 @@ class KgManager:
         self.shapes: Shapes | None = None
         self.shape_config: ShapeConfig | None = None
 
-        self.search_cache = LRUCache(maxsize=1024)
+        self.search_cache = LRUCache(maxsize=SEARCH_CACHE_MAX_SIZE)
         self.search_lock = RLock()
 
     def load_models(
@@ -557,6 +565,7 @@ class KgManager:
         identifier_map: dict[str, list[str]] | None = None,
         query_type: str = "text",
     ) -> list[Alternative]:
+        start = time.monotonic()
         cache_key = None
         if identifier_map is None:
             cache_key = (index_name, query, k, query_type)
@@ -630,7 +639,11 @@ class KgManager:
             )
             alternatives.append(alternative)
 
-        if cache_key is not None:
+        end = time.monotonic()
+        time_ms = (end - start) * 1000
+        # only cache queries that took longer than a certain
+        # threshold to only cache expensive ones
+        if cache_key is not None and time_ms >= SEARCH_CACHE_MIN_MS:
             with self.search_lock:
                 self.search_cache[cache_key] = alternatives
 
@@ -929,11 +942,11 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     manager.shape_config = cfg.shapes
     if cfg.shapes is not None:
         shapes_dir = os.path.join(get_index_dir(cfg.kg), "shapes")
-        pattern_file = os.path.join(shapes_dir, "pattern.sparql")
-        if os.path.exists(pattern_file):
-            pattern = load_text(pattern_file)
+        instance_pattern, schema_pattern = load_setup_patterns(shapes_dir)
+        if instance_pattern is not None or schema_pattern is not None:
             manager.shapes = Shapes(
-                pattern=pattern,
+                instance_pattern=instance_pattern,
+                schema_pattern=schema_pattern,
                 description=load_setup_description(shapes_dir),
             )
     return manager
