@@ -99,6 +99,52 @@ python -m grasp.baselines.grisp.train \
 > set WANDB_PROJECT and WANDB_ENTITY environment variables
 > to log your runs to your Wandb account.
 
+### Bootstrap query validation and skeleton improvement (optional)
+
+Besides the two core tasks (skeleton generation and listwise IRI selection),
+GRISP can additionally be trained on two bootstrapped tasks:
+
+3. **Query validation** — a binary classifier deciding whether a final query
+   correctly answers the question. It extends the simple empty-result check.
+4. **Skeleton improvement** — rewriting a wrong query skeleton into a corrected
+   one, used to recover from the malformed skeletons that cause most failures.
+
+These tasks are *bootstrapped* from a model already trained on tasks 1 and 2:
+the whole procedure is run `num_bootstraps` times per question (each run samples
+one skeleton and resolves it), yielding a spread of query qualities (with
+`constrain` and `check_empty` enabled, hard questions also yield partial
+skeletons that do not fully resolve). Each fully-resolved prediction is scored
+by F1 against the gold query, and the result is turned into training data. The
+validation target is a soft distribution `[f1, 1 - f1]` over `[valid, invalid]`;
+the improvement target is the gold NL skeleton, and the input is the model's own
+(bad) skeleton together with the query resolved from it -- its selections and
+result preview (or the partially resolved query and an unavailable result, when
+it did not fully resolve).
+
+```bash
+# 1) train a v1 model on tasks 1 + 2 (type 'both', as above)
+# 2) mine bootstrapped data from it (run the procedure 4x per question)
+python -m grasp.baselines.grisp.bootstrap \
+  configs/grisp/run.yaml \
+  data/grisp/runs/my-wikidata-wwq-model \
+  data/grisp/wikidata/wwq/train.jsonl \
+  data/grisp/wikidata/wwq/train.bootstrap.jsonl \
+  4
+
+# 3) materialize the gold data as before, then train v2 on all four tasks by
+#    setting TYPE=all and listing both the gold and bootstrapped materialized
+#    files in train_files (the bootstrap file is already materialized).
+TYPE=all python -m grasp.baselines.grisp.train \
+  configs/grisp/train.yaml \
+  data/grisp/runs/my-wikidata-wwq-model-all
+```
+
+At inference time, enable the learned validation/improvement self-correction
+loop via the run config (`validate_queries`, `improve_skeletons`, see
+[`run.yaml`](../../../../configs/grisp/run.yaml)). The loop validates each
+candidate query and, when it is rejected, asks the model to rewrite the
+skeleton before retrying selection, keeping the highest-scoring candidate.
+
 ## Run a GRISP model
 
 An exemplary run config with the most important inference options

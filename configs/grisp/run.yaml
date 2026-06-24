@@ -21,5 +21,15 @@ backtrack: env(BACKTRACK:true)
 rerank: env(RERANK:true)
 check_empty: env(CHECK_EMPTY:true)
 
+# learned query validation (task 3) and skeleton improvement (task 4),
+# requires a model trained with type 'all'
+validate_queries: env(VALIDATE_QUERIES:false)
+validate_threshold: env(VALIDATE_THRESHOLD:0.9)
+improve_skeletons: env(IMPROVE_SKELETONS:false)
+improve_rounds: env(IMPROVE_ROUNDS:1)
+improve_n: env(IMPROVE_N:4)
+
 skeleton_disable_adapter: env(SKELETON_DISABLE_ADAPTER:false)
 selection_disable_adapter: env(SELECTION_DISABLE_ADAPTER:false)
+validate_disable_adapter: env(VALIDATE_DISABLE_ADAPTER:false)
+improve_disable_adapter: env(IMPROVE_DISABLE_ADAPTER:false)

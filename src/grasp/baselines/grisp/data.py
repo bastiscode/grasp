@@ -30,6 +30,26 @@ EOI = "</iri>"
 BOR = "<rep>"
 EOR = "</rep>"
 
+# binary labels for the query validation task (task 3). The valid label is
+# placed first so target_dist = [f1, 1 - f1] reads as [P(valid), P(invalid)].
+VALID_LABEL = "A"
+INVALID_LABEL = "B"
+VALIDATION_OPTIONS = [VALID_LABEL, INVALID_LABEL]
+
+# Stable marker shown in place of a result preview when the query could not be
+# executed within the time budget or the backend was unavailable. This is
+# deliberately distinct from an *empty* result: an empty result is evidence the
+# query is wrong, whereas an unavailable result is absence of evidence and must
+# not be read as wrong. Used consistently at inference and in bootstrapped
+# training data so the validator learns to judge from the query in this case.
+RESULT_UNAVAILABLE = "Unavailable (timeout reached or backend down)"
+
+# shown as the result for a partially resolved skeleton: it still has unfilled
+# placeholders, so it could not be executed at all -- distinct from
+# RESULT_UNAVAILABLE (a fully resolved query whose execution failed), so the
+# improvement model is not told a wrong reason for the missing result.
+RESULT_UNRESOLVED = "Unavailable (skeleton not fully resolved)"
+
 ALT_LABELS = string.ascii_uppercase + string.digits
 
 IGNORE_INDEX = -100
@@ -84,9 +104,22 @@ class SelectionSample(BaseModel):
     target: str
 
 
+class ValidationSample(BaseModel):
+    # Query validation (task 3). Single-token classification over
+    # VALIDATION_OPTIONS, trained against a *soft* target distribution
+    # target_dist = [f1, 1 - f1], where f1 is the F1 score between the
+    # predicted query result and the gold query result.
+    messages: Messages
+    options: list[str] = list(VALIDATION_OPTIONS)
+    target_dist: list[float]
+
+
 class GRISPMaterializedSample(BaseModel):
-    skeletons: list[Messages]
-    selections: list[SelectionSample]
+    skeletons: list[Messages] = []
+    selections: list[SelectionSample] = []
+    # bootstrapped tasks (filled by grisp.bootstrap, empty for gold data)
+    validations: list[ValidationSample] = []
+    improvements: list[Messages] = []
 
     @property
     def has_skeletons(self) -> bool:
@@ -95,6 +128,14 @@ class GRISPMaterializedSample(BaseModel):
     @property
     def has_selections(self) -> bool:
         return len(self.selections) > 0
+
+    @property
+    def has_validations(self) -> bool:
+        return len(self.validations) > 0
+
+    @property
+    def has_improvements(self) -> bool:
+        return len(self.improvements) > 0
 
 
 def extract_value_from_nl_iri(nl_iri: dict) -> str:
@@ -173,6 +214,21 @@ class Skeleton:
             self.nl_iris,
             self.identifiers,
         ):
+            byte_start, byte_end = nl_iri["byte_span"]
+            sparql += self.sparql_encoded[start:byte_start].decode()
+            sparql += identifier
+            start = byte_end
+
+        sparql += self.sparql_encoded[start:].decode()
+        return sparql
+
+    def materialize_partial(self) -> str:
+        # render the skeleton with the placeholders resolved so far replaced by
+        # their identifiers; any not-yet-resolved placeholders are left as
+        # natural language. Equivalent to materialize() once the skeleton is done.
+        sparql = ""
+        start = 0
+        for nl_iri, identifier in zip(self.nl_iris, self.identifiers):
             byte_start, byte_end = nl_iri["byte_span"]
             sparql += self.sparql_encoded[start:byte_start].decode()
             sparql += identifier
@@ -470,14 +526,107 @@ fitting alternative."""
     return messages, list(options)
 
 
+def get_validation_prompt(
+    kg: str,
+    question: str,
+    sparql: str,
+    selections: str | None = None,
+    result: str | None = None,
+    valid: bool | None = None,
+) -> Messages:
+    system = f"""\
+You are a SPARQL expert. Your task is to decide whether the given SPARQL \
+query over the {kg} knowledge graph correctly and completely answers the \
+user question.
+You are given the user question, the SPARQL query, info about the items \
+used in it, and a preview of its result. Output {VALID_LABEL} if the query \
+correctly answers the question, or {INVALID_LABEL} if it does not."""
+
+    user = f"Question:\n{question}\n\nSPARQL query:\n{sparql}"
+    if selections:
+        user += f"\n\n{selections}"
+    if result is not None:
+        user += f"\n\nResult:\n{result}"
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+    if valid is not None:
+        messages.append(
+            {"role": "assistant", "content": VALID_LABEL if valid else INVALID_LABEL}
+        )
+
+    return messages
+
+
+def get_improvement_prompt(
+    kg: str,
+    question: str,
+    skeleton: str,
+    sparql: str | None = None,
+    selections: str | None = None,
+    result: str | None = None,
+    improved: str | None = None,
+) -> Messages:
+    # Neutral framing on purpose: the candidate is *not* asserted to be wrong.
+    # The model is asked to improve the candidate only if there is something to
+    # improve, so that a false-negative validation verdict does not pressure the
+    # model into needlessly rewriting a good skeleton. The same evidence the
+    # validator saw (the resolved query, its chosen items, and a result preview)
+    # is provided as a hint for deciding whether a rewrite is warranted. The
+    # wording covers both a fully resolved query and a partially resolved one
+    # (where some placeholders could not be filled and the result is missing).
+    system = f"""\
+You are an expert SPARQL query generator. Given a user question and a \
+candidate SPARQL query skeleton over the {kg} knowledge graph, try to improve \
+the skeleton so that it better answers the question. If there is nothing to \
+improve, keep it as is.
+As hints, you are also given the query resolved from the skeleton, info about \
+the items chosen to fill its placeholders, and a preview of that query's \
+result. The resolved query may be incomplete: placeholders that could not be \
+resolved are left as natural language, and the result may be missing.
+Like the candidate, use natural language placeholders surrounded by {BOI} \
+and {EOI} tags instead of actual IRIs. The placeholders may contain optional \
+additional information helpful for disambiguation in brackets, e.g., \
+"population (wdt)" for wikidata properties."""
+
+    user = f"Question:\n{question}\n\nCandidate skeleton:\n{skeleton}"
+    if sparql is not None:
+        user += f"\n\nResolved query:\n{sparql}"
+    if selections:
+        user += f"\n\n{selections}"
+    if result is not None:
+        user += f"\n\nResult:\n{result}"
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+    if improved is not None:
+        messages.append({"role": "assistant", "content": improved})
+
+    return messages
+
+
 class OracleSkeletonUnavailable(Exception):
     pass
 
 
-def gold_sparql_to_nl_skeleton(sparql: str, manager: KgManager) -> str:
+def gold_sparql_to_nl_skeleton(
+    sparql: str,
+    manager: KgManager,
+    is_val: bool = True,
+    p: float = 0.2,
+) -> str:
     # match the training data pipeline (see preparation in main below):
     # fix/strip known prefixes and prettify before extracting items, so the
     # resulting NL skeleton lies on the training distribution.
+    # is_val=True (default) -> deterministic canonical labels (used for oracle
+    # inference). is_val=False with p -> alias sampling like the skeleton task,
+    # for use as a training target.
     sparql = manager.fix_prefixes(sparql, remove_known=True)
     sparql = manager.prettify(sparql)
     sparql, items = extract_sparql_items(sparql, manager)
@@ -512,8 +661,7 @@ def gold_sparql_to_nl_skeleton(sparql: str, manager: KgManager) -> str:
 
     parts.append(sparql[cursor:])
 
-    # is_val=True -> deterministic canonical label, no alias sampling
-    return materialize_skeleton(parts, is_val=True)
+    return materialize_skeleton(parts, is_val=is_val, p=p)
 
 
 def materialize_skeleton(
@@ -650,42 +798,49 @@ def tokenize_and_log(
     return output
 
 
-def tokenize_selection(
-    sample: SelectionSample,
+def tokenize_option_answer(
+    messages: Messages,
+    options: list[str],
     tokenizer: PreTrainedTokenizerBase,
 ) -> dict:
+    # Shared tokenization for single-token classification tasks (selection and
+    # validation). The assistant turn (messages[-1]) holds the located option
+    # letter; the restricted-CE / soft-CE loss is applied at its position.
     enc: dict = tokenizer.apply_chat_template(
-        sample.messages,
+        messages,
         return_dict=True,
         enable_thinking=False,
     )  # type: ignore
     prompt_enc: dict = tokenizer.apply_chat_template(
-        sample.messages[:-1],
+        messages[:-1],
         add_generation_prompt=True,
         return_dict=True,
         enable_thinking=False,
     )  # type: ignore
-    option_token_ids = [tokenizer.convert_tokens_to_ids(o) for o in sample.options]
+    option_token_ids = [tokenizer.convert_tokens_to_ids(o) for o in options]
     assert all(
         t is not None and t != tokenizer.unk_token_id for t in option_token_ids
-    ), f"Option letters not single tokens: {sample.options}"
+    ), f"Option letters not single tokens: {options}"
 
-    target_idx = sample.options.index(sample.target)
-    target_id = option_token_ids[target_idx]
+    located = messages[-1]["content"]
+    assert located in options, (
+        f"Assistant content '{located}' is not one of the options {options}"
+    )
+    located_id = option_token_ids[options.index(located)]
 
     # Some chat templates emit extra tokens between the generation prompt and
     # the assistant content (e.g. Qwen3 inserts <think>\n\n</think>\n\n when
     # enable_thinking=False). Locate the answer letter by searching forward
-    # from the prompt boundary for the first occurrence of the target token id.
+    # from the prompt boundary for the first occurrence of the located token id.
     input_ids = enc["input_ids"]
     search_start = len(prompt_enc["input_ids"])
     answer_pos = next(
-        (i for i in range(search_start, len(input_ids)) if input_ids[i] == target_id),
+        (i for i in range(search_start, len(input_ids)) if input_ids[i] == located_id),
         None,
     )
     assert answer_pos is not None, (
-        f"Could not locate target token id {target_id} for target "
-        f"'{sample.target}' in assistant turn (search from index {search_start})"
+        f"Could not locate token id {located_id} for option "
+        f"'{located}' in assistant turn (search from index {search_start})"
     )
 
     return {
@@ -695,8 +850,40 @@ def tokenize_selection(
         "labels": [IGNORE_INDEX] * len(enc["input_ids"]),
         "answer_pos": answer_pos,
         "option_token_ids": option_token_ids,
-        "target_idx": target_idx,
     }
+
+
+def tokenize_selection(
+    sample: SelectionSample,
+    tokenizer: PreTrainedTokenizerBase,
+) -> dict:
+    output = tokenize_option_answer(sample.messages, sample.options, tokenizer)
+    target_idx = sample.options.index(sample.target)
+    # hard one-hot target distribution (special case of the soft validation loss)
+    target_dist = [0.0] * len(sample.options)
+    target_dist[target_idx] = 1.0
+    output["target_idx"] = target_idx
+    output["target_dist"] = target_dist
+    return output
+
+
+def tokenize_validation(
+    sample: ValidationSample,
+    tokenizer: PreTrainedTokenizerBase,
+) -> dict:
+    assert len(sample.target_dist) == len(sample.options), (
+        f"target_dist length {len(sample.target_dist)} != "
+        f"number of options {len(sample.options)}"
+    )
+    output = tokenize_option_answer(sample.messages, sample.options, tokenizer)
+    # argmax option is the one written into the assistant turn (located above)
+    target_idx = max(
+        range(len(sample.target_dist)),
+        key=lambda i: sample.target_dist[i],
+    )
+    output["target_idx"] = target_idx
+    output["target_dist"] = list(sample.target_dist)
+    return output
 
 
 def tokenize_selection_and_log(
@@ -710,6 +897,20 @@ def tokenize_selection_and_log(
     logger.debug(
         f"Answer pos: {output['answer_pos']}, target idx: {output['target_idx']}, "
         f"target: '{sample.target}'"
+    )
+    return output
+
+
+def tokenize_validation_and_log(
+    sample: ValidationSample,
+    tokenizer: PreTrainedTokenizerBase,
+    logger: Logger,
+) -> dict:
+    output = tokenize_validation(sample, tokenizer)
+    logger.debug(f"Validation sample:\n{tokenizer.decode(output['input_ids'])}")
+    logger.debug(f"Length: {len(output['input_ids']):,}")
+    logger.debug(
+        f"Answer pos: {output['answer_pos']}, target dist: {sample.target_dist}"
     )
     return output
 
@@ -829,6 +1030,79 @@ class GRISPMaterializedSelectionDataset(Dataset):
         return tokenize_selection_and_log(
             selection,
             self.tokenizer,
+            self.logger,
+        )
+
+
+class GRISPMaterializedValidationDataset(Dataset):
+    def __init__(
+        self,
+        samples: list[GRISPMaterializedSample],
+        tokenizer: PreTrainedTokenizerBase,
+        mask_inputs: bool = True,
+        log_level: str | None = None,
+    ) -> None:
+        self.samples = [sample for sample in samples if sample.has_validations]
+        self.tokenizer = tokenizer
+        self.mask_inputs = mask_inputs
+
+        self.logger = get_logger("GRISP MATERIALIZED VALIDATION DATASET", log_level)
+
+        self.counter = [0] * len(self.samples)
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict:
+        sample = self.samples[idx]
+
+        count = self.counter[idx]
+        validation = sample.validations[count % len(sample.validations)]
+        self.counter[idx] += 1
+        self.logger.debug(
+            f"({type(self).__name__}) Accessing sample {idx} count {count}"
+        )
+
+        return tokenize_validation_and_log(
+            validation,
+            self.tokenizer,
+            self.logger,
+        )
+
+
+class GRISPMaterializedImprovementDataset(Dataset):
+    def __init__(
+        self,
+        samples: list[GRISPMaterializedSample],
+        tokenizer: PreTrainedTokenizerBase,
+        mask_inputs: bool = True,
+        log_level: str | None = None,
+    ) -> None:
+        self.samples = [sample for sample in samples if sample.has_improvements]
+        self.tokenizer = tokenizer
+        self.mask_inputs = mask_inputs
+
+        self.logger = get_logger("GRISP MATERIALIZED IMPROVEMENT DATASET", log_level)
+
+        self.counter = [0] * len(self.samples)
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        sample = self.samples[idx]
+
+        count = self.counter[idx]
+        messages = sample.improvements[count % len(sample.improvements)]
+        self.counter[idx] += 1
+        self.logger.debug(
+            f"({type(self).__name__}) Accessing sample {idx} count {count}"
+        )
+
+        return tokenize_and_log(
+            messages,
+            self.tokenizer,
+            self.mask_inputs,
             self.logger,
         )
 
@@ -1033,15 +1307,20 @@ class GRISPCollator:
             for key in keys
         }
 
-        # selection metadata; skeleton rows get sentinel values
+        # restricted-cross-entropy metadata; next-token rows (skeleton/
+        # improvement) get sentinel values. is_rce marks the rows trained with
+        # restricted/soft cross-entropy over option tokens (selection +
+        # validation); the other rows are trained with plain next-token
+        # prediction.
         B = len(batch)
         max_opts = max((len(s.get("option_token_ids", [])) for s in batch), default=0)
         max_opts = max(max_opts, 1)
         opt_ids = torch.zeros((B, max_opts), dtype=torch.long)
         opt_mask = torch.zeros((B, max_opts), dtype=torch.bool)
-        target_idx = torch.full((B,), -1, dtype=torch.long)
+        # soft target distribution over options; one-hot rows recover hard CE
+        target_dist = torch.zeros((B, max_opts), dtype=torch.float)
         answer_pos = torch.full((B,), -1, dtype=torch.long)
-        is_select = torch.zeros(B, dtype=torch.bool)
+        is_rce = torch.zeros(B, dtype=torch.bool)
 
         for i, s in enumerate(batch):
             if "option_token_ids" not in s:
@@ -1049,19 +1328,19 @@ class GRISPCollator:
             n = len(s["option_token_ids"])
             opt_ids[i, :n] = torch.tensor(s["option_token_ids"], dtype=torch.long)
             opt_mask[i, :n] = True
-            target_idx[i] = s["target_idx"]
+            target_dist[i, :n] = torch.tensor(s["target_dist"], dtype=torch.float)
             answer_pos[i] = s["answer_pos"]
-            is_select[i] = True
+            is_rce[i] = True
 
         output["option_token_ids"] = opt_ids
         output["option_mask"] = opt_mask
-        output["target_idx"] = target_idx
+        output["target_dist"] = target_dist
         output["answer_pos"] = answer_pos
-        output["is_selection"] = is_select
+        output["is_rce"] = is_rce
 
         if (
             torch.all(output["labels"] == IGNORE_INDEX).item()
-            and not is_select.any().item()
+            and not is_rce.any().item()
         ):
             seq_lens = output["attention_mask"].sum(dim=1).tolist()
             input_lens = [len(s["input_ids"]) for s in batch]
@@ -1070,7 +1349,7 @@ class GRISPCollator:
                 sum(1 for x in s["labels"] if x != IGNORE_INDEX) for s in batch
             ]
             self.logger.warning(
-                f"Batch has no skeleton labels and no selection rows; "
+                f"Batch has no next-token labels and no option-CE rows; "
                 f"loss will be zero (no gradient signal).\n"
                 f"  max_length={self.max_length}, padded_shape={tuple(output['input_ids'].shape)}\n"
                 f"  per-row attention sums: {seq_lens}\n"
