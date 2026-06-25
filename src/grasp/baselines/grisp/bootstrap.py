@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+import re
 from logging import Logger
 from typing import Iterator
 
@@ -200,6 +201,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def structural_pattern(skeleton: str) -> str:
+    return re.sub(r"<iri>[^<]*</iri>", "<IRI>", skeleton)
+
+
 def sample_skeleton(
     skeleton_model: GRISPModel,
     tokenizer,
@@ -261,12 +266,12 @@ def main(args: argparse.Namespace) -> None:
 
     run_cfg = GRISPRunConfig(**load_config(args.config))
     # mine from vanilla GRISP behavior: never run the learned validation /
-    # improvement self-correction loop while mining. Everything else
-    # (constrain, backtrack, check_empty) is taken from the run config -- with
-    # constrain and check_empty enabled, hard questions naturally yield partial
-    # skeletons (failed selection / empty-then-backtracked queries) instead of
-    # always resolving to something.
-    run_cfg.validate_queries = False
+    # improvement self-correction loop while mining (disabling improvement also
+    # disables the validation scoring it gates). Everything else (constrain,
+    # backtrack, check_empty) is taken from the run config -- with constrain and
+    # check_empty enabled, hard questions naturally yield partial skeletons
+    # (failed selection / empty-then-backtracked queries) instead of always
+    # resolving to something.
     run_cfg.improve_skeletons = False
 
     logger.info(f"Loading model from {args.run_directory}")
@@ -415,6 +420,7 @@ def main(args: argparse.Namespace) -> None:
             improvements: list = []
             seen_skel: set[str] = set()
             seen_val: set[str] = set()
+            gold_pattern = structural_pattern(gold_nl)
 
             for _ in range(n_bootstraps):
                 skeleton = sample_skeleton(
@@ -426,6 +432,11 @@ def main(args: argparse.Namespace) -> None:
                 if skeleton_nl in seen_skel:
                     continue
                 seen_skel.add(skeleton_nl)
+
+                if structural_pattern(skeleton_nl) == gold_pattern:
+                    stats["skel_struct_same"] += 1
+                else:
+                    stats["skel_struct_diff"] += 1
 
                 outcome = resolve_skeleton(
                     skeleton,
@@ -445,6 +456,7 @@ def main(args: argparse.Namespace) -> None:
                         if pred_result is not None
                         else 0.0
                     )
+                    stats["val_f1_bins"][min(int(f1 * 10), 10)] += 1
                     # outcome.resolved is the raw materialized skeleton (selected
                     # IRIs substituted, no prefix declarations), shown as the
                     # improvement prompt's "Resolved query"
@@ -517,8 +529,10 @@ def main(args: argparse.Namespace) -> None:
                 stats["records"] += 1
                 stats["validations"] += len(validations)
                 stats["improvements"] += len(improvements)
+
             yield GRISPMaterializedSample(
-                validations=validations, improvements=improvements
+                validations=validations,
+                improvements=improvements,
             ).model_dump(exclude={"skeletons", "selections"})
 
     def run(samples: list, is_val: bool, output_file: str, append: bool) -> None:
@@ -529,18 +543,39 @@ def main(args: argparse.Namespace) -> None:
             "improvements": 0,
             "keep": 0,
             "skipped": 0,
+            "skel_struct_same": 0,
+            "skel_struct_diff": 0,
+            # 11 bins: index i covers [i/10, (i+1)/10), except index 10 = 1.0
+            "val_f1_bins": [0] * 11,
         }
         dump_jsonl(
             process(samples, is_val, stats),
             output_file,
             "a" if append else "w",
         )
+        total_skel = stats["skel_struct_same"] + stats["skel_struct_diff"]
+        skel_div = stats["skel_struct_diff"] / total_skel if total_skel > 0 else 0.0
+        bins = stats["val_f1_bins"]
+        total_val_f1 = sum(bins)
+        partial = sum(bins[1:10])
+        val_partial_frac = partial / total_val_f1 if total_val_f1 > 0 else 0.0
+        f1_hist = "  ".join(f"{i / 10:.1f}:{bins[i]:,}" for i in range(11))
         logger.info(
             f"[{desc}] {stats['records']:,} non-empty records: "
             f"{stats['validations']:,} validation, "
             f"{stats['improvements']:,} improvement "
             f"({stats['improvements'] - stats['keep']:,} fix, "
             f"{stats['keep']:,} keep), {stats['skipped']:,} skipped"
+        )
+        logger.info(
+            f"[{desc}] skeleton diversity: {skel_div:.1%} structurally novel vs gold "
+            f"({stats['skel_struct_diff']:,}/{total_skel:,} unique skeletons sampled); "
+            f"if near 0% the bootstrap adds no new structural signal"
+        )
+        logger.info(
+            f"[{desc}] validation F1 histogram (bin:count): {f1_hist}; "
+            f"partial={partial:,} ({val_partial_frac:.1%}); "
+            f"if partial is near 0% the validator trains as binary classifier only"
         )
 
     run(train_samples, args.is_val, args.output_file, append=skip > 0)

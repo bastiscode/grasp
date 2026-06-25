@@ -231,15 +231,17 @@ class GRISPRunConfig(BaseModel):
     rerank: bool = True
     check_empty: bool = True
 
-    # learned query validation (task 3) and skeleton improvement (task 4).
-    # Each generated skeleton is resolved and, if fully resolved, scored by the
-    # validator; the first candidate with P(valid) >= validate_threshold is
-    # accepted. Otherwise the skeleton (partial or fully resolved) is improved
-    # in place, up to improve_rounds times per skeleton, and the best-scoring
-    # fully-resolved candidate overall is returned as a fallback.
-    validate_queries: bool = False
-    validate_threshold: float = 0.9
+    # learned skeleton improvement (task 4) with query validation (task 3).
+    # When improve_skeletons is enabled, each generated skeleton is resolved
+    # and, if fully resolved, scored by the validator; the skeleton (partial or
+    # fully resolved) is then improved in place up to improve_rounds times per
+    # skeleton, and the best-scoring fully-resolved candidate overall is
+    # returned. improve_threshold controls early-exit: if set, the first
+    # candidate with P(valid) >= improve_threshold is accepted immediately;
+    # set it to null/None to disable early-exit and always run every skeleton
+    # through all rounds, returning the best-scoring candidate.
     improve_skeletons: bool = False
+    improve_threshold: float | None = 0.9
     improve_rounds: int = 1
     improve_n: int = 4
 
@@ -788,9 +790,8 @@ def generate(
     error = None
     start = time.monotonic()
 
-    # learned query validation (task 3) and skeleton improvement (task 4) only
-    # apply when generating from scratch, not when using an oracle skeleton.
-    use_validate = cfg.validate_queries and gold_sparql is None
+    # learned skeleton improvement (task 4) and its query validation (task 3)
+    # only apply when generating from scratch, not when using an oracle skeleton.
     use_improve = cfg.improve_skeletons and gold_sparql is None
     validate_model = select_model or model
     validate_tokenizer = select_tokenizer or tokenizer
@@ -847,7 +848,7 @@ def generate(
             "skeletons": [skeleton.nl_sparql for skeleton in skeletons],
         }
 
-        accept = cfg.validate_threshold
+        accept = cfg.improve_threshold
         rounds = cfg.improve_rounds if use_improve else 0
         seen_skeletons = {skeleton.nl_sparql for skeleton in skeletons}
         idx = 0
@@ -873,7 +874,7 @@ def generate(
             )
             return outcome
 
-        if not use_validate:
+        if not use_improve:
             # original behavior: take the first fully resolved skeleton
             for skeleton in skeletons:
                 cur_idx = idx
@@ -887,6 +888,12 @@ def generate(
             # the skeleton in place up to `rounds` times. Partial skeletons skip
             # validation and are improved directly using their deepest partial
             # selections as evidence.
+            #
+            # The validator always scores resolved candidates so the final answer
+            # can be picked as the best-scoring one. `accept` (improve_threshold)
+            # only controls the early-exit: when set, the first candidate clearing
+            # it is returned immediately; when None, every skeleton is improved
+            # through all rounds and the best-scoring candidate overall is returned.
             for skeleton in skeletons:
                 current = skeleton
                 for r in range(rounds + 1):
@@ -910,7 +917,11 @@ def generate(
                             "type": "validation",
                             "skeleton": cur_idx,
                             "score": score,
-                            "result": "passed" if score >= accept else "failed",
+                            "result": (
+                                "passed"
+                                if accept is not None and score >= accept
+                                else "failed"
+                            ),
                         }
                         if best is None or score > best["score"]:
                             best = {
@@ -918,7 +929,7 @@ def generate(
                                 "score": score,
                                 "out": cand_out,
                             }
-                        if score >= accept:
+                        if accept is not None and score >= accept:
                             logger.debug(
                                 f"Accepting candidate with P(valid)={score:.2%}"
                             )
@@ -968,13 +979,13 @@ def generate(
                 if sparql is not None:
                     break
 
-            # no candidate cleared the threshold; fall back to the best-scoring
-            # fully-resolved candidate seen across all skeletons
+            # no candidate accepted via early-exit (or early-exit disabled in
+            # improve-only mode); fall back to the best-scoring fully-resolved
+            # candidate seen across all skeletons
             if sparql is None and best is not None:
                 sparql = best["sparql"]
                 logger.debug(
-                    f"No candidate cleared threshold; using best "
-                    f"P(valid)={best['score']:.2%}"
+                    f"Using best-scoring candidate P(valid)={best['score']:.2%}"
                 )
 
     except OracleSkeletonUnavailable as e:

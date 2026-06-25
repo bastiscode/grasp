@@ -140,10 +140,13 @@ TYPE=all python -m grasp.baselines.grisp.train \
 ```
 
 At inference time, enable the learned validation/improvement self-correction
-loop via the run config (`validate_queries`, `improve_skeletons`, see
+loop via the run config (`improve_skeletons`, see
 [`run.yaml`](../../../../configs/grisp/run.yaml)). The loop validates each
-candidate query and, when it is rejected, asks the model to rewrite the
-skeleton before retrying selection, keeping the highest-scoring candidate.
+candidate query and asks the model to rewrite the skeleton before retrying
+selection, keeping the highest-scoring candidate. `improve_threshold` controls
+early-exit: when set, the first candidate clearing it is accepted immediately;
+set it to `null` to always run every skeleton through all improvement rounds and
+return the best-scoring candidate.
 
 ## Run a GRISP model
 
