@@ -342,13 +342,18 @@ def generate(
 
         # yield message if there is content
         if response.has_content:
-            yield {"type": "model", **response.get_content()}
+            yield {
+                "type": "model",
+                **response.get_content(),
+                "elapsed": response.elapsed,
+            }
 
         # no tool calls mean we should stop
         should_stop = not response.tool_calls
 
         # execute tool calls
         for tool_call in response.tool_calls:
+            fn_start = time.monotonic()
             try:
                 result = call_function(
                     config,
@@ -370,12 +375,14 @@ def generate(
                 # logger.error(f"Full traceback:\n{traceback_str}")
 
             tool_call.result = result
+            tool_call.elapsed = time.monotonic() - fn_start
 
             yield {
                 "type": "tool",
                 "name": tool_call.name,
                 "args": tool_call.args,
                 "result": tool_call.result,
+                "elapsed": tool_call.elapsed,
             }
 
             if task.done(tool_call.name):
