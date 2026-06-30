@@ -115,6 +115,9 @@ class GraspConfig(ModelConfig):
 
     # interaction parameters
     max_steps: int = 100
+    # how many times the model is allowed to repeat the same response
+    # (loop) before we give up; each repetition counts as one loop
+    max_loops: int = 1
 
     # example parameters
     num_examples: int = 3

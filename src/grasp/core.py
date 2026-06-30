@@ -277,6 +277,9 @@ def generate(
     # keep track of last serialized message to detect loops
     # if model emits the same message twice, we are stuck
     last_resp_hash: str | None = None
+    # number of loops detected so far; we allow up to config.max_loops
+    # loops before giving up
+    loops = 0
     retries = 0
     while len(messages) - num_messages < config.max_steps:
         try:
@@ -309,12 +312,31 @@ def generate(
 
         resp_hash = response.hash()
         if last_resp_hash == resp_hash:
-            error = {
-                "content": "LLM appears to be stuck in a loop",
-                "reason": "loop",
-            }
-            logger.error(format_error(**error))
-            break
+            loops += 1
+            if loops > config.max_loops:
+                error = {
+                    "content": "LLM appears to be stuck in a loop",
+                    "reason": "loop",
+                }
+                logger.error(format_error(**error))
+                break
+
+            # the duplicate response's tool calls are not executed; mark
+            # their results so the message history stays valid
+            for tool_call in response.tool_calls:
+                tool_call.result = "Not executed due to loop"
+
+            # inform the model that a loop was detected and let it recover
+            loop_msg = (
+                "A loop was detected: your last response was identical to the "
+                "previous one. Please change your approach to make progress."
+            )
+            messages.append(Message.user(loop_msg, name="loop"))
+            yield {"type": "loop", "content": loop_msg}
+            logger.warning(f"Loop detected ({loops}/{config.max_loops})")
+            # reset so the injected message gets a fresh chance
+            last_resp_hash = None
+            continue
 
         last_resp_hash = resp_hash
 
