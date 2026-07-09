@@ -99,9 +99,7 @@ def format_output(
 
     if output is not None and "formatted" in output:
         fmt.append(
-            format_section(
-                f"Output after {step} steps", output["formatted"], level
-            )
+            format_section(f"Output after {step} steps", output["formatted"], level)
         )
 
     return "\n\n".join(fmt)
@@ -179,9 +177,7 @@ def note_taking_instructions(
 
         parts = []
         if ground_truths is not None:
-            parts.append(
-                format_section("Reference output", ground_truths[i], level=3)
-            )
+            parts.append(format_section("Reference output", ground_truths[i], level=3))
 
         parts.append(
             format_section(
@@ -200,7 +196,7 @@ def note_taking_instructions(
 Look at the current notes (which might be the same notes provided \
 to the agent). Then add to, delete from, or update them based on the \
 given agent traces below. Explore the knowledge graphs with the provided \
-functions where it helps you verify or refine a note.
+functions where it helps you to verify or refine a note.
 
 {fmt}"""
 

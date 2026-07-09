@@ -189,6 +189,10 @@ class NotesFromSamplesConfig(NoteTakingConfig):
     samples_per_round: int = 1
     samples_per_file: int | None = None
     ignore_ground_truth: bool = False
+    # if True (default), run the task agent on each sample and take notes on its
+    # trace; if False, give the note-taker only the samples (input + reference)
+    # and let it explore the knowledge graphs itself on top of them
+    run_agent: bool = True
 
 
 class NotesFromOutputsConfig(NoteTakingConfig):
