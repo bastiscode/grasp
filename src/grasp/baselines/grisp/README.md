@@ -195,6 +195,43 @@ python -m grasp.baselines.grisp.run \
   --input-file data/benchmark/wikidata/wwq/test.jsonl
 ```
 
+### IRI fill order
+
+GRISP resolves a skeleton's natural-language placeholders one at a time. The
+order in which they are filled is controlled by the `fill_order` run config
+option (or the `FILL_ORDER` environment variable):
+
+| `fill_order` | Description |
+|---|---|
+| `left-to-right` (default) | placeholders in document order |
+| `right-to-left` | placeholders in reverse document order |
+| `entities-then-properties` | all entity placeholders first, then properties, each in document order |
+| `properties-then-entities` | all property placeholders first, then entities, each in document order |
+| `triple-wise-entities-then-properties` | triple by triple (document order); within each triple entities first, then properties (so each property is filled after both its endpoints) |
+| `random` | a fixed random permutation per skeleton |
+
+The model is trained to be **order-agnostic** (during data generation a random
+subset of placeholders is resolved in random order, see
+`grisp.data.prepare_selection`), so a single model supports all these orders and
+you can switch between them at inference without retraining. This makes
+`fill_order` a convenient ablation knob.
+
+Orders other than `left-to-right` let the constraint filter (`constrain`) see
+already-resolved neighbours on *both* sides of the current placeholder, rather
+than only to the left. Note that when non-left-to-right orders leave unresolved
+placeholders to the left of the current one, those triples cannot contribute to
+the constraint query and selection gracefully falls back to position-only
+filtering for that step.
+
+```bash
+# e.g. resolve entities before properties
+FILL_ORDER=entities-then-properties python -m grasp.baselines.grisp.run \
+  configs/grisp/run.yaml \
+  data/grisp/runs/my-wikidata-wwq-model \
+  file \
+  --input-file data/benchmark/wikidata/wwq/test.jsonl
+```
+
 ## Serve a GRISP model
 
 ```bash

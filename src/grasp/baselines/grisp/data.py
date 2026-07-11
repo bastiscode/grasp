@@ -5,6 +5,7 @@ import re
 import string
 from dataclasses import dataclass
 from logging import Logger
+from typing import Literal
 
 import torch
 from grammar_utils.parse import LR1Parser  # type: ignore
@@ -14,6 +15,7 @@ from tqdm.auto import tqdm
 from transformers import PreTrainedTokenizerBase
 from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger, setup_logging
+from universal_ml_utils.ops import partition_by
 
 from grasp.baselines.grisp.utils import load_sparql_parser
 from grasp.configs import KgConfig, KgInfo
@@ -57,6 +59,20 @@ IGNORE_INDEX = -100
 Messages = list[dict[str, str]]
 AlternativeGroups = dict[ObjType, list[Alternative]]
 OrderedAlternatives = list[tuple[Alternative, ObjType, str | None]]
+
+# order in which a skeleton's natural-language placeholders are resolved. All
+# orders reduce to a fixed permutation of placeholder indices computed once per
+# skeleton (see Skeleton._compute_order); the resolution loop then fills them in
+# that order and backtracks by popping the last-added selection, so the memo and
+# backtracking logic in select_iris stays identical across orders.
+FillOrder = Literal[
+    "left-to-right",
+    "right-to-left",
+    "entities-then-properties",
+    "properties-then-entities",
+    "triple-wise-entities-then-properties",
+    "random",
+]
 
 
 class IRI(BaseModel):
@@ -178,16 +194,160 @@ class Info:
 
 class Skeleton:
     @staticmethod
-    def parse(sparql: str, parser: LR1Parser) -> "Skeleton":
+    def parse(
+        sparql: str,
+        parser: LR1Parser,
+        fill_order: FillOrder = "left-to-right",
+        order: list[int] | None = None,
+    ) -> "Skeleton":
         sparql_parse = parser.parse(sparql)
-        return Skeleton(sparql, sparql_parse)
+        return Skeleton(sparql, sparql_parse, parser, fill_order, order)
 
-    def __init__(self, sparql: str, sparql_parse: dict) -> None:
+    def __init__(
+        self,
+        sparql: str,
+        sparql_parse: dict,
+        parser: LR1Parser | None = None,
+        fill_order: FillOrder = "left-to-right",
+        order: list[int] | None = None,
+    ) -> None:
         self.sparql_parse = sparql_parse
         self.sparql_encoded = sparql.encode()
+        # placeholders in document (byte) order
         self.nl_iris = list(find_all(self.sparql_parse, "NL_IRI"))
+        # selections/identifiers are stored in *fill* order (a stack), so
+        # pop_selection() undoes the most recent selection for backtracking.
+        # self.order maps fill step k -> placeholder (document) index, i.e. the
+        # k-th selection fills self.nl_iris[self.order[k]].
         self.selections: list[Selection] = []
         self.identifiers: list[str] = []
+        self.order = self.compute_order(parser, fill_order, order)
+
+    def compute_order(
+        self,
+        parser: LR1Parser | None,
+        fill_order: FillOrder,
+        order: list[int] | None,
+    ) -> list[int]:
+        n = len(self.nl_iris)
+        if order is not None:
+            assert sorted(order) == list(range(n)), (
+                "explicit order must be a permutation of the placeholder indices"
+            )
+            return list(order)
+
+        if fill_order == "left-to-right":
+            return list(range(n))
+        elif fill_order == "right-to-left":
+            return list(reversed(range(n)))
+        elif fill_order == "random":
+            # seed from the skeleton text so the permutation is stable per
+            # skeleton (reproducible across runs and consistent across the
+            # backtracking within a single resolution)
+            rng = random.Random(self.sparql_encoded)
+            perm = list(range(n))
+            rng.shuffle(perm)
+            return perm
+        elif fill_order == "entities-then-properties":
+            assert parser is not None, (
+                "parser is required for the entities-then-properties fill order"
+            )
+            positions = [self.infer_position(i, parser) for i in range(n)]
+            # entities first, then properties, each group in ltr document order;
+            # anything not clearly a property is treated as an entity
+            entities, properties = partition_by(
+                range(len(positions)),
+                lambda i: positions[i] != Position.PROPERTY,
+            )
+            return entities + properties
+        elif fill_order == "properties-then-entities":
+            assert parser is not None, (
+                "parser is required for the properties-then-entities fill order"
+            )
+            positions = [self.infer_position(i, parser) for i in range(n)]
+            # properties first, then entities, each group in ltr document order;
+            # anything not clearly a property is treated as an entity
+            properties, entities = partition_by(
+                range(len(positions)),
+                lambda i: positions[i] == Position.PROPERTY,
+            )
+            return properties + entities
+        elif fill_order == "triple-wise-entities-then-properties":
+            assert parser is not None, (
+                "parser is required for the "
+                "triple-wise-entities-then-properties fill order"
+            )
+            positions = [self.infer_position(i, parser) for i in range(n)]
+            # process triples in document order; within each triple resolve its
+            # entities first (document order) then its properties, so every
+            # property is filled only after both of its endpoints in that triple
+            triple_order: list[int] = []
+            for group in self.triple_groups():
+                entities, properties = partition_by(
+                    group,
+                    lambda i: positions[i] != Position.PROPERTY,
+                )
+                triple_order.extend(entities + properties)
+            return triple_order
+
+        # not reachable but still kept for completeness
+        raise ValueError(f"Unknown fill order: {fill_order}")
+
+    def triple_groups(self) -> list[list[int]]:
+        # group placeholder indices by the innermost triple
+        # (TriplesSameSubjectPath) they belong to, with the groups ordered by
+        # document position. Placeholders that are not part of any triple (e.g.
+        # inside VALUES/FILTER) form a final group so the result stays a full
+        # permutation. Grouping is done via NL_IRI descendants of each triple
+        # block, since the block nodes themselves carry no byte span.
+        n = len(self.nl_iris)
+        span_to_idx = {tuple(self.nl_iris[i]["byte_span"]): i for i in range(n)}
+
+        blocks = list(find_all(self.sparql_parse, "TriplesSameSubjectPath"))
+        block_members: list[set[int]] = []
+        for block in blocks:
+            members = set()
+            for nl_iri in find_all(block, "NL_IRI"):
+                idx = span_to_idx.get(tuple(nl_iri["byte_span"]))
+                if idx is not None:
+                    members.add(idx)
+            block_members.append(members)
+
+        # assign each placeholder to the innermost (smallest) block containing it
+        assigned: dict[int, int] = {}
+        for idx in range(n):
+            containing = [
+                bi for bi, members in enumerate(block_members) if idx in members
+            ]
+            if containing:
+                assigned[idx] = min(containing, key=lambda bi: len(block_members[bi]))
+
+        groups: dict[int, list[int]] = {}
+        orphans: list[int] = []
+        for idx in range(n):  # ascending -> document order within each group
+            if idx in assigned:
+                groups.setdefault(assigned[idx], []).append(idx)
+            else:
+                orphans.append(idx)
+
+        # order the triple groups by the document position of their first member
+        result = [groups[bi] for bi in sorted(groups, key=lambda bi: groups[bi][0])]
+        if orphans:
+            result.append(orphans)
+        return result
+
+    def infer_position(self, idx: int, parser: LR1Parser) -> Position:
+        # structural position (subject/property/object) of placeholder idx,
+        # inferred from the raw skeleton truncated right before it. Independent
+        # of whether earlier placeholders are resolved, so it is stable to use
+        # for ordering before any selection has been made.
+        byte_start, _ = self.nl_iris[idx]["byte_span"]
+        prefix = self.sparql_encoded[:byte_start].decode()
+        try:
+            return infer_position_from_prefix(prefix, parser)
+        except Exception:
+            # fall back to treating it as an entity
+            return Position.SUBJECT
 
     @property
     def nl_sparql(self) -> str:
@@ -205,61 +365,82 @@ class Skeleton:
     def done(self) -> bool:
         return len(self.selections) >= len(self.nl_iris)
 
-    def materialize(self) -> str:
-        assert self.done, "Not all NL IRIs have been replaced"
+    def get_filled_placeholders(self) -> dict[int, str]:
+        # map placeholder (document) index -> selected identifier for the
+        # selections made so far
+        return {
+            self.order[k]: self.identifiers[k] for k in range(len(self.identifiers))
+        }
 
+    def render(self, require_done: bool) -> str:
+        if require_done:
+            assert self.done, "Not all NL IRIs have been replaced"
+
+        filled = self.get_filled_placeholders()
         sparql = ""
         start = 0
-        for nl_iri, identifier in zip(
-            self.nl_iris,
-            self.identifiers,
-        ):
+        for j, nl_iri in enumerate(self.nl_iris):
             byte_start, byte_end = nl_iri["byte_span"]
             sparql += self.sparql_encoded[start:byte_start].decode()
-            sparql += identifier
+            # resolved placeholders are substituted; not-yet-resolved ones are
+            # left as their natural-language token (only possible in the partial
+            # case, since require_done guarantees all are filled otherwise)
+            sparql += filled.get(j, str(nl_iri["value"]))
             start = byte_end
 
         sparql += self.sparql_encoded[start:].decode()
         return sparql
+
+    def materialize(self) -> str:
+        return self.render(require_done=True)
 
     def materialize_partial(self) -> str:
         # render the skeleton with the placeholders resolved so far replaced by
         # their identifiers; any not-yet-resolved placeholders are left as
         # natural language. Equivalent to materialize() once the skeleton is done.
-        sparql = ""
-        start = 0
-        for nl_iri, identifier in zip(self.nl_iris, self.identifiers):
-            byte_start, byte_end = nl_iri["byte_span"]
-            sparql += self.sparql_encoded[start:byte_start].decode()
-            sparql += identifier
-            start = byte_end
-
-        sparql += self.sparql_encoded[start:].decode()
-        return sparql
+        return self.render(require_done=False)
 
     def prepare_for_selection(self) -> Info:
         assert not self.done, "All NL IRIs have already been replaced"
-        idx = len(self.selections)
+        # next placeholder to fill, per the fill order
+        idx = self.order[len(self.selections)]
+        filled = self.get_filled_placeholders()
 
+        cur = self.nl_iris[idx]
+        cur_start, cur_end = cur["byte_span"]
+
+        # prefix: everything before the current placeholder, with all already
+        # resolved placeholders substituted (under non-left-to-right orders a
+        # resolved placeholder may sit either side of the current one) and any
+        # not-yet-resolved placeholder left as natural language
         prefix = ""
         start = 0
-        for i in range(idx):
-            nl_iri = self.nl_iris[i]
+        for i, nl_iri in enumerate(self.nl_iris):
             byte_start, byte_end = nl_iri["byte_span"]
-
-            identifier = self.identifiers[i]
-
+            if byte_start >= cur_start:
+                break
             prefix += self.sparql_encoded[start:byte_start].decode()
-            prefix += identifier
+            prefix += filled.get(i, str(nl_iri["value"]))
             start = byte_end
+        prefix += self.sparql_encoded[start:cur_start].decode()
 
-        nl_iri = self.nl_iris[idx]
-        byte_start, byte_end = nl_iri["byte_span"]
-        prefix += self.sparql_encoded[start:byte_start].decode()
+        query, variant = extract_query_and_variant_from_nl_iri(cur)
+        value = extract_value_from_nl_iri(cur)
 
-        query, variant = extract_query_and_variant_from_nl_iri(nl_iri)
-        value = extract_value_from_nl_iri(nl_iri)
-        sparql = prefix + f"{BOR}{value}{EOR}" + self.sparql_encoded[byte_end:].decode()
+        # tail: everything after the current placeholder, again with resolved
+        # placeholders substituted and unresolved ones left as natural language
+        tail = ""
+        start = cur_end
+        for i, nl_iri in enumerate(self.nl_iris):
+            byte_start, byte_end = nl_iri["byte_span"]
+            if byte_start <= cur_start:
+                continue
+            tail += self.sparql_encoded[start:byte_start].decode()
+            tail += filled.get(i, str(nl_iri["value"]))
+            start = byte_end
+        tail += self.sparql_encoded[start:].decode()
+
+        sparql = prefix + f"{BOR}{value}{EOR}" + tail
         return Info(
             prefix=prefix,
             sparql=sparql,
@@ -503,7 +684,7 @@ You are a SPARQL expert. Your task is to select the best fitting \
 {manager.kg} item for replacing a natural-language placeholder \
 in a SPARQL skeleton. The placeholder to be replaced is marked \
 {BOR}...{EOR} in the skeleton. There may also be other unresolved \
-placeholders coming afterwards, marked {BOI}...{EOI}.
+placeholders, marked {BOI}...{EOI}.
 
 You are given the user question, the SPARQL skeleton, \
 info about already resolved placeholders, \
@@ -1129,13 +1310,20 @@ def prepare_selection(
     assert len(items) > 0, "No valid item to replace found in sample"
 
     parser = load_sparql_parser()
-    skeleton = Skeleton.parse(skeleton, parser)
+    # train the model to be fill-order agnostic: resolve a uniformly random
+    # subset of the placeholders, in random order, and have it select one of the
+    # remaining ones. A fixed random permutation makes every inference-time fill
+    # order (left-to-right, right-to-left, entities-then-properties, random) an
+    # in-distribution special case, so a single model supports all of them.
+    order = list(range(len(items)))
+    random.shuffle(order)
+    skeleton = Skeleton.parse(skeleton, parser, order=order)
 
     upper = random.randint(0, len(items) - 1)
-    for item in items[:upper]:
-        skeleton.add_selection(item.selection, manager)
+    for j in range(upper):
+        skeleton.add_selection(items[order[j]].selection, manager)
 
-    item = items[upper]
+    item = items[order[upper]]
     target_alt = item.selection.alternative
 
     info = skeleton.prepare_for_selection()

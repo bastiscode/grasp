@@ -21,10 +21,8 @@ backtrack: env(BACKTRACK:true)
 rerank: env(RERANK:true)
 check_empty: env(CHECK_EMPTY:true)
 
-# learned skeleton improvement (task 4) with query validation (task 3),
-# requires a model trained with type 'all'. improve_threshold controls
-# early-exit: set it to null to disable early-exit and always run all rounds,
-# returning the best-scoring candidate.
+fill_order: env(FILL_ORDER:entities-then-properties)
+
 improve_skeletons: env(IMPROVE_SKELETONS:false)
 improve_threshold: env(IMPROVE_THRESHOLD:0.9)
 improve_rounds: env(IMPROVE_ROUNDS:1)

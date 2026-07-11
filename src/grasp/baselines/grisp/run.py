@@ -31,6 +31,7 @@ from grasp.baselines.grisp.data import (
     RESULT_UNAVAILABLE,
     RESULT_UNRESOLVED,
     VALIDATION_OPTIONS,
+    FillOrder,
     OracleSkeletonUnavailable,
     OrderedAlternatives,
     Skeleton,
@@ -231,6 +232,20 @@ class GRISPRunConfig(BaseModel):
     rerank: bool = True
     check_empty: bool = True
 
+    # order in which the natural-language placeholders of a skeleton are
+    # resolved. The model is trained with random fill orders (see
+    # grisp.data.prepare_selection), so it is order-agnostic and any of these
+    # can be selected at inference:
+    # - left-to-right / right-to-left: by document position
+    # - entities-then-properties / properties-then-entities: one object-type
+    #   group first, then the other, each in document order
+    # - triple-wise-entities-then-properties: triple by triple (document order),
+    #   entities before properties within each triple
+    # - random: a fixed random permutation per skeleton
+    # non-left-to-right orders let the constraint filter see resolved neighbours
+    # on both sides of the current placeholder.
+    fill_order: FillOrder = "triple-wise-entities-then-properties"
+
     # learned skeleton improvement (task 4) with query validation (task 3).
     # When improve_skeletons is enabled, each generated skeleton is resolved
     # and, if fully resolved, scored by the validator; the skeleton (partial or
@@ -343,7 +358,7 @@ def generate_skeletons_from_prompt(
             continue
 
         try:
-            skeleton = Skeleton.parse(decoded, parser)  # type: ignore
+            skeleton = Skeleton.parse(decoded, parser, cfg.fill_order)  # type: ignore
         except Exception as e:
             logger.warning(f"Failed to parse skeleton, skipping: {e}")
             continue
@@ -548,7 +563,7 @@ def is_api_failure(exception: Exception) -> bool:
     return is_timeout or is_server_fail
 
 
-def select_iris_left_to_right(
+def select_iris(
     skeleton: Skeleton,
     model: GRISPModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -831,7 +846,7 @@ def generate(
         if gold_sparql is not None:
             logger.debug("Using oracle skeleton from gold SPARQL")
             nl = gold_sparql_to_nl_skeleton(gold_sparql, manager)
-            skeletons = [Skeleton.parse(nl, parser)]
+            skeletons = [Skeleton.parse(nl, parser, cfg.fill_order)]
         else:
             skeletons = generate_skeletons(
                 model,
@@ -862,7 +877,7 @@ def generate(
                     "skeleton": idx,
                     "selection": selection,
                 },
-                select_iris_left_to_right(
+                select_iris(
                     skeleton,
                     select_model or model,
                     select_tokenizer or tokenizer,

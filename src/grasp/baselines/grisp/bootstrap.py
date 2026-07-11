@@ -30,7 +30,7 @@ from grasp.baselines.grisp.run import (
     SelectionOutcome,
     generate_skeletons_from_prompt,
     load_model_and_tokenizer,
-    select_iris_left_to_right,
+    select_iris,
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
 from grasp.baselines.grisp.utils import load_sparql_parser
@@ -240,7 +240,7 @@ def resolve_skeleton(
 ) -> SelectionOutcome:
     # drive selection to completion, discarding the intermediate events
     return consume_generator(
-        select_iris_left_to_right(
+        select_iris(
             skeleton,
             selection_model,
             selection_tokenizer,
