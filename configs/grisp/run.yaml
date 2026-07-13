@@ -21,7 +21,7 @@ backtrack: env(BACKTRACK:true)
 rerank: env(RERANK:true)
 check_empty: env(CHECK_EMPTY:true)
 
-fill_order: env(FILL_ORDER:entities-then-properties)
+fill_order: env(FILL_ORDER:triple-wise-entities-then-properties)
 
 improve_skeletons: env(IMPROVE_SKELETONS:false)
 improve_threshold: env(IMPROVE_THRESHOLD:0.9)

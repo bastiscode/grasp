@@ -52,7 +52,8 @@ from grasp.baselines.grisp.utils import (
 )
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
-from grasp.sparql.types import ObjType, Selection
+from grasp.sparql.metrics import f1_score
+from grasp.sparql.types import AskResult, ObjType, Selection, SelectResult
 from grasp.sparql.utils import (
     SPARQLExecuteException,
 )
@@ -175,6 +176,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip skeleton generation; derive the skeleton from each sample's "
         "gold 'sparql' field. Used to isolate IRI-selection errors.",
+    )
+    file_parser.add_argument(
+        "--oracle-correctness",
+        type=float,
+        default=None,
+        metavar="THRESHOLD",
+        help="Enable the oracle correctness probe with the given F1 threshold "
+        "(e.g. 0.8). Skeletons are generated normally, but the first resolved "
+        "candidate whose result reaches THRESHOLD F1 against the gold 'sparql' "
+        "field is returned (upper bound of a perfect query validator on top of "
+        "the empty check). Falls back to the first resolved candidate if none "
+        "clear the threshold. Omit to disable.",
     )
     file_parser.add_argument(
         "--trace",
@@ -800,14 +813,35 @@ def generate(
     select_tokenizer: PreTrainedTokenizerBase | None = None,
     yield_output: bool = False,
     gold_sparql: str | None = None,
+    oracle_skeleton: bool = False,
+    oracle_correctness_threshold: float | None = None,
 ) -> Generator[dict, None, dict]:
     sparql = None
     error = None
     start = time.monotonic()
 
+    # both oracle modes consume the same gold query (the sample's 'sparql'
+    # field) and are mutually exclusive:
+    # - oracle_skeleton: derive the skeleton from the gold query (isolate
+    #   selection errors)
+    # - oracle_correctness_threshold (not None): generate skeletons normally,
+    #   but return the first resolved candidate whose result reaches this F1
+    #   threshold against the gold query (upper bound of a perfect validator on
+    #   top of the empty check)
+    use_oracle_skeleton = oracle_skeleton
+    use_oracle_correctness = oracle_correctness_threshold is not None
+    assert not (use_oracle_skeleton and use_oracle_correctness), (
+        "oracle skeleton and oracle correctness cannot be combined"
+    )
+    assert not (
+        (use_oracle_skeleton or use_oracle_correctness) and gold_sparql is None
+    ), "oracle modes require a gold_sparql"
+
     # learned skeleton improvement (task 4) and its query validation (task 3)
-    # only apply when generating from scratch, not when using an oracle skeleton.
-    use_improve = cfg.improve_skeletons and gold_sparql is None
+    # only apply when generating from scratch, not under either oracle mode.
+    use_improve = (
+        cfg.improve_skeletons and not use_oracle_skeleton and not use_oracle_correctness
+    )
     validate_model = select_model or model
     validate_tokenizer = select_tokenizer or tokenizer
 
@@ -842,9 +876,42 @@ def generate(
     # answer when no candidate clears the acceptance threshold.
     best: dict | None = None
 
+    # gold result for the oracle correctness probe, executed once up front with
+    # the same timeouts used elsewhere in the loop. None if unavailable (the
+    # probe then cannot score and falls back to baseline selection).
+    gold_result: SelectResult | AskResult | None = None
+    if use_oracle_correctness:
+        try:
+            assert gold_sparql is not None
+            gold_result = manager.execute_sparql(
+                gold_sparql,
+                request_timeout=(3.5, 6.0),
+                read_timeout=3.0,
+            )
+        except Exception as e:
+            logger.warning(f"Oracle correctness: failed to execute gold query:\n{e}")
+            gold_result = None
+
+    def oracle_f1(query: str) -> float:
+        # F1 of a resolved candidate query's result against the gold result,
+        # mirroring the offline evaluation metric
+        if gold_result is None:
+            return 0.0
+        try:
+            pred_result = manager.execute_sparql(
+                query,
+                request_timeout=(3.5, 6.0),
+                read_timeout=3.0,
+            )
+        except Exception as e:
+            logger.debug(f"Oracle correctness: candidate failed to execute:\n{e}")
+            return 0.0
+        return f1_score(pred_result, gold_result)
+
     try:
-        if gold_sparql is not None:
+        if use_oracle_skeleton:
             logger.debug("Using oracle skeleton from gold SPARQL")
+            assert gold_sparql is not None
             nl = gold_sparql_to_nl_skeleton(gold_sparql, manager)
             skeletons = [Skeleton.parse(nl, parser, cfg.fill_order)]
         else:
@@ -889,7 +956,38 @@ def generate(
             )
             return outcome
 
-        if not use_improve:
+        if use_oracle_correctness:
+            # resolve every skeleton and return the first whose result reaches
+            # the F1 threshold against the gold query. If none clear it, fall
+            # back to the first fully-resolved skeleton (baseline behavior), so
+            # the eval delta isolates the gain from picking a correct skeleton
+            # when one exists among the candidates.
+            assert oracle_correctness_threshold is not None
+            first_resolved: str | None = None
+            for skeleton in skeletons:
+                cur_idx = idx
+                idx += 1
+                outcome = yield from resolve(skeleton, cur_idx)
+                if outcome.sparql is None:
+                    continue
+                if first_resolved is None:
+                    first_resolved = outcome.sparql
+                f1 = oracle_f1(outcome.sparql)
+                yield {
+                    "type": "oracle_correctness",
+                    "skeleton": cur_idx,
+                    "f1": f1,
+                    "result": (
+                        "passed" if f1 >= oracle_correctness_threshold else "failed"
+                    ),
+                }
+                if f1 >= oracle_correctness_threshold:
+                    logger.debug(f"Oracle correctness: accepting candidate F1={f1:.2%}")
+                    sparql = outcome.sparql
+                    break
+            if sparql is None:
+                sparql = first_resolved
+        elif not use_improve:
             # original behavior: take the first fully resolved skeleton
             for skeleton in skeletons:
                 cur_idx = idx
@@ -1210,17 +1308,23 @@ def main(args: argparse.Namespace) -> None:
             args.input_field = "question"  # overwrite
 
     oracle_skeleton = run_on_file and args.oracle_skeleton
+    oracle_correctness_threshold = args.oracle_correctness if run_on_file else None
+    oracle_correctness = oracle_correctness_threshold is not None
+    assert not (oracle_skeleton and oracle_correctness), (
+        "--oracle-skeleton and --oracle-correctness cannot be combined"
+    )
     trace = run_on_file and args.trace
 
     for i, ipt in enumerate(inputs):
         id = extract_field(ipt, "id") or "unknown"
 
         gold_sparql = None
-        if oracle_skeleton:
+        if oracle_skeleton or oracle_correctness:
             gold_sparql = extract_field(ipt, "sparql")
             assert gold_sparql is not None, (
-                f"--oracle-skeleton requires a 'sparql' field on every sample, "
-                f"missing on input {i:,} (id={id})"
+                f"--oracle-{'skeleton' if oracle_skeleton else 'correctness'} "
+                f"requires a 'sparql' field on every sample, missing on input "
+                f"{i:,} (id={id})"
             )
 
         ipt = extract_field(ipt, args.input_field)
@@ -1247,6 +1351,8 @@ def main(args: argparse.Namespace) -> None:
             selection_model,
             selection_tokenizer,
             gold_sparql=gold_sparql,
+            oracle_skeleton=oracle_skeleton,
+            oracle_correctness_threshold=oracle_correctness_threshold,
         )
         if trace:
             events: list[dict] = []
