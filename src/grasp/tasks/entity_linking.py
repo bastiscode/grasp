@@ -1,8 +1,3 @@
-########################################################################################
-#  This code builds on cea.py from github.com/ad-freiburg/grasp/src/grasp/tasks/ but   #
-#  is modified for general text entity linking instead of just table cell annotation.  #
-########################################################################################
-
 import re
 import unicodedata
 from typing import Any
@@ -50,11 +45,13 @@ class Text(BaseModel):
 
     @property
     def start(self) -> int:
-        return self.annotate_from if self.annotate_from else 0
+        return self.annotate_from if self.annotate_from is not None else 0
 
     @property
     def end(self) -> int:
-        return self.annotate_up_to if self.annotate_up_to else len(self.data)
+        return (
+            self.annotate_up_to if self.annotate_up_to is not None else len(self.data)
+        )
 
     def trim(self, context: int | None = None) -> tuple["Text", int]:
         """
@@ -63,15 +60,15 @@ class Text(BaseModel):
         """
         if context and context < 0:
             raise ValueError(f"context '{context}' must be non negative.")
-        if self.start and (self.start >= self.length or self.start < 0):
+        if self.start < 0 or self.start >= self.length:
             raise ValueError(
-                f"annotate_from '{self.start}' must be less than length '{self.length}'"
-                f" and greater than zero."
+                f"annotate_from '{self.start}' must be greater than or equal to zero "
+                f"and less than length '{self.length}'."
             )
-        if self.end and (self.end <= 0 or (self.start and self.end <= self.start)):
+        if self.end <= self.start or self.end > self.length:
             raise ValueError(
                 f"annotate_up_to '{self.end}' must be greater than annotate_from "
-                f"'{self.start}' and less than length '{self.length}'."
+                f"'{self.start}' and less than or equal to length '{self.length}'."
             )
 
         # without context the text is not trimmed
@@ -80,7 +77,7 @@ class Text(BaseModel):
 
         # 4 variables: start/end of new context and start/end of new annotation window
         new_start, new_end = self.start, self.end
-        window_start, window_end = 0, self.length
+        window_start = 0
 
         if self.start > 0:
             new_start = max(0, self.start - context)
@@ -88,7 +85,8 @@ class Text(BaseModel):
 
         if self.end < self.length:
             new_end = min(self.length, self.end + context)
-            window_end = self.end - new_start
+
+        window_end = self.end - new_start
 
         trimmed = Text(
             data=self.data[new_start:new_end],
@@ -103,7 +101,7 @@ class EntityLinkingSample(Sample):
     annotations: list[TextAnnotation]
 
     def input(self) -> Any:
-        return self.text
+        return self.text.model_dump()
 
     def queries(self) -> list[str]:
         annots = AnnotationState(self.text)
@@ -155,7 +153,9 @@ class AnnotationState:
         }
 
     def format(
-        self, only_current_window: bool = False, list_entities: bool = True
+        self,
+        only_current_window: bool = False,
+        list_entities: bool = True,
     ) -> str:
         """
         Returns a string with the current annotation state of the text.
@@ -496,7 +496,7 @@ def delete_annotation(
     words_to_be_annotated: str,
     occurrence_index: int,
     state: AnnotationState,
-    show_state_after_annotation=True,
+    show_state_after_annotation: bool = True,
 ) -> str:
     """
     A function for the llm to call to delete the annotation of the
@@ -750,4 +750,3 @@ class EntityLinkingTask(GraspTask, FeedbackTask):
 
     def feedback_instructions(self, inputs: list[str], output: dict) -> str:
         return feedback_instructions(inputs, output)
-
