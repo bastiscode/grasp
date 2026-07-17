@@ -604,7 +604,7 @@ def call_function(
     known: set[str],
     state: AnnotationState | None = None,
     example_indices: dict | None = None,
-) -> str | None:
+) -> str:
     assert isinstance(state, AnnotationState), (
         "Annotations must be provided as state for entity linking task"
     )
