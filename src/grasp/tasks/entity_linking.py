@@ -145,6 +145,8 @@ class AnnotationState:
                     "entity_reference": a.entity,
                     "start_char": s + self.offset,
                     "end_char": e + self.offset,
+                    "identifier": a.identifier,
+                    "label": a.label,
                 }
                 for (s, e), a in self.annotations.items()
             ],
