@@ -54,10 +54,8 @@ class Text(BaseModel):
         )
 
     def trim(self, context: int | None = None) -> tuple["Text", int]:
-        """
-        Trims the Text to the start/end values if context is 0, trims the Text to
-        start/end plus context otherwise. If context is None, does not trim the Text.
-        """
+        # Trims the Text to the start/end values if context is 0, trims the Text to
+        # start/end plus context otherwise. If context is None, does not trim the Text.
         if context and context < 0:
             raise ValueError(f"context '{context}' must be non negative.")
         if self.start < 0 or self.start >= self.length:
@@ -157,13 +155,11 @@ class AnnotationState:
         only_current_window: bool = False,
         list_entities: bool = True,
     ) -> str:
-        """
-        Returns a string with the current annotation state of the text.
-        Annotations are visualized in the following format: '[annotated words](q123)',
-        '[[Nested [annotations](q123)](q456) are supported](q789)'.
-        If only_current_window is true, only the text of the current annotation window
-        is shown. If list_entities is true, the used entities are listed at the end.'
-        """
+        # Returns a string with the current annotation state of the text.
+        # Annotations are visualized in the following format: '[annotated words](q123)',
+        # '[[Nested [annotations](q123)](q456) are supported](q789)'.
+        # If only_current_window is true, only the text of the current annotation window
+        # is shown. If list_entities is true, the used entities are listed at the end.
         result = self.text.data
         # item[0] is (start, end), we sort by end first, then by negative start
         sorted_annotations = sorted(
@@ -417,11 +413,9 @@ def annotate(
     know_before_annotate: bool = False,
     show_state_after_annotation: bool = True,
 ) -> str:
-    """
-    A function for the llm to call to annotate the words_to_be_annotated in the text
-    with the entity and knowledge graph. The occurrence_index helps to distinguish
-    between different occurrences of the words in the text excerpt.
-    """
+    # A function for the llm to call to annotate the words_to_be_annotated in the text
+    # with the entity and knowledge graph. The occurrence_index helps to distinguish
+    # between different occurrences of the words in the text excerpt.
     manager, _ = find_manager(managers, kg)
     sequence = state.text.data[state.annotation_window]
 
@@ -498,11 +492,9 @@ def delete_annotation(
     state: AnnotationState,
     show_state_after_annotation: bool = True,
 ) -> str:
-    """
-    A function for the llm to call to delete the annotation of the
-    words_to_be_annotated in the text. The occurrence_index helps to
-    distinguish between different occurrences of the words in the text.
-    """
+    # A function for the llm to call to delete the annotation of the
+    # words_to_be_annotated in the text. The occurrence_index helps to
+    # distinguish between different occurrences of the words in the text.
     sequence = state.text.data[state.annotation_window]
 
     # normalizing, because some llms are heavily biased towards specific characters like
