@@ -80,13 +80,43 @@ export const QLEVER_HOSTS = Object.freeze([
   'qlever.dev'
 ]);
 
-export const endpointFor = (path) => `${API_BASE}${path}`;
+/**
+ * Base URL that relative API paths are resolved against.
+ *
+ * The default API base is relative (e.g. "api"), which normally resolves
+ * against the current document URL. On /share/:id pages nginx injects
+ * <base href="../"> so those relative paths resolve back to the app root.
+ * Safari (WebKit), however, does not reliably apply an injected <base> to
+ * fetch()/WebSocket requests, so on a shared link the /load/:id request
+ * resolves against the document URL instead — hitting ".../share/api/load/:id",
+ * which 404s and makes the shared conversation fail to load only in Safari.
+ *
+ * To avoid depending on the <base> tag, resolve explicitly against the app
+ * root, derived from the current location:
+ *   - /share/:id  -> strip to the parent directory (the app root)
+ *   - anything else -> the document URL, exactly as a bare relative request
+ *                      would resolve.
+ * This works both at the domain root (e.g. /share/:id) and under a path
+ * prefix (e.g. /v2/share/:id).
+ */
+const apiBaseHref = () => {
+  const { origin, pathname, href } = window.location;
+  const shareMatch = pathname.match(/^(.*\/)share\/[^/]*\/?$/);
+  return shareMatch ? `${origin}${shareMatch[1]}` : href;
+};
+
+export const endpointFor = (path) => {
+  if (isAbsoluteUrl || typeof window === 'undefined') {
+    return `${API_BASE}${path}`;
+  }
+  return new URL(`${API_BASE}${path}`, apiBaseHref()).href;
+};
 
 export const wsEndpoint = () => {
   if (isAbsoluteUrl) {
     return API_BASE.replace(/^http/, 'ws') + '/live';
   }
-  const resolved = new URL(API_BASE, window.location.href);
+  const resolved = new URL(API_BASE, apiBaseHref());
   const wsProtocol = resolved.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${wsProtocol}//${resolved.host}${resolved.pathname}/live`;
 };
