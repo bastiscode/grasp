@@ -80,43 +80,27 @@ export const QLEVER_HOSTS = Object.freeze([
   'qlever.dev'
 ]);
 
-/**
- * Base URL that relative API paths are resolved against.
- *
- * The default API base is relative (e.g. "api"), which normally resolves
- * against the current document URL. On /share/:id pages nginx injects
- * <base href="../"> so those relative paths resolve back to the app root.
- * Safari (WebKit), however, does not reliably apply an injected <base> to
- * fetch()/WebSocket requests, so on a shared link the /load/:id request
- * resolves against the document URL instead — hitting ".../share/api/load/:id",
- * which 404s and makes the shared conversation fail to load only in Safari.
- *
- * To avoid depending on the <base> tag, resolve explicitly against the app
- * root, derived from the current location:
- *   - /share/:id  -> strip to the parent directory (the app root)
- *   - anything else -> the document URL, exactly as a bare relative request
- *                      would resolve.
- * This works both at the domain root (e.g. /share/:id) and under a path
- * prefix (e.g. /v2/share/:id).
- */
-const apiBaseHref = () => {
-  const { origin, pathname, href } = window.location;
-  const shareMatch = pathname.match(/^(.*\/)share\/[^/]*\/?$/);
-  return shareMatch ? `${origin}${shareMatch[1]}` : href;
-};
+// A relative API base (e.g. "api") is resolved against the current document URL.
+// The app is only ever served at the mount root — "/", "/?share=:id", or a
+// single-segment KG path like "/wikidata" — so the document's directory is
+// always the app root, and relative API paths resolve correctly at any path
+// prefix depth with no <base> tag involved. (Pretty /share/:id links 302-redirect
+// to /?share=:id before the app boots; serving the app one level deep would
+// break Safari, which ignores an injected <base> for dynamically imported
+// modules — see nginx.conf.)
 
 export const endpointFor = (path) => {
   if (isAbsoluteUrl || typeof window === 'undefined') {
     return `${API_BASE}${path}`;
   }
-  return new URL(`${API_BASE}${path}`, apiBaseHref()).href;
+  return new URL(`${API_BASE}${path}`, window.location.href).href;
 };
 
 export const wsEndpoint = () => {
   if (isAbsoluteUrl) {
     return API_BASE.replace(/^http/, 'ws') + '/live';
   }
-  const resolved = new URL(API_BASE, apiBaseHref());
+  const resolved = new URL(API_BASE, window.location.href);
   const wsProtocol = resolved.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${wsProtocol}//${resolved.host}${resolved.pathname}/live`;
 };
@@ -130,7 +114,8 @@ export const sharePathForId = (id) => {
   const trimmed = typeof id === 'string' ? id.trim() : '';
   if (!trimmed) return '';
   if (typeof window === 'undefined') return '';
-  // Generate /share/:id path — nginx redirects this to /?share=:id
+  // Generate /share/:id path — in production nginx serves index.html for this
+  // path (URL unchanged) and the app reads the id from window.location.pathname.
   const base = window.location.pathname.replace(/\/+$/, '');
   return `${window.location.origin}${base}/share/${trimmed}`;
 };
