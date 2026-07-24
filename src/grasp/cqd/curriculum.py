@@ -5,16 +5,17 @@ from universal_ml_utils.logging import get_logger
 
 from grasp.core import load_notes, setup
 from grasp.cqd.configs import CqdConfig, RolloutConfig
-from grasp.cqd.pool import PoolItem, TaskPool
+from grasp.cqd.pool import PoolItem, PoolItemInfo, TaskPool, item_id
 from grasp.cqd.proposer import (
     distillation_state,
     ingest_proposals,
     run_distillation_agent,
     seed_to_cq,
 )
-from grasp.cqd.reward import EpisodeReward, RewardConfig, reward_episodes
-from grasp.cqd.rollout import Episode, collect_pool_rollouts
+from grasp.cqd.reward import EpisodeReward, RewardConfig, reward_episodes, reward_stats
+from grasp.cqd.rollout import Episode, collect_pool_rollouts, collect_rollouts
 from grasp.cqd.seeds import load_seeds
+from grasp.functions import find_manager
 from grasp.manager import KgManager
 from grasp.model import Message
 from grasp.tasks.cq_distillation import DistilledPair
@@ -170,6 +171,106 @@ def run_revisits(
             pool.save(config.pool_file)
 
     return added
+
+
+# phase 1 (warm-start): before any teacher variants exist, roll the base
+# student on each seed CQ, record the attempts on the pool, then let the
+# teacher propose calibrated variants FROM THOSE TRACES. Seeding the pool this
+# way -- instead of blind teacher variants generated without student feedback
+# -- keeps the initial difficulty near the student's actual ability: the seeds
+# it cannot solve get 0 competence / 0 learnability and are deprioritised by
+# the sampler, while the teacher (seeing the failed traces) proposes easier
+# variants it can get traction on. Without this the pool is dominated by items
+# the student has no chance to solve yet, starving the gradient.
+def warmstart_pool(
+    config: CqdConfig,
+    rollout_config: RolloutConfig,
+    reward_config: RewardConfig | None = None,
+    num_rollouts: int = 4,
+    max_revisits: int | None = None,
+    managers: list[KgManager] | None = None,
+    notes: list[str] | None = None,
+    kg_notes: dict[str, list[str]] | None = None,
+    log_level: str | int | None = None,
+) -> TaskPool:
+    logger = get_logger("CQD WARMSTART", log_level)
+    reward_config = reward_config or RewardConfig()
+
+    seeds = load_seeds(config.seeds_file)
+    if managers is None:
+        managers, _ = setup(rollout_config)
+    if notes is None and kg_notes is None:
+        notes, kg_notes = load_notes(rollout_config)
+
+    # seed pool items (cq_id = seed id so run_revisits can look the seed up)
+    pool = TaskPool()
+    seed_items = []
+    for seed in seeds:
+        if not seed.question:
+            logger.warning(f"Seed {seed.id} has no question, skipping warm-start")
+            continue
+        kg = seed.info.get("kg")
+        manager, _ = find_manager(managers, kg) if kg else (managers[0], None)
+        kg = kg or manager.kg
+        id = item_id(kg, seed.question, seed.sparql)
+        if id in pool:
+            continue
+        item = PoolItem(
+            id=id,
+            question=seed.question,
+            sparql=seed.sparql,
+            info=PoolItemInfo(kg=kg, cq_id=seed.id, difficulty="similar"),
+        )
+        pool.items[id] = item
+        seed_items.append(item)
+
+    logger.info(f"Rolling out the base student on {len(seed_items)} seeds, {num_rollouts}x each")
+    episodes = collect_rollouts(
+        seed_items,
+        rollout_config,
+        managers,
+        num_rollouts=num_rollouts,
+        parallelism=rollout_config.parallelism,
+        kg_notes=kg_notes,
+        notes=notes,
+        progress=True,
+        logger=logger,
+    )
+    rewards = reward_episodes(
+        episodes,
+        pool,
+        reward_config,
+        max_steps=rollout_config.max_steps,
+        progress=True,
+        logger=logger,
+        round=0,
+    )
+    stats = reward_stats(rewards)
+    logger.info(
+        f"Seed difficulty: mean f1 {stats['mean_f1']}, {stats['answered']} answered, "
+        f"{stats['invalid']} invalid of {stats['episodes']} rollouts"
+    )
+
+    # teacher proposes calibrated variants for every seed from its traces
+    added = run_revisits(
+        config,
+        pool,
+        episodes,
+        rewards,
+        learnability_half_life=rollout_config.learnability_half_life,
+        max_revisits=max_revisits if max_revisits is not None else len(seed_items),
+        managers=managers,
+        notes=notes,
+        kg_notes=kg_notes,
+        parallelism=rollout_config.parallelism,
+        logger=logger,
+    )
+    logger.info(
+        f"Teacher added {len(added)} calibrated proposals; initial pool now "
+        f"{len(pool)} items (seeds + variants)"
+    )
+    pool.save(config.pool_file)
+    return pool
 
 
 # phase 5 entry point: one round of the teacher-student loop over an
