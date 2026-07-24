@@ -195,6 +195,10 @@ class OpenAICompletionsModel(Model):
         ):
             token_ids = choice.provider_specific_fields.get("token_ids")  # type: ignore
             prompt_token_ids = choice.provider_specific_fields.get("prompt_token_ids")  # type: ignore
+        # Also check choice-level attributes (vLLM puts token_ids there,
+        # observed with vLLM 0.22)
+        if token_ids is None and getattr(choice, "token_ids", None) is not None:
+            token_ids = choice.token_ids  # type: ignore
         # Also check response-level attributes
         if token_ids is None and hasattr(response, "token_ids"):
             token_ids = response.token_ids  # type: ignore

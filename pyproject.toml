@@ -41,6 +41,9 @@ dependencies = [
 # scripts/extract_uniprot_examples.py, and scripts/fix_uniprot_examples.py
 data = ["datasets>=3.3.0", "beautifulsoup4>=4.12.0"]
 grisp = ["transformers>=5", "wandb>=0.24.0", "peft>=0.15.0"]
+# training the CQD student (grasp.cqd.train); rollouts additionally need a
+# vLLM server for the student, e.g. pip install vllm
+cqd = ["torch>=2.4.0", "transformers>=5", "peft>=0.15.0", "wandb>=0.24.0"]
 evaluation = ["streamlit>=1.50.0"]
 
 [project.scripts]

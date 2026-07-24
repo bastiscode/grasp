@@ -57,12 +57,19 @@ def f1_score(
     target: SelectResult | AskResult,
     exact: int | bool = 1024,
 ) -> float:
-    if isinstance(target, AskResult) or isinstance(pred, AskResult):
-        # convert to ask result if needed
-        target = target.to_ask_result() if not isinstance(target, AskResult) else target
+    # only when the REFERENCE is a boolean (ASK) question do we compare
+    # booleans; the prediction is coerced to its ask result for that compare.
+    if isinstance(target, AskResult):
         pred = pred.to_ask_result() if not isinstance(pred, AskResult) else pred
-
         return float(pred == target)
+
+    # the reference is a result set (SELECT): an ASK prediction cannot answer
+    # it -- answering a set question with a boolean is the wrong answer type,
+    # so it scores 0. NOTE: do NOT collapse the reference to a boolean here;
+    # that let a trivially-true `ASK { ?s ?p ?o }` score f1 1.0 against any
+    # non-empty reference -- a reward hack the RL policy converged onto.
+    if isinstance(pred, AskResult):
+        return 0.0
 
     if pred.is_empty and target.is_empty:
         return 1.0
@@ -81,6 +88,21 @@ def f1_score(
 
 
 class TestF1Score(unittest.TestCase):
+    def test_ask_prediction_against_select_reference_scores_zero(self):
+        # a trivially-true `ASK { ?s ?p ?o }` must NOT score against a SELECT
+        # reference (the reward-hack guard); answering a set question with a
+        # boolean is the wrong answer type.
+        ref = SelectResult(variables=["uri"], data=[{"uri": "Q1"}, {"uri": "Q2"}])
+        self.assertEqual(f1_score(AskResult(True), ref), 0.0)
+
+    def test_ask_reference_still_compares_booleans(self):
+        # a genuine boolean (ASK) reference is compared as booleans
+        self.assertEqual(f1_score(AskResult(True), AskResult(True)), 1.0)
+        self.assertEqual(f1_score(AskResult(False), AskResult(True)), 0.0)
+        # a SELECT prediction is coerced (non-empty -> true) for an ASK ref
+        sel = SelectResult(variables=["x"], data=[{"x": "a"}])
+        self.assertEqual(f1_score(sel, AskResult(True)), 1.0)
+
     def test_exact_f1_score_identical(self):
         pred = [("a", "b"), ("c", "d")]
         target = [("a", "b"), ("c", "d")]
