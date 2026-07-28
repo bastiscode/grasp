@@ -811,7 +811,8 @@ def call_function(
 
 SHAPE_CAVEAT = (
     "Shapes are approximate (derived from instance data and/or schema "
-    "declarations) and may be incomplete, so treat them as guidance."
+    "declarations) and may be incomplete, so treat them as guidance. "
+    "A leading ^ marks an inverse edge, where the class is the property's object."
 )
 
 
