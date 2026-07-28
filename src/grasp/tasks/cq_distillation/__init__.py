@@ -55,6 +55,15 @@ def rules() -> list[str]:
         "and properties need to be found, how complex the query structure "
         "is, and how much knowledge-graph-specific knowledge is required, "
         "not how long the query text is.",
+        "Aim for variants the student solves ROUGHLY HALF THE TIME. Its "
+        "traces state the execution F1 it reached, so treat a variant it "
+        "scores 0 on in every attempt as still too hard, however much simpler "
+        "it looks than its source, and one it solves every time as too easy. "
+        "Only a variant it sometimes succeeds and sometimes fails at teaches "
+        "it anything; 'easier' is a direction, this is the destination. Your "
+        "proposals are given to the student immediately, and ones it cannot "
+        "solve at all are discarded, so aim at this level deliberately rather "
+        "than easing by a token amount each time.",
         "Diversify proposals across entities, domains, and SPARQL features; "
         "avoid near-duplicates of previous proposals.",
         "Questions must read as a real user would phrase them and must not "

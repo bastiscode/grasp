@@ -1,4 +1,5 @@
 import hashlib
+import math
 import os
 import random
 from statistics import pstdev
@@ -86,34 +87,37 @@ def item_id(kg: str, question: str, sparql: str) -> str:
     return f"cqd-{hashed[:16]}"
 
 
-# competence bin index in [0, n_bins); None for never-attempted items,
-# which the sampler routes to the exploration share instead.
-def competence_bin(item: "PoolItem", half_life: float, n_bins: int) -> int | None:
-    c = item.competence(half_life)
-    if c is None:
-        return None
-    return min(n_bins - 1, int(c * n_bins))
+# width of the zpd bump below; at the extremes (competence 0 or 1 against a
+# target of 0.5) it damps an item to ~0.14 of its learnability weight rather
+# than to nothing, so a stuck item stays reachable and can recover
+ZPD_WIDTH = 0.25
 
 
-# Allocate n draw-slots across competence bins. Each bin offers up to
-# min(cap, its learnable-item count) slots; we draw n of the offered slots
-# at random, so no single bin dominates (cap) and empty/thin bins simply
-# contribute less. Any shortfall (too few learnable items) is left to the
-# caller to backfill.
-def learnability_quotas(
-    rng: random.Random,
-    bin_learnable: dict[int, int],
-    n: int,
-    cap: int,
-) -> dict[int, int]:
-    slots: list[int] = []
-    for b, count in bin_learnable.items():
-        slots.extend([b] * min(cap, count))
-    rng.shuffle(slots)
-    quotas: dict[int, int] = {}
-    for b in slots[:n]:
-        quotas[b] = quotas.get(b, 0) + 1
-    return quotas
+# how ready the student is for an item, in (0, 1]: a gaussian bump centred on
+# the target competence. Items it never solves and items it has mastered are
+# both damped, so the draw concentrates on the productive middle -- the zone
+# where it succeeds sometimes and fails sometimes.
+def zpd(competence: float, target: float) -> float:
+    return math.exp(-((competence - target) ** 2) / (2 * ZPD_WIDTH**2))
+
+
+# how strongly an item should be drawn: its learnability (the within-group
+# reward spread GRPO turns into advantage) focused on the difficulty the
+# student is ready for. Learnability alone is difficulty-blind and, because
+# hard items far outnumber solvable ones, it fills batches with items the
+# student can only ever partially solve. target_competence None keeps the
+# plain learnability weighting.
+def draw_weight(
+    item: "PoolItem",
+    competence_half_life: float,
+    learnability_half_life: float,
+    target_competence: float | None,
+) -> float:
+    learnability = item.learnability(learnability_half_life) or 0.0
+    competence = item.competence(competence_half_life)
+    if target_competence is None or competence is None:
+        return learnability
+    return learnability * zpd(competence, target_competence)
 
 
 # Weighted sample without replacement (repeated re-weighted draws; fine at
@@ -201,6 +205,11 @@ class TaskPool:
     def add_group(self, id: str, group: GroupRecord) -> None:
         self.items[id].info.groups.append(group)
 
+    # drop an item, e.g. a freshly probed variant the student cannot solve yet
+    # (see curriculum.descend); a no-op if it is not in the pool
+    def remove(self, id: str) -> None:
+        self.items.pop(id, None)
+
     def by_cq(self, cq_id: str) -> list[PoolItem]:
         return [item for item in self.items.values() if item.info.cq_id == cq_id]
 
@@ -220,68 +229,57 @@ class TaskPool:
 
     # Sample up to n distinct items for a rollout batch. A fraction is
     # reserved for never-attempted ("new") items so the teacher's proposals
-    # get explored; the rest are binned by competence (mean f1, width
-    # 1/n_bins) and drawn weighted by learnability (reward-std), capped at
-    # per_bin_cap_fraction*n per bin so no difficulty band dominates. Items
-    # with zero learnability (mastered or hopeless) are skipped; the
-    # backfill only triggers if too few learnable items exist.
+    # get explored; the rest are drawn in one pass weighted by draw_weight --
+    # learnability (reward-std) focused on target_competence, so the batch
+    # concentrates on items the student is ready for instead of on whichever
+    # difficulty band happens to be crowded. Items with zero learnability
+    # (mastered or hopeless) are skipped; the backfill only triggers if too
+    # few weighted items exist.
     def sample(
         self,
         n: int,
         competence_half_life: float = 1.5,
         learnability_half_life: float = 3.0,
-        n_bins: int | None = None,
+        target_competence: float | None = 0.5,
         new_fraction: float = 0.25,
-        per_bin_cap_fraction: float = 0.5,
         seed: int | None = None,
     ) -> list[PoolItem]:
         rng = random.Random(seed)
         items = list(self.items.values())
         if n >= len(items):
             return items
-        n_bins = n_bins or n
 
         new_items = [it for it in items if it.n_groups() == 0]
         k_new = min(round(new_fraction * n), len(new_items))
         sampled = rng.sample(new_items, k_new) if k_new else []
 
         attempted = [it for it in items if it.n_groups() > 0]
-        by_bin: dict[int, list[PoolItem]] = {}
-        for it in attempted:
-            b = competence_bin(it, competence_half_life, n_bins)
-            assert b is not None
-            by_bin.setdefault(b, []).append(it)
-
-        lrn = {
-            it.id: (it.learnability(learnability_half_life) or 0.0) for it in attempted
+        wt = {
+            it.id: draw_weight(
+                it, competence_half_life, learnability_half_life, target_competence
+            )
+            for it in attempted
         }
-        learnable = {
-            b: [it for it in its if lrn[it.id] > 0.0] for b, its in by_bin.items()
-        }
-        cap = max(1, round(per_bin_cap_fraction * n))
-        quotas = learnability_quotas(
-            rng, {b: len(learnable[b]) for b in by_bin}, n - len(sampled), cap
+        cand = [it for it in attempted if wt[it.id] > 0.0]
+        sampled.extend(
+            weighted_sample(
+                rng, cand, [wt[it.id] for it in cand], n - len(sampled)
+            )
         )
-        for b, quota in quotas.items():
-            cand = learnable[b]
-            weights = [lrn[it.id] for it in cand]
-            sampled.extend(weighted_sample(rng, cand, weights, quota))
 
-        # backfill if the per-bin quotas came up short (too few learnable
-        # items to fill n). Draw the shortfall weighted like the main path so
-        # it still front-loads gradient-bearing items: leftover learnable
-        # items (a bin cap left undrawn) keep their learnability weight;
-        # never-attempted items get the smallest positive learnability seen --
-        # their signal is unknown, so they rank just below proven-learnable but
-        # above proven-dead, which may yet turn out learnable once rolled out.
-        # Only proven-dead (zero-learnability) items fall to a uniform draw,
-        # and only if the batch is still not full.
+        # backfill if too few weighted items exist to fill n. Draw the
+        # shortfall weighted like the main path so it still front-loads
+        # gradient-bearing items: never-attempted items get the smallest
+        # positive weight seen -- their signal is unknown, so they rank just
+        # below proven-learnable but above proven-dead, which may yet turn out
+        # learnable once rolled out. Only proven-dead (zero-weight) items fall
+        # to a uniform draw, and only if the batch is still not full.
         if len(sampled) < n:
             remaining = [it for it in items if it not in sampled]
-            pos = [v for v in lrn.values() if v > 0.0]
+            pos = [v for v in wt.values() if v > 0.0]
             new_weight = min(pos) if pos else 1.0
             weights = [
-                new_weight if it.n_groups() == 0 else lrn.get(it.id, 0.0)
+                new_weight if it.n_groups() == 0 else wt.get(it.id, 0.0)
                 for it in remaining
             ]
             weighted = [it for it, w in zip(remaining, weights) if w > 0.0]

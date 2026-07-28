@@ -20,10 +20,11 @@ from universal_ml_utils.logging import get_logger
 
 from grasp.core import load_notes, setup
 from grasp.cqd.configs import CqdConfig, RolloutConfig
-from grasp.cqd.curriculum import run_revisits
+from grasp.cqd.curriculum import descend
 from grasp.cqd.pool import PoolItem, PoolItemInfo, TaskPool, item_id
 from grasp.cqd.reward import RewardConfig, reward_episodes, reward_stats
 from grasp.cqd.rollout import collect_rollouts, enable_token_data
+from grasp.cqd.seeds import load_seeds
 from grasp.cqd.train.data import RlTurn, episode_rl_turns
 
 
@@ -50,11 +51,18 @@ class RlConfig(BaseModel):
     group_size: int = 4
     # optimization
     learning_rate: float = 2e-5
-    # decoupled PPO clip (DAPO "clip-higher"): keep the lower bound at the
-    # usual 0.2 but raise the upper bound so low-probability tokens still
-    # have room to grow, guarding against entropy collapse
-    clip_eps_low: float = 0.2
-    clip_eps_high: float = 0.28
+    # PPO clip bounds. We ran DAPO "clip-higher" (0.2/0.28) and the Qwen3-4B
+    # diverged off-distribution late in training (policy blew past the base,
+    # clip_frac -> 0.44, gibberish generation). Tightened to a symmetric-ish
+    # 0.15/0.2 to slow low-probability-token growth, paired with the KL leash
+    # below.
+    clip_eps_low: float = 0.15
+    clip_eps_high: float = 0.2
+    # KL-to-reference penalty (k3 estimator) that anchors the policy to the
+    # frozen base model (the LoRA adapter disabled). 0 disables it. This is
+    # the leash the DAPO recipe removed; without it the 4B student drifted
+    # off-distribution over 20 rounds. Costs one extra forward per turn.
+    kl_coef: float = 0.04
     grad_accumulation: int = 8
     max_grad_norm: float = 1.0
     # skip turns longer than this many tokens (prompt + completion)
@@ -74,6 +82,23 @@ class RlConfig(BaseModel):
     # (the CqdConfig teacher side).
     curriculum_interval: int = 0
     max_revisits: int | None = None
+    # the curriculum step probes every fresh proposal with the current student
+    # and drops those whose competence (mean f1) does not exceed
+    # min_competence. At the default 0 that is exactly the proposals no rollout
+    # got any credit on: their reward spread comes only from executable-vs-not,
+    # so they teach validity rather than correctness. Items with even partial
+    # credit are kept and left to the sampler to weight (pool.draw_weight).
+    # curriculum_max_rounds bounds the propose -> probe -> ease again descent
+    # within one curriculum step.
+    min_competence: float = 0.0
+    curriculum_max_rounds: int = 2
+    # coverage-paced growth: on each curriculum round, also probe this many
+    # not-yet-covered seed CQs with the current student and fold them into the
+    # same reformulation step (see curriculum.descend). Broadening
+    # (new CQs) and deepening (revisiting pool items) are the one bottom-k step;
+    # a hard freshly-probed seed becomes an easier variant. 0 disables coverage
+    # (pure revisit of the existing pool). Warm-start seeds the rest.
+    coverage_batch: int = 0
     # dynamic sampling (DAPO): roll out items in chunks until items_per_round
     # of them have reward variance (a real GRPO gradient), refilling past
     # zero-variance and step-limit-filtered groups so the batch never starves
@@ -132,6 +157,20 @@ def trainable_items(rewards: list) -> set[str]:
     }
 
 
+# start the experiment's wandb run, or attach to one the caller already
+# started. Warm-start (curriculum.warmstart_pool) runs before train_rl but is
+# part of the same experiment, so a script that calls this first gets both
+# phases in one run instead of the warm-start hours going unlogged.
+def init_wandb(project: str, name: str, config: dict | None = None):
+    import wandb
+
+    if wandb.run is not None:
+        if config is not None:
+            wandb.run.config.update(config, allow_val_change=True)
+        return wandb.run
+    return wandb.init(project=project, name=name, config=config or {})
+
+
 def load_student_model(config: RlConfig):
     from peft import LoraConfig, PeftModel, get_peft_model
     from transformers import AutoModelForCausalLM
@@ -186,7 +225,7 @@ def turn_logprobs(model, turn: RlTurn) -> torch.Tensor:
 
 
 # one pass over the round's samples with clipped policy-gradient updates
-# (GRPO without KL penalty). DAPO token-level loss: within each
+# plus a KL-to-reference penalty (GRPO). DAPO token-level loss: within each
 # gradient-accumulation window the per-token losses are summed and
 # normalized by the window's total completion-token count, so every token
 # contributes equally instead of every turn (tokens in long turns are no
@@ -202,7 +241,14 @@ def train_step(
     rng = random.Random(config.seed)
     rng.shuffle(samples)
 
-    total = {"loss": 0.0, "kl": 0.0, "clip": 0.0, "tokens": 0, "turns": 0}
+    total = {
+        "loss": 0.0,
+        "kl": 0.0,
+        "kl_ref": 0.0,
+        "clip": 0.0,
+        "tokens": 0,
+        "turns": 0,
+    }
     optimizer.zero_grad()
 
     for start in range(0, len(samples), config.grad_accumulation):
@@ -225,14 +271,31 @@ def train_step(
                 ratio.clamp(1 - config.clip_eps_low, 1 + config.clip_eps_high)
                 * advantage
             )
+            pg = -torch.min(unclipped, clipped)
+
+            # KL-to-reference (k3 estimator): reference = base model with the
+            # LoRA adapter disabled. Detached ref logprobs; gradient flows
+            # through new_logprobs, pulling the policy back toward base.
+            if config.kl_coef > 0.0:
+                with torch.no_grad(), model.disable_adapter():
+                    ref_logprobs = turn_logprobs(model, turn)
+                log_r = ref_logprobs - new_logprobs
+                kl_ref = log_r.exp() - log_r - 1.0
+                per_token = pg + config.kl_coef * kl_ref
+            else:
+                kl_ref = None
+                per_token = pg
+
             # sum over the turn's tokens; the window normalizer makes the
             # accumulated update token-level (mean per token over the window)
-            loss = -torch.min(unclipped, clipped).sum()
+            loss = per_token.sum()
             (loss / window_tokens).backward()
 
             with torch.no_grad():
                 total["loss"] += loss.item()
                 total["kl"] += (old_logprobs - new_logprobs).sum().item()
+                if kl_ref is not None:
+                    total["kl_ref"] += kl_ref.sum().item()
                 total["clip"] += (
                     (
                         (ratio < 1 - config.clip_eps_low)
@@ -254,6 +317,7 @@ def train_step(
     return {
         "loss": total["loss"] / tokens,
         "kl": total["kl"] / tokens,
+        "kl_ref": total["kl_ref"] / tokens,
         "clip_frac": total["clip"] / tokens,
         "trained_turns": total["turns"],
     }
@@ -392,6 +456,7 @@ def train_rl(
     rollout_config: RolloutConfig,
     reward_config: RewardConfig | None = None,
     teacher_config: CqdConfig | None = None,
+    covered_seeds: set[str] | None = None,
     log_level: str | int | None = None,
 ) -> str:
     import wandb
@@ -408,6 +473,20 @@ def train_rl(
             "teacher_config and rollout_config must share the pool_file"
         )
 
+    # coverage-paced growth reserve: seed CQs not yet covered (by warm-start or
+    # earlier rounds), drawn a batch at a time on each curriculum round. Shuffled
+    # once (deterministically) so coverage does not front-load one domain.
+    reserve: list = []
+    if curriculum and config.coverage_batch > 0:
+        assert teacher_config is not None
+        done = covered_seeds or set()
+        reserve = [
+            s for s in load_seeds(teacher_config.seeds_file)
+            if s.question and s.id not in done
+        ]
+        random.Random(config.seed).shuffle(reserve)
+        logger.info(f"Coverage reserve: {len(reserve)} uncovered seed CQs")
+
     rollout_config.num_rollouts = config.group_size
     enable_token_data(rollout_config)
 
@@ -420,10 +499,10 @@ def train_rl(
         lr=config.learning_rate,
     )
 
-    run = wandb.init(
-        project=config.wandb_project,
-        name=config.run_name,
-        config={
+    run = init_wandb(
+        config.wandb_project,
+        config.run_name,
+        {
             "rl": config.model_dump(),
             "reward": reward_config.model_dump(),
             "rollout": {
@@ -468,9 +547,8 @@ def train_rl(
             cap,
             competence_half_life=rollout_config.competence_half_life,
             learnability_half_life=rollout_config.learnability_half_life,
-            n_bins=rollout_config.sample_n_bins,
+            target_competence=rollout_config.sample_target_competence,
             new_fraction=new_fraction,
-            per_bin_cap_fraction=rollout_config.per_bin_cap_fraction,
         )
 
         episodes: list = []
@@ -519,25 +597,51 @@ def train_rl(
         # its root cq_id, so revisiting the pool's own multi-hop output
         # extends existing lineages rather than restarting from the seed.
         added_proposals = 0
+        covered_this_round = 0
         if curriculum and round_num % config.curriculum_interval == 0:
             assert teacher_config is not None
-            added = run_revisits(
+            # unified curriculum step: revisit this round's bottom-k items AND
+            # broaden by folding in a batch of not-yet-covered seed CQs, probed
+            # with the CURRENT student. The seed probes feed only the teacher,
+            # not training (samples below use `episodes` only).
+            cover = reserve[: config.coverage_batch]
+            del reserve[: len(cover)]
+            covered_this_round = len(cover)
+            # same descent as warm-start: the teacher proposes, the student
+            # ATTEMPTS the fresh variants, and only those it can already solve
+            # sometimes are kept -- so the teacher sees how its own proposal
+            # fared and nothing enters the pool unprobed.
+            accepted, rejected = descend(
                 teacher_config,
                 pool,
+                rollout_config,
+                reward_config,
                 episodes,
                 rewards,
-                learnability_half_life=rollout_config.learnability_half_life,
+                cover,
+                num_rollouts=config.group_size,
+                max_rounds=config.curriculum_max_rounds,
+                min_competence=config.min_competence,
                 max_revisits=config.max_revisits,
                 managers=managers,
                 notes=notes,
                 kg_notes=kg_notes,
-                parallelism=rollout_config.parallelism,
+                round=round_num,
                 logger=logger,
             )
-            added_proposals = len(added)
+            for item in rejected:
+                assert item.id is not None
+                pool.remove(item.id)
+            added_proposals = len(accepted)
+            # run_revisits saved the pool with the transient seeds; cover_and_revisit
+            # dropped them from memory, so re-save the seed-free pool (the next
+            # round reloads it from disk and must not train on raw seeds).
+            pool.save(rollout_config.pool_file)
             logger.info(
-                f"Round {round_num}: teacher added {added_proposals} "
-                f"proposals, pool now {len(pool)} items"
+                f"Round {round_num}: teacher added {added_proposals} solvable "
+                f"proposals ({len(rejected)} too hard, dropped; covered "
+                f"{covered_this_round} new seeds, {len(reserve)} left); "
+                f"pool now {len(pool)} items"
             )
 
         advantages = group_advantages(rewards)
@@ -624,6 +728,8 @@ def train_rl(
                 "train/trainable_items": n_trainable,
                 "pool/size": len(pool),
                 "pool/added_proposals": added_proposals,
+                "pool/covered_seeds": covered_this_round,
+                "pool/reserve": len(reserve),
                 **{f"train/{k}": v for k, v in train_metrics.items()},
                 **val_metrics,
             }

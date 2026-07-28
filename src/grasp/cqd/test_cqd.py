@@ -8,11 +8,11 @@ from grasp.cqd.pool import (
     PoolItem,
     PoolItemInfo,
     TaskPool,
-    competence_bin,
+    draw_weight,
     ewma,
     item_id,
-    learnability_quotas,
     weighted_sample,
+    zpd,
 )
 from grasp.cqd.curriculum import select_revisits
 from grasp.cqd.reward import (
@@ -121,47 +121,55 @@ def test_competence_skips_empty_f1_groups():
 
 
 # ---------------------------------------------------------------------------
-# competence_bin
+# zpd / draw_weight
 # ---------------------------------------------------------------------------
 
 
-def test_competence_bin_none_for_new_item():
-    assert competence_bin(make_item("cqd-new"), 1.5, 4) is None
+def test_zpd_peaks_at_target_and_damps_the_extremes():
+    assert zpd(0.5, 0.5) == 1.0
+    # symmetric around the target, and monotonically falling away from it
+    assert zpd(0.3, 0.5) == pytest.approx(zpd(0.7, 0.5))
+    assert zpd(0.5, 0.5) > zpd(0.35, 0.5) > zpd(0.1, 0.5)
+    # never actually zero: a stuck (or mastered) item stays reachable
+    assert 0.0 < zpd(0.0, 0.5) < 0.2
+    assert 0.0 < zpd(1.0, 0.5) < 0.2
 
 
-@pytest.mark.parametrize(
-    "mean_f1,n_bins,expected",
-    [(0.0, 4, 0), (0.5, 4, 2), (0.9, 4, 3), (1.0, 4, 3), (0.24, 4, 0)],
-)
-def test_competence_bin_maps_and_clamps(mean_f1, n_bins, expected):
-    item = make_item("cqd-x", [group([mean_f1, mean_f1], [0.1, -0.1])])
-    assert competence_bin(item, 1.5, n_bins) == expected
+def test_draw_weight_prefers_the_ready_item_over_an_equally_learnable_hard_one():
+    # identical reward spread (learnability), different competence
+    ready = make_item("cqd-ready", [group([0.5, 0.5], [0.6, -0.4])])
+    hard = make_item("cqd-hard", [group([0.02, 0.02], [0.6, -0.4])])
+    w_ready = draw_weight(ready, 1.5, 3.0, 0.5)
+    w_hard = draw_weight(hard, 1.5, 3.0, 0.5)
+    assert w_ready > w_hard
+    # difficulty-blind weighting cannot tell them apart -- the old behaviour
+    assert draw_weight(ready, 1.5, 3.0, None) == draw_weight(hard, 1.5, 3.0, None)
 
 
-# ---------------------------------------------------------------------------
-# learnability_quotas
-# ---------------------------------------------------------------------------
+def test_draw_weight_damps_mastered_items():
+    mastered = make_item("cqd-done", [group([1.0, 1.0], [0.6, -0.4])])
+    ready = make_item("cqd-ready", [group([0.5, 0.5], [0.6, -0.4])])
+    assert draw_weight(ready, 1.5, 3.0, 0.5) > draw_weight(mastered, 1.5, 3.0, 0.5)
 
 
-def test_learnability_quotas_respects_cap():
-    rng = random.Random(0)
-    # one bin with 10 learnable items, cap 3 -> at most 3 slots from it
-    quotas = learnability_quotas(rng, {0: 10}, n=8, cap=3)
-    assert quotas == {0: 3}
+def test_draw_weight_is_zero_without_learnability():
+    # no reward spread -> no GRPO gradient, regardless of competence
+    flat = make_item("cqd-flat", [group([0.5, 0.5], [0.3, 0.3])])
+    assert draw_weight(flat, 1.5, 3.0, 0.5) == 0.0
 
 
-def test_learnability_quotas_totals_min_of_n_and_slots():
-    rng = random.Random(0)
-    quotas = learnability_quotas(rng, {0: 2, 1: 2, 2: 2}, n=4, cap=5)
-    # 6 slots offered, n=4 requested
-    assert sum(quotas.values()) == 4
-    assert all(q <= 2 for q in quotas.values())
-
-
-def test_learnability_quotas_empty_bins_contribute_nothing():
-    rng = random.Random(0)
-    quotas = learnability_quotas(rng, {0: 0, 1: 3}, n=8, cap=8)
-    assert quotas == {1: 3}
+def test_sample_prefers_ready_items_over_hard_ones(monkeypatch):
+    # a crowded band of hard-but-learnable items plus one ready item: the
+    # ready item should be drawn far more often than its 1-in-6 share
+    pool = TaskPool(
+        [make_item(f"cqd-hard{i}", [group([0.02, 0.02], [0.6, -0.4])]) for i in range(5)]
+        + [make_item("cqd-ready", [group([0.5, 0.5], [0.6, -0.4])])]
+    )
+    picks = sum(
+        "cqd-ready" in {it.id for it in pool.sample(1, new_fraction=0.0, seed=s)}
+        for s in range(60)
+    )
+    assert picks > 20  # uniform would be ~10
 
 
 # ---------------------------------------------------------------------------
@@ -338,19 +346,15 @@ def test_sample_backfills_to_n_when_signal_is_scarce():
 
 
 def test_sample_backfill_prefers_learnable_over_dead():
-    # a tight per-bin cap leaves learnable items undrawn by the quota path, so
-    # the backfill fires with both learnable and dead items in `remaining`.
-    # The weighted backfill must exhaust the leftover learnable items before
-    # touching the dead (zero-learnability) ones, not draw uniformly.
+    # only 3 items carry a weight (the dead ones have no reward spread), so a
+    # batch of 4 exhausts them and the backfill supplies the 4th. The weighted
+    # path must take every learnable item before touching a dead one.
     items = [make_item(f"cqd-live{i}", [group([0.5, 0.5], [0.5, -0.5])]) for i in range(3)]
     items += [make_item(f"cqd-dead{i}", [group([0.5, 0.5], [0.3, 0.3])]) for i in range(3)]
     pool = TaskPool(items)
-    # cap = round(0.25 * 4) = 1: the single competence bin yields only 1 quota
-    # slot, so 2 learnable items spill into the backfill alongside 3 dead ones
-    picked = pool.sample(4, new_fraction=0.0, per_bin_cap_fraction=0.25, seed=0)
+    picked = pool.sample(4, new_fraction=0.0, seed=0)
     ids = {it.id for it in picked}
     assert len(ids) == 4
-    # all 3 learnable drawn (1 via quota + 2 via weighted backfill), 1 dead
     assert sum(id.startswith("cqd-live") for id in ids) == 3
     assert sum(id.startswith("cqd-dead") for id in ids) == 1
 
@@ -378,13 +382,18 @@ def test_sample_backfill_prefers_new_over_dead():
 
 
 class FakeExecutor:
-    # stub standing in for SparqlExecutor: canned (result, error) per query
-    def __init__(self, results: dict[str, tuple]):
+    # stub standing in for SparqlExecutor: canned (result, error) per query,
+    # and optionally a canned IRI set per query for the dense-shaping tests
+    def __init__(self, results: dict[str, tuple], iris: dict[str, set] | None = None):
         self.results = results
+        self.iris = iris or {}
         self.logger = get_logger("TEST")
 
     def execute(self, kg: str, sparql: str):
         return self.results.get(sparql, (None, "unknown query"))
+
+    def iri_set(self, sparql: str) -> set:
+        return self.iris.get(sparql, set())
 
 
 def episode(sparql=None, reference_sparql="REF", steps=5, error=None, type="answer"):
@@ -467,6 +476,77 @@ def test_reward_valid_beats_any_giveup():
     give_up = compute_reward(episode(sparql=None, type="answer"), cfg, ex)
     # anti-abstention: even a working-but-wrong query beats giving up
     assert wrong_but_working.reward > give_up.reward
+
+
+def test_iri_jaccard_math():
+    from grasp.cqd.reward import iri_jaccard
+
+    assert iri_jaccard({"a", "b"}, {"a", "b"}) == 1.0
+    assert iri_jaccard({"a", "b", "c"}, {"a"}) == pytest.approx(1 / 3)
+    assert iri_jaccard({"a"}, {"b"}) == 0.0
+    # both empty -> nothing to ground, treated as a match; one empty -> 0
+    assert iri_jaccard(set(), set()) == 1.0
+    assert iri_jaccard({"a"}, set()) == 0.0
+
+
+def test_query_iris_extracts_and_canonicalizes_entities_and_properties():
+    from grasp.cqd.reward import query_iris
+    from grasp.sparql.utils import load_sparql_parser
+
+    parser = load_sparql_parser()
+    # prefixed names and a full IRI must resolve to the same canonical form
+    iris = query_iris(
+        "SELECT ?r WHERE { wd:Q125006 wdt:P177 ?r . "
+        "<http://www.wikidata.org/entity/Q1> wdt:P31 ?r }",
+        parser,
+    )
+    assert iris == {
+        "http://www.wikidata.org/entity/Q125006",
+        "http://www.wikidata.org/prop/direct/P177",
+        "http://www.wikidata.org/entity/Q1",
+        "http://www.wikidata.org/prop/direct/P31",
+    }
+    # non-wikidata IRIs are ignored; unparseable input yields an empty set
+    assert query_iris("SELECT ?x WHERE { ?x rdfs:label ?l }", parser) == set()
+    assert query_iris("NOT SPARQL", parser) == set()
+
+
+def test_reward_iri_shaping_is_additive_and_preserves_ordering():
+    # dense shaping on: a wrong-but-structurally-close query earns w_iri*jaccard
+    # on top of its f1=0, but a correct answer still outranks it
+    ref_iris = {"wd:Q1", "wdt:P1"}
+    cfg = RewardConfig(fix_prefixes=False, w_iri=0.2)
+    ex = FakeExecutor(
+        {
+            "REF": (AskResult(True), None),
+            "RIGHT": (AskResult(True), None),
+            "CLOSE": (AskResult(False), None),
+        },
+        iris={
+            "REF": ref_iris,
+            "RIGHT": ref_iris,          # correct query, full overlap -> jaccard 1
+            "CLOSE": {"wd:Q1", "wdt:P9"},  # half overlap -> jaccard 1/3
+        },
+    )
+    right = compute_reward(episode(sparql="RIGHT", steps=20), cfg, ex, max_steps=30)
+    close = compute_reward(episode(sparql="CLOSE", steps=20), cfg, ex, max_steps=30)
+    # no step penalty at grace; right = 1 + 0.2*1, close = 0 + 0.2*(1/3)
+    assert right.reward == pytest.approx(1.0 + 0.2)
+    assert close.reward == pytest.approx(0.2 * (1 / 3))
+    assert right.reward > close.reward
+    assert close.iri_jaccard == pytest.approx(1 / 3)
+
+
+def test_reward_iri_shaping_off_by_default_leaves_reward_unchanged():
+    cfg = RewardConfig(fix_prefixes=False)  # w_iri defaults to 0.0
+    ex = FakeExecutor(
+        {"REF": (AskResult(True), None), "CLOSE": (AskResult(False), None)},
+        iris={"REF": {"wd:Q1"}, "CLOSE": {"wd:Q1"}},
+    )
+    close = compute_reward(episode(sparql="CLOSE", steps=20), cfg, ex, max_steps=30)
+    # f1 0, no shaping, no penalty at grace -> exactly 0, and no jaccard recorded
+    assert close.reward == pytest.approx(0.0)
+    assert close.iri_jaccard is None
 
 
 def test_reward_step_limit_truncation_is_filtered():
@@ -625,6 +705,156 @@ def test_run_validation_aggregates_per_file_and_overall(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# curriculum.descend (propose -> probe -> accept gate)
+# ---------------------------------------------------------------------------
+
+
+def run_descend(monkeypatch, levels: list[list[tuple[str, list[float]]]], **kwargs):
+    # drive descend with canned teacher levels: each level is a list of
+    # (item_id, f1s) the "teacher" proposes and the "student" then scores
+    from grasp.cqd import curriculum
+    from grasp.tasks.cq_distillation.functions import Proposal
+
+    pool = TaskPool()
+    calls = {"n": 0}
+
+    def fake_cover_and_revisit(config, pool_, episodes, rewards, cover, *a, **kw):
+        i = calls["n"]
+        calls["n"] += 1
+        if i >= len(levels):
+            return []
+        proposals = []
+        for id, _ in levels[i]:
+            item = make_item(id)
+            pool_.items[id] = item
+            proposals.append(
+                Proposal(kg="wikidata", question=id, sparql="ASK {}", intent="i",
+                         difficulty="easier")
+            )
+        return proposals
+
+    def fake_probe_items(items, pool_, *a, **kw):
+        # score each freshly added item with its canned f1s
+        f1s = dict(levels[calls["n"] - 1])
+        for item in items:
+            vals = f1s[item.id]
+            item.info.groups.append(GroupRecord(f1s=vals, rewards=vals))
+        return [], []
+
+    # item_id must map a proposal back to the item the fake teacher created
+    monkeypatch.setattr(curriculum, "cover_and_revisit", fake_cover_and_revisit)
+    monkeypatch.setattr(curriculum, "probe_items", fake_probe_items)
+    monkeypatch.setattr(curriculum, "item_id", lambda kg, question, sparql: question)
+
+    accepted, rejected = curriculum.descend(
+        None, pool, RolloutConfig(pool_file="x"), RewardConfig(fix_prefixes=False),
+        [], [], [], **kwargs,
+    )
+    return pool, accepted, rejected, calls["n"]
+
+
+def test_descend_accepts_only_variants_the_student_can_solve(monkeypatch):
+    # one variant is solved half the time (competence 0.5), one never
+    pool, accepted, rejected, _ = run_descend(
+        monkeypatch,
+        [[("cqd-solvable", [1.0, 0.0]), ("cqd-toohard", [0.0, 0.0])]],
+        min_competence=0.25,
+        max_rounds=1,
+    )
+    assert [it.id for it in accepted] == ["cqd-solvable"]
+    assert [it.id for it in rejected] == ["cqd-toohard"]
+
+
+def test_descend_keeps_easing_until_the_student_can_solve(monkeypatch):
+    # level 0 is still too hard (all zero) -> descend again; level 1 lands
+    pool, accepted, rejected, levels_run = run_descend(
+        monkeypatch,
+        [[("cqd-hard", [0.0, 0.0])], [("cqd-easier", [0.6, 0.4])]],
+        min_competence=0.25,
+        max_rounds=3,
+    )
+    assert [it.id for it in accepted] == ["cqd-easier"]
+    assert [it.id for it in rejected] == ["cqd-hard"]
+    # stopped as soon as a level landed, rather than using all 3 levels
+    assert levels_run == 2
+
+
+def test_descend_stops_early_and_does_not_descend_when_first_level_lands(monkeypatch):
+    _, accepted, rejected, levels_run = run_descend(
+        monkeypatch,
+        [[("cqd-good", [1.0, 1.0])], [("cqd-unused", [1.0, 1.0])]],
+        min_competence=0.25,
+        max_rounds=3,
+    )
+    assert [it.id for it in accepted] == ["cqd-good"]
+    assert rejected == [] and levels_run == 1
+
+
+def test_descend_default_gate_rejects_only_no_correctness_items(monkeypatch):
+    # at the default min_competence of 0 the gate is qualitative: an item no
+    # rollout got any credit on is dropped (its reward spread is only
+    # executable-vs-not, teaching validity), while a weak partial solver is
+    # kept and left to the sampler to down-weight
+    _, accepted, rejected, _ = run_descend(
+        monkeypatch,
+        [[("cqd-weak", [0.1, 0.0]), ("cqd-nocredit", [0.0, 0.0])]],
+        max_rounds=1,
+    )
+    assert [it.id for it in accepted] == ["cqd-weak"]
+    assert [it.id for it in rejected] == ["cqd-nocredit"]
+
+
+def test_learnability_alone_no_longer_admits_a_partial_solver(monkeypatch):
+    # the old gate was `competence > 0 or learnability > 0`: this item has
+    # reward spread (learnable) but a competence of only 0.05, the
+    # partial-solving trap the competence floor exists to reject
+    _, accepted, rejected, _ = run_descend(
+        monkeypatch,
+        [[("cqd-partial", [0.1, 0.0])]],
+        min_competence=0.25,
+        max_rounds=1,
+    )
+    assert accepted == []
+    assert [it.id for it in rejected] == ["cqd-partial"]
+
+
+def test_log_wandb_is_a_noop_without_an_active_run():
+    # the curriculum must stay usable outside training, where no run exists
+    from grasp.cqd.curriculum import log_wandb
+
+    log_wandb({"warmstart/accepted": 1})
+
+
+def test_init_wandb_attaches_to_an_active_run(monkeypatch):
+    # warm-start starts the run; train_rl must join it, not open a second one
+    from grasp.cqd.train import rl
+
+    class FakeRun:
+        def __init__(self):
+            self.config = self
+            self.updated = None
+
+        def update(self, cfg, allow_val_change=False):
+            self.updated = cfg
+
+    import wandb
+
+    active = FakeRun()
+    monkeypatch.setattr(wandb, "run", active)
+    monkeypatch.setattr(
+        wandb, "init", lambda **kw: pytest.fail("must not init a second run")
+    )
+    got = rl.init_wandb("proj", "name", {"rl": {"x": 1}})
+    assert got is active
+    assert active.updated == {"rl": {"x": 1}}
+    pool = TaskPool([make_item("cqd-a"), make_item("cqd-b")])
+    pool.remove("cqd-a")
+    assert "cqd-a" not in pool and "cqd-b" in pool
+    pool.remove("cqd-missing")  # no-op
+    assert len(pool) == 1
+
+
+# ---------------------------------------------------------------------------
 # curriculum.select_revisits
 # ---------------------------------------------------------------------------
 
@@ -708,3 +938,41 @@ def test_verify_items_drops_ask_empty_and_broken(monkeypatch):
     ]
     kept = datasets.verify_items(items, "http://endpoint")
     assert [it.id for it in kept] == ["keep"]
+
+
+def test_build_pool_verifies_limits_and_saves(monkeypatch, tmp_path):
+    from universal_ml_utils.io import dump_jsonl
+
+    from grasp.cqd import datasets
+    from grasp.cqd.pool import TaskPool
+    from grasp.sparql.types import SelectResult
+
+    split = str(tmp_path / "train.jsonl")
+    dump_jsonl(
+        (
+            {"question": f"q{i}", "sparql": f"SELECT ?x{i} WHERE {{}}", "info": {}}
+            for i in range(5)
+        ),
+        split,
+    )
+
+    # the last two references do not execute and must never reach the pool
+    def fake_result(sparql, endpoint, timeout, max_rows):
+        if "?x3" in sparql or "?x4" in sparql:
+            return None, "boom"
+        return SelectResult(["x"], [{"x": "a"}]), None
+
+    monkeypatch.setattr(datasets, "get_result_or_error", fake_result)
+    out = str(tmp_path / "pool.jsonl")
+    pool = datasets.build_pool(
+        split, kg="freebase", endpoint="http://endpoint", out=out, tag="wqsp-train",
+        limit=2,
+    )
+
+    # limit applies AFTER verification, so the pool is exactly that size
+    assert len(pool) == 2
+    saved = TaskPool.load(out)
+    assert len(saved) == 2
+    assert all(it.info.kg == "freebase" for it in saved.items.values())
+    assert all(it.info.tags == ["wqsp-train"] for it in saved.items.values())
+    assert all("?x3" not in it.sparql for it in saved.items.values())

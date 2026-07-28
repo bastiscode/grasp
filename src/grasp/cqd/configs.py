@@ -9,18 +9,19 @@ class RolloutConfig(GraspConfig):
     # number of pool items to sample (None = all)
     num_items: int | None = None
     sample_seed: int | None = None
-    # curriculum sampling (see pool.py:TaskPool.sample). Competence (which
-    # difficulty bin) and learnability (reward-std weight) are EWMAs over
-    # rollout groups; half-lives are in groups -- short for competence
-    # (current ability), longer for learnability (stable signal).
+    # curriculum sampling (see pool.py:TaskPool.sample). Competence (mean f1)
+    # and learnability (reward-std) are EWMAs over rollout groups; half-lives
+    # are in groups -- short for competence (current ability), longer for
+    # learnability (stable signal).
     competence_half_life: float = 1.5
     learnability_half_life: float = 3.0
-    # competence bins; None means one bin per sampled item (width 1/n)
-    sample_n_bins: int | None = None
+    # competence the sampler aims at: items are drawn by learnability focused
+    # on this difficulty, so the batch favours items the student solves about
+    # this often rather than ones it can only partially solve. None weights by
+    # learnability alone (difficulty-blind).
+    sample_target_competence: float | None = 0.5
     # share of the batch reserved for never-attempted items (exploration)
     new_fraction: float = 0.25
-    # max share of the batch from any one competence bin
-    per_bin_cap_fraction: float = 0.5
     # rollouts per sampled item (group size for GRPO-style baselines)
     num_rollouts: int = 1
     # max concurrent episodes: the single knob for both LLM and KG load,

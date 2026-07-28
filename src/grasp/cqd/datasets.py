@@ -1,10 +1,11 @@
+import random
 from logging import Logger
 
 from tqdm import tqdm
 from universal_ml_utils.io import load_jsonl
 from universal_ml_utils.logging import get_logger
 
-from grasp.cqd.pool import PoolItem, PoolItemInfo, item_id
+from grasp.cqd.pool import PoolItem, PoolItemInfo, TaskPool, item_id
 from grasp.evaluate import get_result_or_error, get_result_size
 from grasp.sparql.types import AskResult
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
@@ -79,3 +80,35 @@ def verify_items(
         f"(dropped {ask} ASK/boolean, {empty} empty, {broken} broken)"
     )
     return kept
+
+
+# benchmark split -> ready-to-train pool file: load, convert, verify the
+# references against the endpoint and save. limit subsamples the VERIFIED
+# items, so the saved pool has exactly that many (e.g. a small holdout);
+# without it the whole split is kept. The result doubles as an RlConfig
+# val_file, which reads the same question/sparql rows.
+def build_pool(
+    file: str,
+    kg: str,
+    endpoint: str,
+    out: str,
+    tag: str | None = None,
+    limit: int | None = None,
+    seed: int = 22,
+    timeout: float = 300.0,
+    max_rows: int | None = 100_000,
+    progress: bool = False,
+    logger: Logger | None = None,
+) -> TaskPool:
+    logger = logger or get_logger("CQD DATASETS")
+    items = pool_items(load_samples(file), kg, tag)
+    logger.info(f"{len(items)} items from {file}")
+
+    items = verify_items(items, endpoint, timeout, max_rows, progress, logger)
+    if limit is not None and limit < len(items):
+        items = random.Random(seed).sample(items, limit)
+
+    pool = TaskPool(items)
+    pool.save(out)
+    logger.info(f"Saved {len(pool)} items to {out}")
+    return pool

@@ -168,9 +168,8 @@ def collect_pool_rollouts(
         config.num_items if config.num_items is not None else len(pool),
         competence_half_life=config.competence_half_life,
         learnability_half_life=config.learnability_half_life,
-        n_bins=config.sample_n_bins,
+        target_competence=config.sample_target_competence,
         new_fraction=config.new_fraction,
-        per_bin_cap_fraction=config.per_bin_cap_fraction,
         seed=config.sample_seed,
     )
     logger.info(f"Sampled {len(items)} of {len(pool)} pool items")

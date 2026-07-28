@@ -17,10 +17,13 @@ from grasp.manager.utils import (
 from grasp.sparql.metrics import f1_score
 from grasp.sparql.types import AskResult, SelectResult
 from grasp.sparql.utils import (
+    find,
+    find_all,
     fix_prefixes,
     get_qlever_endpoint,
     load_iri_and_literal_parser,
     load_sparql_parser,
+    parse_string,
 )
 from grasp.utils import is_server_error
 
@@ -34,6 +37,79 @@ INFRASTRUCTURE_REASONS = {"api", "timeout", "empty", "feedback"}
 # fallback rollout step cap for the length-penalty ramp when scoring outside
 # a training loop (standalone / tests); the loop passes rollout_config.max_steps
 DEFAULT_MAX_STEPS = 30
+
+# canonical wikidata IRI bases, longest-first, used only by the optional dense
+# IRI-Jaccard reward term to resolve/recognize entity and property IRIs
+# (ported from wikidata-query-logs-kgqa/sparql_statistics.py). The prefix
+# labels double as the default prefix map, so queries that use wd:/wdt:/p:/...
+# without declaring them still resolve.
+WIKIDATA_IRI_PREFIXES = [
+    ("http://www.wikidata.org/prop/statement/value-normalized/", "psn:"),
+    ("http://www.wikidata.org/prop/qualifier/value-normalized/", "pqn:"),
+    ("http://www.wikidata.org/prop/reference/value-normalized/", "prn:"),
+    ("http://www.wikidata.org/prop/direct-normalized/", "wdtn:"),
+    ("http://www.wikidata.org/prop/statement/value/", "psv:"),
+    ("http://www.wikidata.org/prop/qualifier/value/", "pqv:"),
+    ("http://www.wikidata.org/prop/reference/value/", "prv:"),
+    ("http://www.wikidata.org/prop/statement/", "ps:"),
+    ("http://www.wikidata.org/prop/qualifier/", "pq:"),
+    ("http://www.wikidata.org/prop/reference/", "pr:"),
+    ("http://www.wikidata.org/entity/statement/", "wds:"),
+    ("http://www.wikidata.org/prop/novalue/", "wdno:"),
+    ("http://www.wikidata.org/prop/direct/", "wdt:"),
+    ("http://www.wikidata.org/wiki/Special:EntityData/", "wdata:"),
+    ("http://www.wikidata.org/reference/", "wdref:"),
+    ("http://www.wikidata.org/entity/", "wd:"),
+    ("http://www.wikidata.org/value/", "wdv:"),
+    ("http://www.wikidata.org/prop/", "p:"),
+    ("http://wikiba.se/ontology#", "wikibase:"),
+]
+WIKIDATA_BASE = "http://www.wikidata.org/"
+DEFAULT_PREFIX_MAP = {prefix: base for base, prefix in WIKIDATA_IRI_PREFIXES}
+
+
+# the set of wikidata entity/property IRIs (canonical full form) used in a
+# query; prefixed names are resolved via the query's own PREFIX decls, falling
+# back to the standard wikidata prefixes. returns an empty set if unparseable.
+def query_iris(sparql: str, parser) -> set[str]:
+    try:
+        tree, _ = parse_string(sparql, parser, skip_empty=True)
+    except Exception:
+        return set()
+
+    prefixes = dict(DEFAULT_PREFIX_MAP)
+    for decl in find_all(tree, "PrefixDecl"):
+        ns = find(decl, "PNAME_NS")
+        ref = find(decl, "IRIREF")
+        if ns and ref and ref.get("value"):
+            prefixes[ns["value"]] = ref["value"][1:-1]
+
+    iris: set[str] = set()
+    for node in find_all(tree, {"IRIREF", "PNAME_LN"}):
+        value = node.get("value")
+        if not value:
+            continue
+        if node["name"] == "IRIREF":
+            iri = value[1:-1]
+        else:
+            colon = value.find(":")
+            base = prefixes.get(value[: colon + 1]) if colon != -1 else None
+            if base is None:
+                continue
+            iri = base + value[colon + 1 :]
+        if iri.startswith(WIKIDATA_BASE):
+            iris.add(iri)
+    return iris
+
+
+# jaccard similarity of two IRI sets; 1.0 when both are empty (nothing to
+# ground), 0.0 when exactly one is empty
+def iri_jaccard(pred: set[str], ref: set[str]) -> float:
+    if not pred and not ref:
+        return 1.0
+    if not pred or not ref:
+        return 0.0
+    return len(pred & ref) / len(pred | ref)
 
 
 class RewardConfig(BaseModel):
@@ -67,6 +143,13 @@ class RewardConfig(BaseModel):
     # working best attempt is scored like an answer either way: the returned
     # query is the final result.
     cancel_reward: float = 0.1
+    # optional dense shaping: weight of an IRI-Jaccard auxiliary term added on
+    # top of w_f1 * f1 (see compute_reward). It rewards using the reference
+    # query's entity/property IRIs even when the result-set f1 is 0, giving
+    # GRPO a gradient inside otherwise-flat groups where the student is
+    # structurally close but answers wrong. 0.0 disables it; keep it well below
+    # w_f1 (e.g. 0.2) so a correct answer always outranks a similar wrong one.
+    w_iri: float = 0.0
     # switch from assignment to exact multiset f1 above this result size
     exact_after: int = 1024
     # fix missing prefixes before executing, mirroring the tolerance of
@@ -92,6 +175,9 @@ class EpisodeReward(BaseModel):
     # f1 of the final query, None if none was produced or the episode
     # was skipped or cancelled
     f1: float | None = None
+    # IRI-Jaccard vs the reference query when dense shaping is on (w_iri > 0);
+    # diagnostic only, None otherwise
+    iri_jaccard: float | None = None
     type: str | None = None
     steps: int = 0
     # client-attributable function call errors only
@@ -139,9 +225,15 @@ class SparqlExecutor:
         ] = {}
         self.endpoints: dict[str, str] = dict(config.endpoints)
         self.prefixes: dict[str, dict[str, str]] = {}
-        if config.fix_prefixes:
+        # the sparql parser is needed for prefix fixing and/or the dense
+        # IRI-Jaccard reward term; load it if either is enabled
+        if config.fix_prefixes or config.w_iri > 0.0:
             self.sparql_parser = load_sparql_parser()
+        if config.fix_prefixes:
             self.iri_literal_parser = load_iri_and_literal_parser()
+        # cache the IRI set per query so a reference used across a group's
+        # rollouts is parsed once
+        self.iri_cache: dict[str, set[str]] = {}
 
     def endpoint(self, kg: str) -> str:
         if kg not in self.endpoints:
@@ -208,6 +300,12 @@ class SparqlExecutor:
 
         self.cache[key] = (result, error)
         return self.cache[key]
+
+    # cached set of wikidata IRIs in a query, for the dense IRI reward
+    def iri_set(self, sparql: str) -> set[str]:
+        if sparql not in self.iri_cache:
+            self.iri_cache[sparql] = query_iris(sparql, self.sparql_parser)
+        return self.iri_cache[sparql]
 
 
 def compute_reward(
@@ -308,7 +406,17 @@ def compute_reward(
         return reward
 
     reward.f1 = f1_score(pred, target, config.exact_after)
-    reward.reward = config.w_f1 * reward.f1 - step_penalty
+    shaped = config.w_f1 * reward.f1
+    # optional dense shaping: reward structural closeness (shared entity/
+    # property IRIs) so the student gets gradient even when f1 is 0. Kept below
+    # w_f1 so a correct answer always outranks a similar-but-wrong one.
+    if config.w_iri > 0.0:
+        reward.iri_jaccard = iri_jaccard(
+            executor.iri_set(episode.sparql),
+            executor.iri_set(episode.reference_sparql),
+        )
+        shaped += config.w_iri * reward.iri_jaccard
+    reward.reward = shaped - step_penalty
     return reward
 
 
