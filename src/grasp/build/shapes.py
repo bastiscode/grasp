@@ -19,7 +19,7 @@ from grasp.shapes import (
     TargetIri,
     TargetLiteral,
 )
-from grasp.sparql.types import SelectResult
+from grasp.sparql.types import AskResult, SelectResult
 from grasp.utils import derive_label_from_iri, get_local_name_from_iri
 
 
@@ -278,6 +278,13 @@ def build_schema_profile_query(pattern: str, class_iri: str) -> str:
     return f"SELECT DISTINCT ?property ?target\nWHERE {{\n{sp}\n}}"
 
 
+def build_iri_exists_query(iri: str) -> str:
+    # Class-hood cannot be probed with the shape pattern itself: a real class
+    # that simply has no matching properties fails it just like a non-existent
+    # one. So we only check whether the IRI occurs in the graph at all.
+    return f"ASK {{\n  {{ <{iri}> ?p ?o }}\n  UNION\n  {{ ?s ?p <{iri}> }}\n}}"
+
+
 def property_rank(iri: str, manager: KgManager) -> int:
     data = manager.try_get_data("properties")
     if data is None:
@@ -433,6 +440,9 @@ def emit_pseudo_shex(
         if filtered:
             parts.append(f"{filtered:,} filtered (low coverage)")
         lines.append(f"  ... {', '.join(parts)}")
+    elif not kept:
+        # make the empty case explicit; an empty body on its own is ambiguous
+        lines.append("  # no properties found for this class")
 
     lines.append("}")
 
@@ -668,7 +678,22 @@ def compute_shape(
             f"One of the queries for computing the shape of '{class_iri}' failed:\n{e}"
         )
 
-    return assemble_profile(class_iri, maps, total, shape_config, manager)
+    profile = assemble_profile(class_iri, maps, total, shape_config, manager)
+
+    # an empty profile is ambiguous: the class may exist but have no properties
+    # matching the pattern, or the IRI may not be in the graph at all. Only in
+    # that case is the extra probe worth its query.
+    if not profile.properties and profile.total_entities == 0:
+        result = manager.execute_sparql(
+            build_iri_exists_query(class_iri),
+            shape_config.request_timeout,
+            shape_config.read_timeout,
+        )
+        assert isinstance(result, AskResult), "Expected ASK query result"
+        if not result.boolean:
+            raise RuntimeError(f"'{class_iri}' does not exist in the knowledge graph")
+
+    return profile
 
 
 def build_shapes(

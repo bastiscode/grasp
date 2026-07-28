@@ -909,7 +909,11 @@ def call_shape_function(
                 "for on-the-fly computation."
             )
 
-        from grasp.build.shapes import collect_iris, compute_shape, emit_pseudo_shex
+        from grasp.build.shapes import (
+            collect_iris,
+            compute_shape,
+            emit_pseudo_shex,
+        )
         from grasp.configs import ShapeConfig
 
         shape_config = manager.shape_config or ShapeConfig()

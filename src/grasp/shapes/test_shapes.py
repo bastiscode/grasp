@@ -15,7 +15,7 @@ from grasp.configs import ShapeConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer, WikidataPropertyNormalizer
 from grasp.shapes import ShapeSample, Target, TargetClass, TargetLiteral
-from grasp.sparql.types import SelectResult
+from grasp.sparql.types import AskResult, SelectResult
 
 
 def _attach_normalizers(
@@ -224,7 +224,7 @@ class TestAssembleProfile:
         )
         shex = emit_pseudo_shex(profile, manager, shape_config)
 
-        assert shex == "http://ex.org/X {\n}"
+        assert shex == "http://ex.org/X {\n  # no properties found for this class\n}"
 
 
 class TestMixedTargets:
@@ -360,6 +360,46 @@ class TestComputeShape:
             assert False, "Expected an exception"
         except RuntimeError as e:
             assert "timeout" in str(e)
+
+    def test_missing_class_raises_not_found(self):
+        # every profile query legitimately returns zero rows for an IRI that is
+        # not in the graph; only the existence probe can tell the difference.
+        manager = make_manager()
+        manager.execute_sparql.side_effect = [
+            select(["property", "target"], []),
+            AskResult(boolean=False),
+        ]
+
+        try:
+            compute_shape(
+                "http://edas/#MadeUp",
+                manager,
+                schema_pattern="?property rdfs:domain {CLASS} .",
+            )
+            assert False, "Expected an exception"
+        except RuntimeError as e:
+            assert "http://edas/#MadeUp" in str(e)
+            assert "does not exist" in str(e)
+
+    def test_existing_class_without_properties_renders_hint(self):
+        # same empty query results as above, but the IRI does occur in the graph
+        manager = make_manager()
+        manager.execute_sparql.side_effect = [
+            select(["property", "target"], []),
+            AskResult(boolean=True),
+        ]
+
+        shape_config = ShapeConfig()
+        profile = compute_shape(
+            "http://edas/#Acceptance",
+            manager,
+            schema_pattern="?property rdfs:domain {CLASS} .",
+            shape_config=shape_config,
+        )
+
+        assert emit_pseudo_shex(profile, manager, shape_config) == (
+            "http://edas/#Acceptance {\n  # no properties found for this class\n}"
+        )
 
     def test_schema_pattern_classifies_targets(self):
         # mirrors EDAS: a single (?property, ?target) query, no instances/counts.
