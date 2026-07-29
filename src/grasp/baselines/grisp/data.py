@@ -1304,6 +1304,7 @@ def prepare_selection(
     drop_infos_p: float = 0.05,
     drop_target_p: float = 0.1,
     shuffle_alts_p: float = 0.1,
+    constrain_p: float = 0.1,
 ) -> tuple[Messages, list[str], str]:
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
@@ -1340,6 +1341,12 @@ def prepare_selection(
     # TODO: fix hardcoded k values
     k = 10 if is_val else random.randint(2, 10)
 
+    # deriving and executing a constraint query per selection is expensive, so
+    # only constrain a fraction of the training samples, just enough to keep
+    # endpoint-filtered candidate sets in distribution. Validation always
+    # constrains because alternatives are constrained at inference (see run.py).
+    constrain = is_val or random.random() < constrain_p
+
     if item.is_entity_or_property:
         selection_logger = get_logger("GRISP SELECTION PREP")
         alternative_groups = find_alternative_groups(
@@ -1348,7 +1355,7 @@ def prepare_selection(
             queries,
             k,
             logger=selection_logger,
-            skip_constraint=True,
+            skip_constraint=not constrain,
         )
     else:
         alternative_groups = {}
@@ -1409,6 +1416,7 @@ class GRISPSelectionDataset(Dataset):
         drop_infos_p: float = 0.05,
         drop_target_p: float = 0.1,
         shuffle_alts_p: float = 0.1,
+        constrain_p: float = 0.1,
         log_level: str | None = None,
     ) -> None:
         self.parser = load_sparql_parser()
@@ -1421,6 +1429,7 @@ class GRISPSelectionDataset(Dataset):
         self.drop_infos_p = drop_infos_p
         self.drop_target_p = drop_target_p
         self.shuffle_alts_p = shuffle_alts_p
+        self.constrain_p = constrain_p
 
         self.logger = get_logger(f"GRISP SELECTION DATASET ({is_val=})", log_level)
 
@@ -1444,6 +1453,7 @@ class GRISPSelectionDataset(Dataset):
             self.drop_infos_p,
             self.drop_target_p,
             self.shuffle_alts_p,
+            self.constrain_p,
         )
 
         return tokenize_selection_and_log(
