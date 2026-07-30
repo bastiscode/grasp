@@ -30,11 +30,7 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   } UNION {
     VALUES ?id { {IDS} }
     ?id fb:freebase.type_hints.mediator ?mediator
-    # str() on both sides is deliberate: the flag is a plain "true" literal in
-    # the QLever dump but xsd:integer 1 in Virtuoso, and a bare equality here
-    # makes Virtuoso's compiler fail with "sparp_gp_deprecate(): equiv replaces
-    # filter but under deprecation"
-    FILTER(str(?mediator) = "true" || str(?mediator) = "1")
+    FILTER(?mediator = "true")
     BIND("is compound value type / mediator type" AS ?value)
     BIND("info" AS ?type)
   }
