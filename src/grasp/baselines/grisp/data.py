@@ -1599,6 +1599,14 @@ def parse_args() -> argparse.Namespace:
         help="Allow (directly predict) unkown items instead of skipping the sample",
     )
     parser.add_argument(
+        "--info-retrieval",
+        action="store_true",
+        help="Retrieve infos for items from the endpoint instead of taking "
+        "label and aliases from the index. Off by default: samples only keep "
+        "label and aliases, both of which the index has, so the live query "
+        "costs one request per item and its infos are discarded",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=22,
@@ -1622,9 +1630,14 @@ def main(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
     logger = get_logger("GRISP DATA", args.log_level)
 
-    cfg = KgConfig(kg=args.knowledge_graph, info=KgInfo(endpoint=args.endpoint))
+    # only override the kg's own info if an endpoint was given, an explicit
+    # KgInfo(endpoint=None) counts as set and would discard it
+    cfg = KgConfig(
+        kg=args.knowledge_graph,
+        info=KgInfo(endpoint=args.endpoint) if args.endpoint else None,
+    )
     manager = load_kg_manager(cfg)
-    manager.set_info_retrieval(enable=False)
+    manager.set_info_retrieval(enable=args.info_retrieval)
 
     if os.path.exists(args.output_file) and not args.overwrite:
         raise FileExistsError(

@@ -233,6 +233,24 @@ def parse_binding(
     return id, value_binding, tags
 
 
+def id_as_label_field(
+    id_binding: Binding,
+    prefixes: dict[str, str],
+    fields: list[dict],
+) -> dict:
+    # the id-derived label becomes the main field unless the index query
+    # already marked one, so an item whose only field is this one still has a
+    # label. Indices can use this on purpose: freebase properties leave their
+    # name untagged, making the id-derived schema path ("sports sports team
+    # roster from") the main field instead of the ambiguous name ("From").
+    main = any("main" in field["tags"] for field in fields)
+    return {
+        "type": "text",
+        "value": get_value_from_id_binding(id_binding, prefixes),
+        "tags": [] if main else ["main"],
+    }
+
+
 def prepare_items(
     bindings: Iterator[dict],
     prefixes: dict[str, str],
@@ -263,13 +281,7 @@ def prepare_items(
             if add_id_as_label == "always" or (
                 add_id_as_label == "empty" and not fields
             ):
-                fields.append(
-                    {
-                        "type": "text",
-                        "value": get_value_from_id_binding(last_id_binding, prefixes),
-                        "tags": [],
-                    }
-                )
+                fields.append(id_as_label_field(last_id_binding, prefixes, fields))
 
             yield {
                 "identifier": last_id_binding.identifier(),
@@ -293,13 +305,7 @@ def prepare_items(
 
     # dont forget final item
     if add_id_as_label == "always" or (add_id_as_label == "empty" and not fields):
-        fields.append(
-            {
-                "type": "text",
-                "value": get_value_from_id_binding(last_id_binding, prefixes),
-                "tags": [],
-            }
-        )
+        fields.append(id_as_label_field(last_id_binding, prefixes, fields))
 
     yield {
         "identifier": last_id_binding.identifier(),

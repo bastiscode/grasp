@@ -209,7 +209,12 @@ def main(args: argparse.Namespace) -> None:
         val_samples = None
         samples = samples[skip:]
 
-    config = KgConfig(kg=args.knowledge_graph, info=KgInfo(endpoint=args.endpoint))
+    # only override the kg's own info if an endpoint was given, an explicit
+    # KgInfo(endpoint=None) counts as set and would discard it
+    config = KgConfig(
+        kg=args.knowledge_graph,
+        info=KgInfo(endpoint=args.endpoint) if args.endpoint else None,
+    )
     manager = load_kg_manager(config)
     manager.load_models()
 
