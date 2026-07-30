@@ -24,8 +24,6 @@ knowledge_graphs:
     entities: env(ENTITIES_TYPE:fuzzy)
     properties: env(PROPERTIES_TYPE:embedding)
     notes_file: env(KG_NOTES_FILE:null)
-    info:
-      endpoint: env(KG_ENDPOINT:null)
 
 # note configuration
 max_notes: env(MAX_NOTES:16)
