@@ -976,3 +976,39 @@ def test_build_pool_verifies_limits_and_saves(monkeypatch, tmp_path):
     assert all(it.info.kg == "freebase" for it in saved.items.values())
     assert all(it.info.tags == ["wqsp-train"] for it in saved.items.values())
     assert all("?x3" not in it.sparql for it in saved.items.values())
+
+
+# ---------------------------------------------------------------------------
+# chained chunks (resume)
+# ---------------------------------------------------------------------------
+
+
+def test_resume_round_offset_is_zero_for_a_fresh_output_dir(tmp_path):
+    from grasp.cqd.train.rl import resume_round_offset
+
+    assert resume_round_offset(str(tmp_path / "missing")) == 0
+    assert resume_round_offset(str(tmp_path)) == 0
+
+
+def test_resume_round_offset_continues_after_the_highest_round(tmp_path):
+    from grasp.cqd.train.rl import resume_round_offset
+
+    for name in ["round_1", "round_2", "round_10", "best", "adapter", "round_x"]:
+        (tmp_path / name).mkdir()
+    # numeric ordering, not lexicographic, and non-round dirs are ignored
+    assert resume_round_offset(str(tmp_path)) == 10
+
+
+def test_load_best_info_carries_the_watermark_across_jobs(tmp_path):
+    import json
+
+    from grasp.cqd.train.rl import load_best_info
+
+    assert load_best_info(str(tmp_path)) == (None, None)
+
+    best = tmp_path / "best"
+    best.mkdir()
+    (best / "best_info.json").write_text(json.dumps({"round": 6, "val_f1": 0.4736}))
+    val_f1, round = load_best_info(str(tmp_path))
+    assert round == 6
+    assert val_f1 == 0.4736

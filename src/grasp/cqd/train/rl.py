@@ -10,6 +10,7 @@
 import json
 import os
 import random
+import re
 import statistics
 
 import requests
@@ -71,6 +72,10 @@ class RlConfig(BaseModel):
     lora_r: int = 32
     lora_alpha: int = 64
     lora_dropout: float = 0.05
+    # which modules get adapters. "all-linear" is right for a plain causal LM,
+    # but on a multimodal checkpoint (e.g. Qwen3.5) it also adapts the vision
+    # tower, so pass an explicit list of the text-stack projections instead.
+    lora_target_modules: str | list[str] = "all-linear"
     gradient_checkpointing: bool = True
     seed: int = 22
     # auto-curriculum: every curriculum_interval rounds (0 disables), the
@@ -92,6 +97,10 @@ class RlConfig(BaseModel):
     # within one curriculum step.
     min_competence: float = 0.0
     curriculum_max_rounds: int = 2
+    # chained chunks (see resume_round_offset): rounds continue after the
+    # highest round_N already in output_dir. None derives it, 0 forces a
+    # fresh numbering even when resuming into a used directory.
+    round_offset: int | None = None
     # coverage-paced growth: on each curriculum round, also probe this many
     # not-yet-covered seed CQs with the current student and fold them into the
     # same reformulation step (see curriculum.descend). Broadening
@@ -194,7 +203,7 @@ def load_student_model(config: RlConfig):
             r=config.lora_r,
             lora_alpha=config.lora_alpha,
             lora_dropout=config.lora_dropout,
-            target_modules="all-linear",
+            target_modules=config.lora_target_modules,
             task_type="CAUSAL_LM",
         )
         model = get_peft_model(model, lora)
@@ -371,6 +380,33 @@ def unload_run_adapters(url: str, run_name: str) -> int:
     return unloaded
 
 
+# Rounds continue across chained jobs: a resumed chunk starts after the highest
+# round_N already written to output_dir, so wandb logs, adapter names and the
+# round stamped into each pool GroupRecord stay monotonic instead of restarting
+# at 1 and colliding with the previous chunk's records.
+def resume_round_offset(output_dir: str) -> int:
+    if not os.path.isdir(output_dir):
+        return 0
+    rounds = [
+        int(m.group(1))
+        for d in os.listdir(output_dir)
+        if (m := re.fullmatch(r"round_(\d+)", d))
+    ]
+    return max(rounds, default=0)
+
+
+# The best-checkpoint watermark lives in best/best_info.json, not just in
+# memory: without reloading it a resumed job starts from None and its first
+# validation overwrites best/ however much worse it is.
+def load_best_info(output_dir: str) -> tuple[float | None, int | None]:
+    path = os.path.join(output_dir, "best", "best_info.json")
+    if not os.path.exists(path):
+        return None, None
+    with open(path) as f:
+        info = json.load(f)
+    return info.get("val_f1"), info.get("round")
+
+
 # roll out the current student (served as rollout_config.model) once per
 # holdout sample, score with the training reward, and return wandb metrics:
 # per-file val/<name>/{f1,invalid,answered} plus aggregate val/{f1,invalid}
@@ -530,10 +566,22 @@ def train_rl(
     # track the best holdout checkpoint so a late collapse (see the DAPO
     # format-collapse finding) does not cost us the peak: whenever the honest
     # val/f1 improves, copy the current adapter to output_dir/best.
-    best_val_f1: float | None = None
-    best_round: int | None = None
+    best_val_f1, best_round = load_best_info(config.output_dir)
+    if best_val_f1 is not None:
+        logger.info(
+            f"Carrying forward best val/f1 {best_val_f1:.4f} from round {best_round}"
+        )
 
-    for round_num in range(1, config.num_rounds + 1):
+    offset = (
+        config.round_offset
+        if config.round_offset is not None
+        else resume_round_offset(config.output_dir)
+    )
+    if offset:
+        logger.info(f"Resuming: rounds continue at {offset + 1}")
+
+    for round_index in range(1, config.num_rounds + 1):
+        round_num = round_index + offset
         pool = TaskPool.load(rollout_config.pool_file)
         # dynamic sampling: draw up to `cap` candidates, roll them out in
         # items_per_round-sized chunks, and stop once items_per_round of them
