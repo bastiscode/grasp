@@ -8,6 +8,7 @@
 # long prompts stay trainable on a single 24GB GPU.
 
 import json
+import math
 import os
 import random
 import re
@@ -121,6 +122,10 @@ class RlConfig(BaseModel):
     # among the rollout knowledge_graphs (managers are reused).
     val_files: list[ValFile] = []
     val_interval: int = 0
+    # rollouts per holdout sample. 1 is far too noisy to compare checkpoints
+    # with (see run_validation); 3-5 averages the sampling variance down at a
+    # proportional cost, so raise val_interval to keep the budget the same.
+    val_rollouts: int = 1
     # logging
     wandb_project: str = "grasp-cqd"
     run_name: str = "grpo"
@@ -407,11 +412,20 @@ def load_best_info(output_dir: str) -> tuple[float | None, int | None]:
     return info.get("val_f1"), info.get("round")
 
 
-# roll out the current student (served as rollout_config.model) once per
-# holdout sample, score with the training reward, and return wandb metrics:
-# per-file val/<name>/{f1,invalid,answered} plus aggregate val/{f1,invalid}
-# over all samples. No training, no pool mutation (a throwaway pool just
-# carries the references for scoring).
+# roll out the current student (served as rollout_config.model) num_rollouts
+# times per holdout sample, score with the training reward, and return wandb
+# metrics: per-file val/<name>/{f1,invalid,answered} plus aggregate
+# val/{f1,invalid} over all samples. No training, no pool mutation (a
+# throwaway pool just carries the references for scoring).
+#
+# num_rollouts > 1 exists because a single pass is far too noisy to compare
+# checkpoints with: the same base model measured twice on the same 50 items
+# scored 0.5559 and 0.4171 -- a spread wider than any training effect we were
+# trying to read. The agent samples at the model's recommended decoding
+# parameters (temperature 0.7 etc.) and can diverge at any of up to max_steps
+# tool calls, so the variance is inherent; averaging is the fix, not greedy
+# decoding, which would measure a regime we neither train nor serve with.
+# val/f1_sem reports the standard error so a difference can be judged.
 def run_validation(
     val_files: list[ValFile],
     rollout_config: RolloutConfig,
@@ -420,6 +434,7 @@ def run_validation(
     notes: list[str] | None,
     kg_notes: dict[str, list[str]] | None,
     logger,
+    num_rollouts: int = 1,
 ) -> dict:
     metrics: dict = {}
     f1s: list[float] = []
@@ -443,7 +458,7 @@ def run_validation(
             list(pool.items.values()),
             rollout_config,
             managers,
-            num_rollouts=1,
+            num_rollouts=num_rollouts,
             parallelism=rollout_config.parallelism,
             kg_notes=kg_notes,
             notes=notes,
@@ -478,6 +493,11 @@ def run_validation(
 
     metrics["val/f1"] = sum(f1s) / len(f1s) if f1s else None
     metrics["val/invalid"] = total_invalid
+    # standard error over the individual rollouts, so two checkpoints can be
+    # compared against the measurement's own spread instead of by eye
+    if len(f1s) > 1:
+        metrics["val/f1_sem"] = statistics.stdev(f1s) / math.sqrt(len(f1s))
+    metrics["val/rollouts"] = len(f1s)
     return metrics
 
 
@@ -743,6 +763,7 @@ def train_rl(
                 notes,
                 kg_notes,
                 logger,
+                num_rollouts=config.val_rollouts,
             )
             logger.info(f"Round {round_num} validation: {val_metrics}")
 
