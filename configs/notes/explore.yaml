@@ -14,6 +14,10 @@ feedback: env(FEEDBACK:false)
 know_before_use: env(KNOW_BEFORE_USE:false)
 notes_file: env(NOTES_FILE:null)
 
+sparql_connection_timeout: env(SPARQL_CONNECTION_TIMEOUT:6.0)
+sparql_query_timeout: env(SPARQL_QUERY_TIMEOUT:30.0)
+sparql_read_timeout: env(SPARQL_READ_TIMEOUT:10.0)
+
 list_k: env(LIST_K:10)
 search_k: env(SEARCH_K:10)
 result_max_rows: env(RESULT_MAX_ROWS:10)
