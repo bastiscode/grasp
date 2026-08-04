@@ -7,7 +7,7 @@ from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger
 
 from grasp.cqd.pool import GroupRecord, TaskPool
-from grasp.cqd.rollout import Episode
+from grasp.cqd.rollout import Episode, client_tool_call_errors
 from grasp.evaluate import get_result_or_error
 from grasp.manager.utils import (
     get_common_sparql_prefixes,
@@ -17,13 +17,10 @@ from grasp.manager.utils import (
 from grasp.sparql.metrics import f1_score
 from grasp.sparql.types import AskResult, SelectResult
 from grasp.sparql.utils import (
-    find,
-    find_all,
     fix_prefixes,
     get_qlever_endpoint,
     load_iri_and_literal_parser,
     load_sparql_parser,
-    parse_string,
 )
 from grasp.utils import is_server_error
 
@@ -38,89 +35,18 @@ INFRASTRUCTURE_REASONS = {"api", "timeout", "empty", "feedback"}
 # a training loop (standalone / tests); the loop passes rollout_config.max_steps
 DEFAULT_MAX_STEPS = 30
 
-# canonical wikidata IRI bases, longest-first, used only by the optional dense
-# IRI-Jaccard reward term to resolve/recognize entity and property IRIs
-# (ported from wikidata-query-logs-kgqa/sparql_statistics.py). The prefix
-# labels double as the default prefix map, so queries that use wd:/wdt:/p:/...
-# without declaring them still resolve.
-WIKIDATA_IRI_PREFIXES = [
-    ("http://www.wikidata.org/prop/statement/value-normalized/", "psn:"),
-    ("http://www.wikidata.org/prop/qualifier/value-normalized/", "pqn:"),
-    ("http://www.wikidata.org/prop/reference/value-normalized/", "prn:"),
-    ("http://www.wikidata.org/prop/direct-normalized/", "wdtn:"),
-    ("http://www.wikidata.org/prop/statement/value/", "psv:"),
-    ("http://www.wikidata.org/prop/qualifier/value/", "pqv:"),
-    ("http://www.wikidata.org/prop/reference/value/", "prv:"),
-    ("http://www.wikidata.org/prop/statement/", "ps:"),
-    ("http://www.wikidata.org/prop/qualifier/", "pq:"),
-    ("http://www.wikidata.org/prop/reference/", "pr:"),
-    ("http://www.wikidata.org/entity/statement/", "wds:"),
-    ("http://www.wikidata.org/prop/novalue/", "wdno:"),
-    ("http://www.wikidata.org/prop/direct/", "wdt:"),
-    ("http://www.wikidata.org/wiki/Special:EntityData/", "wdata:"),
-    ("http://www.wikidata.org/reference/", "wdref:"),
-    ("http://www.wikidata.org/entity/", "wd:"),
-    ("http://www.wikidata.org/value/", "wdv:"),
-    ("http://www.wikidata.org/prop/", "p:"),
-    ("http://wikiba.se/ontology#", "wikibase:"),
-]
-WIKIDATA_BASE = "http://www.wikidata.org/"
-DEFAULT_PREFIX_MAP = {prefix: base for base, prefix in WIKIDATA_IRI_PREFIXES}
-
-
-# the set of wikidata entity/property IRIs (canonical full form) used in a
-# query; prefixed names are resolved via the query's own PREFIX decls, falling
-# back to the standard wikidata prefixes. returns an empty set if unparseable.
-def query_iris(sparql: str, parser) -> set[str]:
-    try:
-        tree, _ = parse_string(sparql, parser, skip_empty=True)
-    except Exception:
-        return set()
-
-    prefixes = dict(DEFAULT_PREFIX_MAP)
-    for decl in find_all(tree, "PrefixDecl"):
-        ns = find(decl, "PNAME_NS")
-        ref = find(decl, "IRIREF")
-        if ns and ref and ref.get("value"):
-            prefixes[ns["value"]] = ref["value"][1:-1]
-
-    iris: set[str] = set()
-    for node in find_all(tree, {"IRIREF", "PNAME_LN"}):
-        value = node.get("value")
-        if not value:
-            continue
-        if node["name"] == "IRIREF":
-            iri = value[1:-1]
-        else:
-            colon = value.find(":")
-            base = prefixes.get(value[: colon + 1]) if colon != -1 else None
-            if base is None:
-                continue
-            iri = base + value[colon + 1 :]
-        if iri.startswith(WIKIDATA_BASE):
-            iris.add(iri)
-    return iris
-
-
-# jaccard similarity of two IRI sets; 1.0 when both are empty (nothing to
-# ground), 0.0 when exactly one is empty
-def iri_jaccard(pred: set[str], ref: set[str]) -> float:
-    if not pred and not ref:
-        return 1.0
-    if not pred or not ref:
-        return 0.0
-    return len(pred & ref) / len(pred | ref)
-
 
 class RewardConfig(BaseModel):
     # weight of the dominant term, the execution f1 of the student's final
     # query against the reference query
     w_f1: float = 1.0
     # flat penalty when the episode produced no executable final query
-    # (missing output, unparseable or failing SPARQL, give-up). Set to 1.0
-    # so the reward is symmetric [-1, +1] around the f1 range: giving up is
-    # as far below a wrong-but-valid attempt (~0) as a perfect answer (+1)
-    # is above it -- a strong anti-abstention gradient in any mixed group.
+    # (missing output, unparseable or failing SPARQL, give-up -- but NOT a
+    # step-limit truncation, see w_step_limit). Set to 1.0 so the reward is
+    # symmetric [-1, +1] around the f1 range: giving up is as far below a
+    # wrong-but-valid attempt (~0) as a perfect answer (+1) is above it -- a
+    # strong anti-abstention gradient in any mixed group. It also anchors the
+    # soft penalties below, which are all expressed as factors of it.
     w_invalid: float = 1.0
     # soft length penalty on VALID episodes: a linear ramp from 0 at
     # step_grace to its max at the rollout step cap (passed to compute_reward,
@@ -129,12 +55,21 @@ class RewardConfig(BaseModel):
     # length penalty is max_step_penalty * w_invalid, i.e. a fraction of the
     # give-up penalty, so a factor < 1 guarantees even a max-length
     # valid-but-wrong answer stays above a give-up (no abstention incentive).
-    # No separate function error penalty: persistent malformed queries already
-    # cost steps (this ramp) or end invalid (-w_invalid), and taxing them
-    # directly would penalize healthy trial-and-error exploration; fn_errors
-    # stays a diagnostic only.
+    # No function error term HERE. Bad calls are penalized per TURN, on the
+    # advantage of the turn that made them (RlConfig.turn_error_penalty): an
+    # episode-level sum would spread the same advantage over every turn, so the
+    # model learns "episodes with bad calls score lower" without ever learning
+    # WHICH call was bad. fn_errors stays on EpisodeReward as a diagnostic.
     max_step_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
     step_grace: int = 20
+    # penalty for burning the whole step budget without ever calling answer or
+    # cancel. Above w_invalid so running out of steps ranks strictly below a
+    # deliberate give-up: both fail, but the truncation also wasted the budget
+    # and yields no usable query. Widens the reward range to [-w_step_limit, 1].
+    # Only meaningful when the fallback outcome is off
+    # (RolloutConfig.require_answer_call) and truncations are scored rather
+    # than skipped (filter_step_limit=False).
+    w_step_limit: float = 1.5
     # RESERVED, currently unused: reward for a correct abstention once
     # genuinely-unanswerable items exist (reference with an empty, non-ASK
     # result set). Today every pool reference is answerable, so an explicit
@@ -143,13 +78,6 @@ class RewardConfig(BaseModel):
     # working best attempt is scored like an answer either way: the returned
     # query is the final result.
     cancel_reward: float = 0.1
-    # optional dense shaping: weight of an IRI-Jaccard auxiliary term added on
-    # top of w_f1 * f1 (see compute_reward). It rewards using the reference
-    # query's entity/property IRIs even when the result-set f1 is 0, giving
-    # GRPO a gradient inside otherwise-flat groups where the student is
-    # structurally close but answers wrong. 0.0 disables it; keep it well below
-    # w_f1 (e.g. 0.2) so a correct answer always outranks a similar wrong one.
-    w_iri: float = 0.0
     # switch from assignment to exact multiset f1 above this result size
     exact_after: int = 1024
     # fix missing prefixes before executing, mirroring the tolerance of
@@ -175,11 +103,14 @@ class EpisodeReward(BaseModel):
     # f1 of the final query, None if none was produced or the episode
     # was skipped or cancelled
     f1: float | None = None
-    # IRI-Jaccard vs the reference query when dense shaping is on (w_iri > 0);
-    # diagnostic only, None otherwise
-    iri_jaccard: float | None = None
     type: str | None = None
     steps: int = 0
+    # the length ramp charged to this episode (0 for invalid outcomes, which
+    # are flat). Recorded so the process estimator can REDISTRIBUTE it into
+    # per-turn increments without double-counting: reward already has it
+    # subtracted, so adding it back gives the ramp-free base (see
+    # rl.turn_returns and docs/11-process-supervision.md S3a)
+    step_penalty: float = 0.0
     # client-attributable function call errors only
     fn_errors: int = 0
     # no executable final query
@@ -194,18 +125,28 @@ class EpisodeReward(BaseModel):
         return self.skip_reason is not None
 
 
-# count function call errors attributable to the policy, excluding
-# endpoint/server failures which are not the model's fault
+# the length ramp as a function of steps used: 0 up to step_grace, then linear
+# to max_step_penalty * w_invalid at the step cap. Exposed separately so the
+# process estimator can redistribute it into per-turn increments that sum to
+# exactly this value (docs/11-process-supervision.md S3a)
+def length_penalty(steps: int, config: "RewardConfig", max_steps: int) -> float:
+    ramp = max(1, max_steps - config.step_grace)
+    return (
+        config.max_step_penalty
+        * config.w_invalid
+        * min(1.0, max(0, steps - config.step_grace) / ramp)
+    )
+
+
+# episode total of the policy's own function call errors; the per-turn counts
+# that drive the turn-level penalty come from the same primitive
 def client_fn_errors(messages: list[dict]) -> int:
     errors = 0
     for message in messages:
         content = message.get("content")
         if message.get("role") != "assistant" or not isinstance(content, dict):
             continue
-        for tool_call in content.get("tool_calls") or []:
-            error = tool_call.get("error")
-            if error is not None and not is_server_error(error):
-                errors += 1
+        errors += client_tool_call_errors(content.get("tool_calls"))
     return errors
 
 
@@ -225,15 +166,9 @@ class SparqlExecutor:
         ] = {}
         self.endpoints: dict[str, str] = dict(config.endpoints)
         self.prefixes: dict[str, dict[str, str]] = {}
-        # the sparql parser is needed for prefix fixing and/or the dense
-        # IRI-Jaccard reward term; load it if either is enabled
-        if config.fix_prefixes or config.w_iri > 0.0:
-            self.sparql_parser = load_sparql_parser()
         if config.fix_prefixes:
+            self.sparql_parser = load_sparql_parser()
             self.iri_literal_parser = load_iri_and_literal_parser()
-        # cache the IRI set per query so a reference used across a group's
-        # rollouts is parsed once
-        self.iri_cache: dict[str, set[str]] = {}
 
     def endpoint(self, kg: str) -> str:
         if kg not in self.endpoints:
@@ -301,19 +236,13 @@ class SparqlExecutor:
         self.cache[key] = (result, error)
         return self.cache[key]
 
-    # cached set of wikidata IRIs in a query, for the dense IRI reward
-    def iri_set(self, sparql: str) -> set[str]:
-        if sparql not in self.iri_cache:
-            self.iri_cache[sparql] = query_iris(sparql, self.sparql_parser)
-        return self.iri_cache[sparql]
-
 
 def compute_reward(
     episode: Episode,
     config: RewardConfig,
     executor: SparqlExecutor,
     max_steps: int = DEFAULT_MAX_STEPS,
-    filter_step_limit: bool = True,
+    filter_step_limit: bool = False,
 ) -> EpisodeReward:
     reward = EpisodeReward(
         item_id=episode.item_id,
@@ -335,33 +264,34 @@ def compute_reward(
     # `steps >= max_steps` distinguishes a genuine BUDGET TRUNCATION from an
     # EARLY DEGENERATE termination (the model produced no executable tool call
     # before the cap -- e.g. it dumped the call as raw text -- a malformed
-    # output). In TRAINING (filter_step_limit=True) we skip only real budget
-    # truncations (excluded from the gradient/pool, dynamic sampling resamples).
-    # An early degenerate exit is a POLICY failure and must NOT be filtered: it
-    # falls through to the invalid branch below (sparql is None -> -w_invalid)
-    # so the model gets a gradient AWAY from breaking format -- filtering it,
-    # as an earlier version did, removed that signal and let format collapse.
-    # In EVALUATION (filter_step_limit=False) neither is skipped: both are
-    # real failures to answer and count as 0, or held-out metrics inflate.
-    if (
-        episode.type is None
-        and episode.error is None
-        and episode.steps >= max_steps
-        and filter_step_limit
-    ):
+    # output). An early degenerate exit is a POLICY failure and is never
+    # filtered: it falls through to the invalid branch below (sparql is None ->
+    # -w_invalid) so the model gets a gradient AWAY from breaking format --
+    # filtering it, as an earlier version did, removed that signal and let
+    # format collapse.
+    truncated = (
+        episode.type is None and episode.error is None and episode.steps >= max_steps
+    )
+    if truncated and filter_step_limit:
+        # legacy behaviour, kept for comparison runs: budget truncations are
+        # dropped from the gradient and the pool and dynamic sampling refills
+        # around them. Off by default now -- see w_step_limit
         reward.skip_reason = "step-limit"
+        return reward
+
+    if truncated:
+        # ran out of steps without ever answering or cancelling: no usable
+        # query AND the whole budget spent, so it ranks below a give-up
+        reward.invalid = True
+        reward.reward = -config.w_step_limit
         return reward
 
     # soft length penalty, VALID outcomes only (see the invalid branches): a
     # linear ramp from 0 at step_grace to max_step_penalty*w_invalid at the
     # step cap (max_steps). A give-up scores -w_invalid, so with the factor
     # < 1 even a max-length valid-but-wrong answer stays strictly above it.
-    ramp = max(1, max_steps - config.step_grace)
-    step_penalty = (
-        config.max_step_penalty
-        * config.w_invalid
-        * min(1.0, max(0, reward.steps - config.step_grace) / ramp)
-    )
+    step_penalty = length_penalty(reward.steps, config, max_steps)
+    reward.step_penalty = step_penalty
 
     if episode.sparql is None:
         # No executable final query at all: an explicit cancel without a
@@ -406,17 +336,7 @@ def compute_reward(
         return reward
 
     reward.f1 = f1_score(pred, target, config.exact_after)
-    shaped = config.w_f1 * reward.f1
-    # optional dense shaping: reward structural closeness (shared entity/
-    # property IRIs) so the student gets gradient even when f1 is 0. Kept below
-    # w_f1 so a correct answer always outranks a similar-but-wrong one.
-    if config.w_iri > 0.0:
-        reward.iri_jaccard = iri_jaccard(
-            executor.iri_set(episode.sparql),
-            executor.iri_set(episode.reference_sparql),
-        )
-        shaped += config.w_iri * reward.iri_jaccard
-    reward.reward = shaped - step_penalty
+    reward.reward = config.w_f1 * reward.f1 - step_penalty
     return reward
 
 
@@ -433,7 +353,7 @@ def reward_episodes(
     progress: bool = False,
     logger: Logger | None = None,
     round: int | None = None,
-    filter_step_limit: bool = True,
+    filter_step_limit: bool = False,
 ) -> list[EpisodeReward]:
     logger = logger or get_logger("CQD REWARD")
     config = config or RewardConfig()
@@ -515,7 +435,7 @@ def reward_episode_file(
     max_steps: int = DEFAULT_MAX_STEPS,
     rewards_file: str | None = None,
     save_pool: bool = True,
-    filter_step_limit: bool = True,
+    filter_step_limit: bool = False,
     log_level: str | int | None = None,
 ) -> list[EpisodeReward]:
     logger = get_logger("CQD REWARD", log_level)

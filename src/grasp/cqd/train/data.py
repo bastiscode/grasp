@@ -11,7 +11,7 @@ import json
 
 from pydantic import BaseModel
 
-from grasp.cqd.rollout import Episode
+from grasp.cqd.rollout import Episode, client_tool_call_errors
 from grasp.model import Message
 
 IGNORE_INDEX = -100
@@ -127,6 +127,10 @@ class RlTurn(BaseModel):
     completion_ids: list[int]
     # logprobs of the completion tokens under the rollout policy
     logprobs: list[float]
+    # function calls THIS turn got wrong (policy's fault only), so the penalty
+    # lands on the tokens that produced the bad call instead of being smeared
+    # over the whole episode
+    fn_errors: int = 0
 
 
 # One sample per assistant turn, straight from the vLLM token data.
@@ -153,6 +157,7 @@ def episode_rl_turns(episode: Episode) -> list[RlTurn]:
                 prompt_ids=prompt_ids,
                 completion_ids=completion_ids,
                 logprobs=logprobs,
+                fn_errors=client_tool_call_errors(content.get("tool_calls")),
             )
         )
 

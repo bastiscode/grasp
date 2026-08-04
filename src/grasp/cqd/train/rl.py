@@ -13,10 +13,11 @@ import os
 import random
 import re
 import statistics
+from typing import Literal
 
 import requests
 import torch
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from universal_ml_utils.io import load_jsonl
 from universal_ml_utils.logging import get_logger
 
@@ -24,7 +25,12 @@ from grasp.core import load_notes, setup
 from grasp.cqd.configs import CqdConfig, RolloutConfig
 from grasp.cqd.curriculum import descend
 from grasp.cqd.pool import PoolItem, PoolItemInfo, TaskPool, item_id
-from grasp.cqd.reward import RewardConfig, reward_episodes, reward_stats
+from grasp.cqd.reward import (
+    RewardConfig,
+    length_penalty,
+    reward_episodes,
+    reward_stats,
+)
 from grasp.cqd.rollout import collect_rollouts, enable_token_data
 from grasp.cqd.seeds import load_seeds
 from grasp.cqd.train.data import RlTurn, episode_rl_turns
@@ -65,6 +71,48 @@ class RlConfig(BaseModel):
     # the leash the DAPO recipe removed; without it the 4B student drifted
     # off-distribution over 20 rounds. Costs one extra forward per turn.
     kl_coef: float = 0.04
+    # credit assignment. "outcome": one group-normalized reward per episode,
+    # shared by all of its turns (DeepSeekMath 4.1.2) -- what every run so far
+    # used, and the only thing TRL and verl implement. "process": per-turn
+    # rewards, return-to-go, normalized across the group's turns (4.1.3, see
+    # process_advantages). Default stays "outcome" so pulling this does not
+    # silently change a run, and so the two can be ablated against each other
+    # on the same pool with the outcome arm bit-identical to the old numbers.
+    advantage_estimator: Literal["outcome", "process"] = "outcome"
+    # STEP-WISE penalty per wrong function call, charged to the TURN that made
+    # it rather than to the episode, which would give every turn the same
+    # advantage and never say which call was bad. Mechanically checkable
+    # mistakes (unknown IRIs under know_before_use, unparseable SPARQL, bad
+    # arguments), so no process reward model is needed; this is the rule-based
+    # end of the step-wise reward literature. Keep it SMALL: it taxes
+    # exploratory probing, and unlike group-relative advantages it is not
+    # potential-based, so it does shift the optimum (Ng et al. 1999).
+    # NB the unit depends on the estimator -- ADVANTAGE units under "outcome"
+    # (subtracted after normalization), REWARD units under "process"
+    # (subtracted before return-to-go). Both are O(1) here, so 0.2 is sane
+    # either way, but a value tuned in one mode does not transfer to the other.
+    turn_error_penalty: float = 0.2
+    # how far a wrong call propagates BACKWARDS, under "process" only. The
+    # terminal reward is never discounted: in KGQA the early grounding turns
+    # causally determine whether the final query is right, so decaying their
+    # outcome credit would starve exactly the turns that decide the episode.
+    # Only the error channel decays, and only the endpoints are allowed:
+    #   1.0 = full return-to-go, a bad call is charged to it and every turn
+    #         before it (correct RL credit, but a turn-19 error also lands on
+    #         turn 3, which did not cause it)
+    #   0.0 = the penalty stays on the turn that made the call
+    # Intermediates are rejected deliberately: we have no evidence yet about
+    # how far error credit should travel, and the two endpoints bracket it.
+    # Widen this only once a run shows the answer lies between them.
+    turn_error_discount: float = 1.0
+    # pay the length ramp out as per-turn increments instead of one terminal
+    # charge, under "process" only. EXACT redistribution: the increments sum to
+    # the same -L(T) the episode reward already carries, so trajectory returns
+    # are unchanged and no policy-invariance argument is needed (category (a),
+    # docs/11-process-supervision.md). What changes is that a turn is charged
+    # for the length still ahead of it, so early turns bear the cost of the
+    # episode being long and the answering turn bears almost none.
+    decompose_length_penalty: bool = False
     grad_accumulation: int = 8
     max_grad_norm: float = 1.0
     # skip turns longer than this many tokens (prompt + completion)
@@ -111,7 +159,8 @@ class RlConfig(BaseModel):
     coverage_batch: int = 0
     # dynamic sampling (DAPO): roll out items in chunks until items_per_round
     # of them have reward variance (a real GRPO gradient), refilling past
-    # zero-variance and step-limit-filtered groups so the batch never starves
+    # zero-variance groups so the batch never starves (a group that is all
+    # step-limit truncations is uniformly -w_step_limit, hence one of them)
     # -- up to items_per_round * dynamic_sample_max_factor items rolled out.
     # 1 disables it (single chunk, no refill).
     dynamic_sample_max_factor: int = 4
@@ -129,6 +178,16 @@ class RlConfig(BaseModel):
     # logging
     wandb_project: str = "grasp-cqd"
     run_name: str = "grpo"
+
+    @field_validator("turn_error_discount")
+    @classmethod
+    def discount_is_an_endpoint(cls, v: float) -> float:
+        assert v in (0.0, 1.0), (
+            f"turn_error_discount must be 0.0 or 1.0, got {v}; intermediate "
+            "discounts are unjustified until an ablation of the endpoints "
+            "shows the answer lies between them"
+        )
+        return v
 
 
 class RlSample(BaseModel):
@@ -160,8 +219,140 @@ def group_advantages(rewards: list) -> list[float | None]:
     return advantages
 
 
+# per-turn returns for process supervision, keeping the two reward channels
+# separate because they should propagate differently:
+#
+#   return(t) = episode_reward + sum_{k >= t} discount^(k-t) * penalty(k)
+#
+# The episode reward (f1, the length ramp, the give-up / truncation penalties,
+# all exactly as compute_reward defines them) reaches EVERY turn undiscounted.
+# A wrong call decays backwards with turn_error_discount: 1.0 gives full
+# return-to-go, 0.0 keeps it on the turn that made the call.
+#
+# decompose_length_penalty adds a third channel, redistributing the length ramp
+# into per-turn increments; any further per-turn term goes in the same place.
+def turn_returns(
+    turns: list[RlTurn],
+    episode_reward: float,
+    turn_error_penalty: float,
+    turn_error_discount: float = 1.0,
+    length_increments: list[float] | None = None,
+) -> list[float]:
+    returns = [0.0] * len(turns)
+    running_error = 0.0
+    running_length = 0.0
+    for t in reversed(range(len(turns))):
+        running_error = (
+            -turn_error_penalty * turns[t].fn_errors
+            + turn_error_discount * running_error
+        )
+        if length_increments is not None:
+            running_length += length_increments[t]
+        returns[t] = episode_reward + running_length + running_error
+    return returns
+
+
+# EXACT redistribution of the length ramp into per-turn increments (category
+# (a) in docs/11-process-supervision.md): increment t is -(L(t+1) - L(t)), so
+# the increments sum to -L(T) -- precisely the terminal penalty compute_reward
+# already charged. Trajectory returns are unchanged; only the timing moves, and
+# under return-to-go a turn is charged for the length still ahead of it, so
+# early turns bear the cost of the episode being long and the turn that finally
+# answers bears almost none.
+def length_increments(
+    n_turns: int,
+    reward_config: RewardConfig,
+    max_steps: int,
+) -> list[float]:
+    return [
+        -(
+            length_penalty(t + 1, reward_config, max_steps)
+            - length_penalty(t, reward_config, max_steps)
+        )
+        for t in range(n_turns)
+    ]
+
+
+# Process-supervision advantages (DeepSeekMath 4.1.3): a turn is credited with
+# everything that follows it, so a wrong call is charged to that turn AND the
+# turns that walked into it, but not to the ones after, which could not have
+# prevented it.
+#
+# The paper normalizes each step reward against the group pool and THEN sums
+# the following steps. We use the REINFORCE++ order instead -- return-to-go
+# first, normalize after -- because summing K normalized rewards grows the
+# advantage magnitude like sqrt(K), and our episodes run 7 to 30 turns: that
+# would systematically upweight the early turns of long flailing episodes,
+# exactly what the step budget is meant to discourage.
+#
+# Returns one advantage per turn per episode, None where group_advantages
+# would also give None (skipped episode, group of one, no variance).
+def process_advantages(
+    episode_turns: list[list[RlTurn]],
+    rewards: list,
+    turn_error_penalty: float,
+    turn_error_discount: float = 1.0,
+    decompose_length_penalty: bool = False,
+    reward_config: RewardConfig | None = None,
+    max_steps: int = 0,
+) -> list[list[float] | None]:
+    returns: list[list[float] | None] = []
+    for turns, reward in zip(episode_turns, rewards):
+        if reward.reward is None or not turns:
+            returns.append(None)
+            continue
+        base = reward.reward
+        increments = None
+        if decompose_length_penalty and reward_config is not None:
+            # add the ramp back so `base` is ramp-free, then pay it out per
+            # turn; the two sum to the same episode return either way
+            base += reward.step_penalty
+            increments = length_increments(len(turns), reward_config, max_steps)
+        returns.append(
+            turn_returns(
+                turns,
+                base,
+                turn_error_penalty,
+                turn_error_discount,
+                increments,
+            )
+        )
+
+    # normalize over every turn return in the item's group, and keep the
+    # "needs at least two rollouts" rule counted in EPISODES, not turns
+    pool: dict[str, list[float]] = {}
+    episodes_per_item: dict[str, int] = {}
+    for reward, to_go in zip(rewards, returns):
+        if to_go is None:
+            continue
+        pool.setdefault(reward.item_id, []).extend(to_go)
+        episodes_per_item[reward.item_id] = episodes_per_item.get(reward.item_id, 0) + 1
+
+    advantages: list[list[float] | None] = []
+    for reward, to_go in zip(rewards, returns):
+        group = pool.get(reward.item_id, [])
+        if to_go is None or episodes_per_item.get(reward.item_id, 0) < 2:
+            advantages.append(None)
+            continue
+        std = statistics.pstdev(group)
+        if std < 1e-6:
+            advantages.append(None)
+            continue
+        mean = statistics.mean(group)
+        advantages.append([(g - mean) / std for g in to_go])
+
+    return advantages
+
+
 # item ids whose group carries a real gradient (non-None group-relative
-# advantage); used by dynamic sampling to size the batch by trainable groups
+# advantage); used by dynamic sampling to size the batch by trainable groups.
+#
+# Deliberately keyed on OUTCOME variance under both estimators, even though
+# process supervision can extract a gradient from a group whose rollouts all
+# score the same f1 but differ in wrong calls. Holding the refill criterion
+# fixed keeps batch composition identical across the two arms, so an
+# outcome-vs-process comparison isolates credit assignment instead of also
+# changing which items get trained on.
 def trainable_items(rewards: list) -> set[str]:
     advantages = group_advantages(rewards)
     return {
@@ -436,6 +627,11 @@ def run_validation(
     logger,
     num_rollouts: int = 1,
 ) -> dict:
+    # a held-out metric should measure the agent as it is actually deployed, so
+    # GRASP's answer fallback stays ON here (a query recovered from the last
+    # execute call still counts) even though training rollouts require an
+    # explicit answer/cancel call to get any credit
+    rollout_config = rollout_config.model_copy(update={"require_answer_call": False})
     metrics: dict = {}
     f1s: list[float] = []
     total_invalid = 0
@@ -606,7 +802,7 @@ def train_rl(
         # dynamic sampling: draw up to `cap` candidates, roll them out in
         # items_per_round-sized chunks, and stop once items_per_round of them
         # carry a gradient (nonzero reward variance) -- refilling past
-        # zero-variance and step-limit-filtered groups so the trainable batch
+        # zero-variance groups so the trainable batch
         # stays full. Keep the `new` exploration budget at ~its per-round size
         # regardless of the cap by scaling new_fraction down.
         cap = config.items_per_round * max(1, config.dynamic_sample_max_factor)
@@ -712,23 +908,53 @@ def train_rl(
                 f"pool now {len(pool)} items"
             )
 
-        advantages = group_advantages(rewards)
+        # turns are only needed (and only have token data) for scored episodes
+        episode_turns = [
+            episode_rl_turns(episode) if reward.reward is not None else []
+            for episode, reward in zip(episodes, rewards)
+        ]
+        # one advantage per TURN either way; "outcome" repeats the episode's
+        # advantage across its turns, docking each for its own wrong calls
+        if config.advantage_estimator == "process":
+            turn_advantages = process_advantages(
+                episode_turns,
+                rewards,
+                config.turn_error_penalty,
+                config.turn_error_discount,
+                config.decompose_length_penalty,
+                reward_config,
+                rollout_config.max_steps,
+            )
+        else:
+            turn_advantages = [
+                None
+                if advantage is None
+                else [
+                    advantage - config.turn_error_penalty * turn.fn_errors
+                    for turn in turns
+                ]
+                for advantage, turns in zip(group_advantages(rewards), episode_turns)
+            ]
+
         samples = []
         skipped_long = 0
-        for episode, advantage in zip(episodes, advantages):
-            if advantage is None:
+        penalized_turns = 0
+        for turns, advantages in zip(episode_turns, turn_advantages):
+            if advantages is None:
                 continue
-            for turn in episode_rl_turns(episode):
+            for turn, advantage in zip(turns, advantages):
                 if len(turn.prompt_ids) + len(turn.completion_ids) > config.max_seq_len:
                     skipped_long += 1
                     continue
+                penalized_turns += turn.fn_errors > 0
                 samples.append(RlSample(turn=turn, advantage=advantage))
 
         stats = reward_stats(rewards)
         logger.info(
             f"Round {round_num}: mean reward {stats['mean_reward']}, "
             f"mean f1 {stats['mean_f1']}, {len(samples)} trainable turns "
-            f"({skipped_long} skipped as too long)"
+            f"({config.advantage_estimator} advantages, {penalized_turns} "
+            f"with a wrong function call, {skipped_long} skipped as too long)"
         )
 
         train_metrics = {}
@@ -792,6 +1018,9 @@ def train_rl(
                 "reward/invalid": stats["invalid"],
                 "reward/skipped": sum(stats["skipped"].values()),
                 "train/samples": len(samples),
+                # share of trained turns carrying a step-wise penalty; the
+                # metric to watch for whether the model stops making bad calls
+                "train/penalized_turns": penalized_turns,
                 "train/skipped_long": skipped_long,
                 "train/rolled_out_items": drawn,
                 "train/trainable_items": n_trainable,

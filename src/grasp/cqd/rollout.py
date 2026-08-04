@@ -11,6 +11,7 @@ from grasp.core import generate, load_notes, setup
 from grasp.cqd.configs import RolloutConfig
 from grasp.cqd.pool import PoolItem, TaskPool
 from grasp.manager import KgManager
+from grasp.utils import is_server_error
 
 
 class Episode(BaseModel):
@@ -32,6 +33,35 @@ class Episode(BaseModel):
     # function definitions the agent ran with, needed to re-render the
     # trace with a chat template for training
     functions: list[dict] | None = None
+
+
+# did the episode end by explicitly calling answer or cancel? Everything else
+# -- exhausting the step budget, an unparseable tool call, a query pasted as
+# raw text -- is not an outcome, even where GRASP's fallback still derives a
+# final query from it (see RolloutConfig.require_answer_call).
+def called_answer_or_cancel(messages: list[dict]) -> bool:
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, dict):
+            continue
+        for tool_call in content.get("tool_calls") or []:
+            if tool_call.get("name") in ("answer", "cancel"):
+                return True
+    return False
+
+
+# function call errors in ONE assistant turn that are the policy's fault:
+# unknown IRIs under know_before_use, unparseable SPARQL, bad arguments.
+# Endpoint/server failures are excluded -- the model cannot help those, and
+# charging for them would make the reward depend on KG uptime. Per-turn (not
+# per-episode) so the penalty can be credited to the turn that earned it.
+def client_tool_call_errors(tool_calls: list[dict] | None) -> int:
+    errors = 0
+    for tool_call in tool_calls or []:
+        error = tool_call.get("error")
+        if error is not None and not is_server_error(error):
+            errors += 1
+    return errors
 
 
 def trace_stats(messages: list[dict]) -> tuple[int, int]:
@@ -60,7 +90,7 @@ def enable_token_data(config: GraspConfig) -> None:
 
 def run_episode(
     item: PoolItem,
-    config: GraspConfig,
+    config: RolloutConfig,
     managers: list[KgManager],
     kg_notes: dict[str, list[str]] | None = None,
     notes: list[str] | None = None,
@@ -92,6 +122,11 @@ def run_episode(
     messages = output.get("messages") or []
     steps, fn_errors = trace_stats(messages)
 
+    # drop a fallback-derived outcome, leaving type and sparql None so the
+    # reward sees the episode for the non-answer it was
+    if config.require_answer_call and not called_answer_or_cancel(messages):
+        task_output = {}
+
     assert item.id is not None, "Pool item id must not be None"
     return Episode(
         item_id=item.id,
@@ -113,7 +148,7 @@ def run_episode(
 # concurrently (each queries the KG endpoints, bounding endpoint load)
 def collect_rollouts(
     items: list[PoolItem],
-    config: GraspConfig,
+    config: RolloutConfig,
     managers: list[KgManager],
     num_rollouts: int = 1,
     parallelism: int = 4,

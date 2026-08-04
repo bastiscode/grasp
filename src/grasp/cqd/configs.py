@@ -33,6 +33,15 @@ class RolloutConfig(GraspConfig):
     # request per-token logprobs and ids from the model (required for RL
     # training; needs an openai/completions provider, e.g. vLLM)
     token_data: bool = True
+    # count only an explicit answer/cancel function call as the episode
+    # outcome. GRASP otherwise falls back to parsing an answer out of the last
+    # assistant message, or to synthesizing one from the last execute call, so
+    # an episode that never answered still reports one: 39 of 43 budget
+    # truncations in the qald7 traces came back as type="answer". That hides
+    # step-limit failures from the reward, hence strict for TRAINING rollouts.
+    # Validation sets this False on purpose -- it measures the agent the way
+    # it is actually deployed, fallback included.
+    require_answer_call: bool = True
 
 
 class CqdConfig(GraspConfig):
