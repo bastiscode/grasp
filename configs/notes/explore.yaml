@@ -31,4 +31,6 @@ max_note_length: env(MAX_NOTE_LENGTH:512)
 
 num_rounds: env(NUM_ROUNDS:20)
 
+# exploration configuration; either "structural" or "functional"
+mode: env(EXPLORATION_MODE:structural)
 questions_per_round: env(QUESTIONS_PER_ROUND:4)
