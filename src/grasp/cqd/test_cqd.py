@@ -1269,6 +1269,74 @@ def test_build_pool_verifies_limits_and_saves(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def lr_schedule(optimizer, warmup):
+    import torch
+
+    # the exact lambda train_rl uses
+    return torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lambda step: min(1.0, (step + 1) / max(1, warmup))
+    )
+
+
+def test_lr_warms_up_linearly_then_stays_constant():
+    import torch
+
+    from grasp.cqd.train.rl import RlConfig
+
+    config = RlConfig(model="m", output_dir="/tmp/x")
+    assert config.lr_warmup_steps == 50
+    param = torch.nn.Parameter(torch.zeros(1))
+    opt = torch.optim.AdamW([param], lr=config.learning_rate)
+    sched = lr_schedule(opt, config.lr_warmup_steps)
+
+    # first step is already scaled down, not the full lr
+    assert sched.get_last_lr()[0] == pytest.approx(config.learning_rate / 50)
+    lrs = []
+    for _ in range(60):
+        # same order as train_step: optimizer first, then the schedule
+        param.grad = torch.ones(1)
+        opt.step()
+        sched.step()
+        lrs.append(sched.get_last_lr()[0])
+    # ramps linearly to the full rate at the end of warmup, then FLAT -- no
+    # decay, because there is no known endpoint to decay towards
+    assert lrs[48] == pytest.approx(config.learning_rate)
+    assert all(x == pytest.approx(config.learning_rate) for x in lrs[48:])
+    assert lrs[0] < lrs[10] < lrs[20] < lrs[48]
+
+
+def test_optimizer_and_schedule_survive_a_chunk_boundary(tmp_path):
+    import torch
+
+    param = torch.nn.Parameter(torch.zeros(1))
+    opt = torch.optim.AdamW([param], lr=2e-5)
+    sched = lr_schedule(opt, 50)
+    for _ in range(30):
+        param.grad = torch.ones(1)
+        opt.step()
+        sched.step()
+    path = tmp_path / "optimizer.pt"
+    torch.save(
+        {"optimizer": opt.state_dict(), "scheduler": sched.state_dict()}, path
+    )
+
+    # a resumed chunk builds a fresh optimizer, then restores: without this the
+    # Adam moments reset and warmup re-runs at every chunk boundary
+    param2 = torch.nn.Parameter(torch.zeros(1))
+    opt2 = torch.optim.AdamW([param2], lr=2e-5)
+    sched2 = lr_schedule(opt2, 50)
+    assert sched2.last_epoch == 0
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    opt2.load_state_dict(state["optimizer"])
+    sched2.load_state_dict(state["scheduler"])
+    assert sched2.last_epoch == 30
+    assert sched2.get_last_lr()[0] == pytest.approx(sched.get_last_lr()[0])
+    # and the second moment estimate came along, so the next step has momentum
+    restored = opt2.state_dict()["state"][0]
+    assert restored["exp_avg_sq"].item() > 0.0
+    assert restored["step"] == 30
+
+
 def test_resume_round_offset_is_zero_for_a_fresh_output_dir(tmp_path):
     from grasp.cqd.train.rl import resume_round_offset
 

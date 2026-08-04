@@ -63,6 +63,12 @@ class RlConfig(BaseModel):
     group_size: int = 8
     # optimization
     learning_rate: float = 2e-5
+    # linear warmup over this many OPTIMIZER steps (one per grad_accumulation
+    # window of turns), then constant -- see the scheduler in train_rl for why
+    # there is no decay. ~50 is under a third of a round at items_per_round=8 /
+    # group_size=8, so warmup finishes inside round 1. Restored across chunks
+    # with the optimizer state, so it does not re-run on every resume.
+    lr_warmup_steps: int = 50
     # PPO clip bounds. We ran DAPO "clip-higher" (0.2/0.28) and the Qwen3-4B
     # diverged off-distribution late in training (policy blew past the base,
     # clip_frac -> 0.44, gibberish generation). Tightened to a symmetric-ish
@@ -440,6 +446,7 @@ def turn_logprobs(model, turn: RlTurn) -> torch.Tensor:
 def train_step(
     model,
     optimizer,
+    scheduler,
     samples: list[RlSample],
     config: RlConfig,
 ) -> dict:
@@ -516,6 +523,7 @@ def train_step(
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
         optimizer.step()
+        scheduler.step()
         optimizer.zero_grad()
 
     # report per-token means (token-level), consistent with the loss
@@ -751,6 +759,17 @@ def train_rl(
         [p for p in model.parameters() if p.requires_grad],
         lr=config.learning_rate,
     )
+    # linear warmup then CONSTANT -- no decay. A decay schedule needs a known
+    # endpoint, and we have neither: steps per round vary about 2x with how many
+    # items dynamic sampling has to draw to fill the batch, runs are chained
+    # across wall-clock-limited chunks, and we early-stop on the holdout rather
+    # than running a schedule to completion. Warmup is the part that pays: a
+    # fresh LoRA taking a full-size step on a noisy group-relative advantage is
+    # how early divergence starts.
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lambda step: min(1.0, (step + 1) / max(1, config.lr_warmup_steps)),
+    )
 
     run = init_wandb(
         config.wandb_project,
@@ -796,6 +815,20 @@ def train_rl(
     )
     if offset:
         logger.info(f"Resuming: rounds continue at {offset + 1}")
+
+    # Adam's moment estimates and the warmup counter must survive a chunk
+    # boundary. Without this every resume restarts with no momentum, an
+    # uncalibrated second moment and a re-run warmup -- a shock every few
+    # hundred steps, which is a worse perturbation than any schedule choice.
+    optimizer_state = os.path.join(config.output_dir, "optimizer.pt")
+    if os.path.exists(optimizer_state):
+        state = torch.load(optimizer_state, map_location="cpu", weights_only=False)
+        optimizer.load_state_dict(state["optimizer"])
+        scheduler.load_state_dict(state["scheduler"])
+        logger.info(
+            f"Restored optimizer and lr schedule from {optimizer_state} "
+            f"at step {scheduler.last_epoch} (lr {scheduler.get_last_lr()[0]:.2e})"
+        )
 
     for round_index in range(1, config.num_rounds + 1):
         round_num = round_index + offset
@@ -955,11 +988,22 @@ def train_rl(
 
         train_metrics = {}
         if samples:
-            train_metrics = train_step(model, optimizer, samples, config)
+            train_metrics = train_step(
+                model, optimizer, scheduler, samples, config
+            )
 
         # save the updated adapter and hot-load it for the next round
         adapter_dir = os.path.join(config.output_dir, f"round_{round_num}")
         model.save_pretrained(adapter_dir)
+        # one file, overwritten: Adam state is ~2 fp32 copies of the trainable
+        # params (~700 MB at lora_r=32 on a 9B), far too much to keep per round
+        torch.save(
+            {
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+            },
+            optimizer_state,
+        )
         new_name = f"{config.run_name}-r{round_num}"
         load_adapter_into_vllm(
             config.vllm_url,
@@ -1013,6 +1057,8 @@ def train_rl(
                 "reward/cancelled": stats["cancelled"],
                 "reward/invalid": stats["invalid"],
                 "reward/skipped": sum(stats["skipped"].values()),
+                "train/lr": scheduler.get_last_lr()[0],
+                "train/opt_steps": scheduler.last_epoch,
                 "train/samples": len(samples),
                 # share of trained turns carrying a step-wise penalty; the
                 # metric to watch for whether the model stops making bad calls
