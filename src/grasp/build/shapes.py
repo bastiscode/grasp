@@ -40,23 +40,26 @@ def iri_term(class_iri: str) -> str:
     return f"<{class_iri}>"
 
 
-def subquery(pattern: str) -> str:
-    cp = bind_pattern(pattern)
-    return f"  {{\n    SELECT DISTINCT ?class WHERE {{\n      {cp}\n    }}\n  }}"
-
-
-def membership(pattern: str) -> str:
-    cp = bind_pattern(pattern)
-    inner = "\n".join(f"    {line}" for line in cp.strip().splitlines())
-    return f"  {{\n{inner}\n  }}"
+# dedup here plus COUNT(*) outside scales where COUNT(DISTINCT ?instance) does
+# not, since the latter materializes the whole membership relation.
+def distinct_members(pattern: str, class_term: str = "?class") -> str:
+    cp = bind_pattern(pattern, class_term)
+    inner = "\n".join(f"      {line}" for line in cp.strip().splitlines())
+    project = "?class ?instance" if class_term == "?class" else "?instance"
+    return (
+        f"  {{\n"
+        f"    SELECT DISTINCT {project} WHERE {{\n"
+        f"{inner}\n"
+        f"    }}\n"
+        f"  }}"
+    )
 
 
 def build_total_entities_query(pattern: str) -> str:
     return (
-        f"SELECT ?class (COUNT(DISTINCT ?instance) AS ?totalEntities)\n"
+        f"SELECT ?class (COUNT(*) AS ?totalEntities)\n"
         f"WHERE {{\n"
-        f"{subquery(pattern)}\n"
-        f"{membership(pattern)}\n"
+        f"{distinct_members(pattern)}\n"
         f"}}\n"
         f"GROUP BY ?class"
     )
@@ -147,8 +150,8 @@ def build_per_class_incoming_source_query(pattern: str, class_iri: str) -> str:
 
 
 def build_per_class_total_query(pattern: str, class_iri: str) -> str:
-    ip = wrap_pattern(bind_pattern(pattern, iri_term(class_iri)))
-    return f"SELECT (COUNT(DISTINCT ?instance) AS ?totalEntities)\nWHERE {{\n{ip}\n}}"
+    ip = distinct_members(pattern, iri_term(class_iri))
+    return f"SELECT (COUNT(*) AS ?totalEntities)\nWHERE {{\n{ip}\n}}"
 
 
 XSD_NAMESPACE = "http://www.w3.org/2001/XMLSchema#"
