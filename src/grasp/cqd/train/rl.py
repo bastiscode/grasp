@@ -7,6 +7,7 @@
 # and only completion-position logits are materialized (logits_to_keep) so
 # long prompts stay trainable on a single 24GB GPU.
 
+import hashlib
 import json
 import math
 import os
@@ -373,14 +374,36 @@ def trainable_items(rewards: list) -> set[str]:
 # started. Warm-start (curriculum.warmstart_pool) runs before train_rl but is
 # part of the same experiment, so a script that calls this first gets both
 # phases in one run instead of the warm-start hours going unlogged.
-def init_wandb(project: str, name: str, config: dict | None = None):
+# A wandb run id that is stable for an experiment DIRECTORY, so chained chunks
+# land in one continuous run instead of a new same-named run each time. Keyed on
+# output_dir because that is already what identifies an experiment here (see
+# resume_round_offset and load_best_info). To start a genuinely fresh run, use a
+# fresh output_dir -- reusing one and expecting a new chart is the mistake this
+# prevents.
+def wandb_run_id(output_dir: str) -> str:
+    return hashlib.sha1(os.path.abspath(output_dir).encode()).hexdigest()[:16]
+
+
+def init_wandb(
+    project: str,
+    name: str,
+    config: dict | None = None,
+    id: str | None = None,
+):
     import wandb
 
     if wandb.run is not None:
         if config is not None:
             wandb.run.config.update(config, allow_val_change=True)
         return wandb.run
-    return wandb.init(project=project, name=name, config=config or {})
+    # resume="allow": continue `id` if it exists, create it if not
+    return wandb.init(
+        project=project,
+        name=name,
+        id=id,
+        resume="allow" if id else None,
+        config=config or {},
+    )
 
 
 def load_student_model(config: RlConfig):
@@ -784,6 +807,7 @@ def train_rl(
                 "max_steps": rollout_config.max_steps,
             },
         },
+        id=wandb_run_id(config.output_dir),
     )
 
     # clear any adapters left on the server by a previous run of this

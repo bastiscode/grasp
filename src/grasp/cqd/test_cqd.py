@@ -1278,6 +1278,19 @@ def lr_schedule(optimizer, warmup):
     )
 
 
+def test_wandb_run_id_is_stable_per_experiment_directory():
+    from grasp.cqd.train.rl import wandb_run_id
+
+    # chained chunks share output_dir, so they must share the run id or each
+    # chunk starts a new same-named chart (which is what used to happen)
+    a = wandb_run_id("/work/runs/rl_wqsp")
+    assert a == wandb_run_id("/work/runs/rl_wqsp")
+    assert a == wandb_run_id("/work/runs/../runs/rl_wqsp")  # path-normalized
+    # different experiments, different ids -- the two model arms must not merge
+    assert a != wandb_run_id("/work/runs-wqsp-qwen35-9b/rl_wqsp")
+    assert len(a) == 16 and a.isalnum()
+
+
 def test_lr_warms_up_linearly_then_stays_constant():
     import torch
 
