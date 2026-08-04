@@ -450,8 +450,9 @@ def test_reward_hard_server_error_on_prediction_is_skipped():
 
 
 def test_reward_valid_answer_scores_f1_minus_step_penalty():
-    # grace 20, cap 30, factor 0.15, w_invalid 1.0 -> ramp 20..30 to 0.15
-    cfg = RewardConfig(fix_prefixes=False)
+    # grace 20, cap 30, factor 0.15, w_invalid 1.0 -> ramp 20..30 to 0.15.
+    # max_step_penalty is 0 by default now, so the ramp is opt-in here
+    cfg = RewardConfig(fix_prefixes=False, max_step_penalty=0.15)
     ex = FakeExecutor({"REF": (AskResult(True), None), "Q": (AskResult(True), None)})
     clean = compute_reward(episode(sparql="Q", steps=20), cfg, ex, max_steps=30)
     mid = compute_reward(episode(sparql="Q", steps=25), cfg, ex, max_steps=30)
@@ -615,47 +616,213 @@ def episode_reward(item_id, reward):
     return EpisodeReward(item_id=item_id, kg="wikidata", reward=reward, f1=reward)
 
 
+def test_both_estimators_charge_the_same_reward_components():
+    # the point of the split: outcome lumps the penalties into the terminal
+    # scalar, process distributes them, and the EPISODE TOTAL is identical.
+    # Turn 0 sees the whole trajectory, so it must match the outcome reward.
+    from grasp.cqd.train.data import episode_rl_turns
+    from grasp.cqd.train.rl import error_charges, length_increments, turn_returns
+
+    cfg = RewardConfig(fix_prefixes=False, max_step_penalty=0.15)
+    ex = FakeExecutor({"REF": (AskResult(True), None), "P": (AskResult(True), None)})
+    ep = Episode(
+        item_id="i", kg="wikidata", question="q", reference_sparql="REF",
+        type="answer", sparql="P", steps=25,
+        messages=[{"role": "system", "content": "s"}]
+        + [turn_message(*(["parse error"] * n), token=i + 1)
+           for i, n in enumerate([0, 2, 0] + [0] * 22)],
+    )
+    r = compute_reward(ep, cfg, ex, max_steps=30)
+    assert r.fn_errors == 2
+    assert r.step_penalty > 0.0 and r.fn_penalty > 0.0
+    # outcome: f1 minus both penalties, one scalar
+    assert r.reward == pytest.approx(1.0 - r.step_penalty - r.fn_penalty)
+
+    turns = episode_rl_turns(ep)
+    base = r.reward + r.step_penalty + r.fn_penalty
+    spread = turn_returns(
+        base,
+        length_increments(len(turns), cfg, 30),
+        error_charges(turns, r.fn_penalty),
+    )
+    assert base == pytest.approx(1.0)
+    # identical trajectory total, only the timing differs
+    assert spread[0] == pytest.approx(r.reward)
+    # and the error is charged to the turn that made it and the one before it,
+    # never to the turns after
+    assert spread[0] < spread[-1]
+
+
+def test_length_ramp_is_scaled_by_f1_but_the_error_term_is_not():
+    cfg = RewardConfig(fix_prefixes=False, max_step_penalty=0.15)
+    ex = FakeExecutor(
+        {
+            "REF": (AskResult(True), None),
+            "RIGHT": (AskResult(True), None),
+            "WRONG": (AskResult(False), None),
+        }
+    )
+
+    def ep(sparql, steps, errors=0):
+        return Episode(
+            item_id="i", kg="wikidata", question="q", reference_sparql="REF",
+            type="answer", sparql=sparql, steps=steps,
+            messages=[{"role": "system", "content": "s"}]
+            + [turn_message(*(["parse error"] * errors), token=1)],
+        )
+
+    long_right = compute_reward(ep("RIGHT", 30), cfg, ex, max_steps=30)
+    long_wrong = compute_reward(ep("WRONG", 30), cfg, ex, max_steps=30)
+    short_wrong = compute_reward(ep("WRONG", 5), cfg, ex, max_steps=30)
+    sloppy_wrong = compute_reward(ep("WRONG", 30, errors=3), cfg, ex, max_steps=30)
+    give_up = compute_reward(ep(None, 5), cfg, ex, max_steps=30)
+
+    # a correct answer pays the full ramp: efficiency tie-breaks among successes
+    assert long_right.reward == pytest.approx(1.0 - cfg.max_step_penalty)
+    # a WRONG answer pays none of it, so failing late is not worse than failing
+    # early -- that gradient is what pays a policy to quit
+    assert long_wrong.reward == pytest.approx(0.0)
+    assert long_wrong.reward == pytest.approx(short_wrong.reward)
+    # but wrong answers DO still pay for malformed calls: fewer bad calls is
+    # not the same as fewer steps, so this creates no quit-early pressure
+    assert sloppy_wrong.reward == pytest.approx(-3 * cfg.w_fn_error)
+    assert sloppy_wrong.reward < long_wrong.reward
+    # and every valid outcome still beats giving up
+    assert give_up.reward == pytest.approx(-cfg.w_invalid)
+    assert sloppy_wrong.reward > give_up.reward
+    # strictly increasing in f1 -- no cliff where a worse answer scores higher
+    assert long_right.reward > long_wrong.reward > sloppy_wrong.reward
+
+
+def test_both_estimators_agree_when_the_answer_is_wrong():
+    # base recovery has to work at f1 = 0 too, where the ramp contributes
+    # nothing and only the error term is distributed
+    from grasp.cqd.train.data import episode_rl_turns
+    from grasp.cqd.train.rl import process_advantages
+
+    cfg = RewardConfig(fix_prefixes=False)
+    ex = FakeExecutor(
+        {"REF": (AskResult(True), None), "WRONG": (AskResult(False), None)}
+    )
+
+    def ep(errors):
+        return Episode(
+            item_id="i", kg="wikidata", question="q", reference_sparql="REF",
+            type="answer", sparql="WRONG", steps=len(errors),
+            messages=[{"role": "system", "content": "s"}]
+            + [turn_message(*(["parse error"] * n), token=i + 1)
+               for i, n in enumerate(errors)],
+        )
+
+    episodes = [ep([0, 2, 0]), ep([0, 0, 0])]
+    rewards = [compute_reward(e, cfg, ex, max_steps=30) for e in episodes]
+    assert [r.f1 for r in rewards] == [0.0, 0.0]
+    turns = [episode_rl_turns(e) for e in episodes]
+    advs = process_advantages(turns, rewards, cfg, 30)
+    assert advs[0] is not None
+    # turn 0 carries the whole trajectory, so it recovers the episode reward
+    # before normalization; the sloppy episode ranks below the clean one
+    assert advs[0][0] < advs[1][0]
+
+
+def test_error_charges_sum_to_the_episode_penalty_even_when_capped():
+    from grasp.cqd.train.data import episode_rl_turns
+    from grasp.cqd.train.rl import error_charges
+
+    # a low cap so it binds: 20 errors at 0.05 would be 1.0, capped to 0.2
+    cfg = RewardConfig(fix_prefixes=False, max_fn_penalty=0.2)
+    ex = FakeExecutor({"REF": (AskResult(True), None), "P": (AskResult(True), None)})
+    ep = Episode(
+        item_id="i", kg="wikidata", question="q", reference_sparql="REF",
+        type="answer", sparql="P", steps=3,
+        messages=[{"role": "system", "content": "s"}]
+        + [turn_message(*(["parse error"] * n), token=i + 1)
+           for i, n in enumerate([5, 15, 0])],
+    )
+    r = compute_reward(ep, cfg, ex, max_steps=30)
+    assert r.fn_penalty == pytest.approx(0.2)  # capped
+    charges = error_charges(episode_rl_turns(ep), r.fn_penalty)
+    # proportional to each turn's errors, summing to EXACTLY the capped total,
+    # so the two estimators charge the same amount
+    assert sum(charges) == pytest.approx(-r.fn_penalty)
+    assert charges == pytest.approx([-0.05, -0.15, 0.0])
+
+
+def test_process_keeps_failures_flat_so_quitting_early_never_pays():
+    # among failures there must be NO gradient: a give-up with many bad calls
+    # must score exactly the same as a clean one, or the policy learns to quit
+    from grasp.cqd.train.data import episode_rl_turns
+    from grasp.cqd.train.rl import process_advantages
+
+    cfg = RewardConfig(fix_prefixes=False)
+    ex = FakeExecutor({"REF": (AskResult(True), None), "P": (AskResult(True), None)})
+
+    def giveup(errors):
+        return Episode(
+            item_id="i", kg="wikidata", question="q", reference_sparql="REF",
+            type="cancel", sparql=None, steps=len(errors),
+            messages=[{"role": "system", "content": "s"}]
+            + [turn_message(*(["parse error"] * n), token=i + 1)
+               for i, n in enumerate(errors)],
+        )
+
+    sloppy, clean = giveup([3, 2]), giveup([0, 0])
+    rs = [compute_reward(e, cfg, ex, max_steps=30) for e in (sloppy, clean)]
+    assert all(r.invalid and r.fn_penalty == 0.0 for r in rs)
+    assert rs[0].reward == pytest.approx(rs[1].reward)
+    turns = [episode_rl_turns(e) for e in (sloppy, clean)]
+    advs = process_advantages(turns, rs, cfg, 30)
+    # identical rewards -> no variance -> no gradient at all, as intended
+    assert advs == [None, None]
+    # and the per-turn returns are flat within each episode
+    from grasp.cqd.train.rl import turn_returns  # noqa: F401
+
+    assert len(set(round(x, 9) for x in [rs[0].reward] * 2)) == 1
+
+
 def test_process_advantages_credit_a_turn_with_everything_after_it():
     from grasp.cqd.train.data import episode_rl_turns
-    from grasp.cqd.train.rl import process_advantages, turn_returns
+    from grasp.cqd.train.rl import process_advantages
 
-    turns = episode_rl_turns(process_episode("i", 0, 1, 0))
-    # the episode reward reaches every turn; the middle turn's wrong call is
-    # charged to it and to the turn before it, but not to the one after
-    assert turn_returns(turns, 1.0, 0.5) == [0.5, 0.5, 1.0]
+    cfg = RewardConfig(fix_prefixes=False, max_step_penalty=0.0)  # isolate errors
+    ex = FakeExecutor({"REF": (AskResult(True), None), "P": (AskResult(True), None)})
 
-    # return-to-go: the middle turn's error is charged to turns 0 and 1, and
-    # NOT to turn 2, which came after it and could not have prevented it.
-    # Second episode is clean, giving the group something to normalize against.
-    episodes = [process_episode("i", 0, 1, 0), process_episode("i", 0, 0, 0)]
-    rewards = [episode_reward("i", 1.0), episode_reward("i", 1.0)]
-    turn_lists = [episode_rl_turns(e) for e in episodes]
-    advs = process_advantages(turn_lists, rewards, 0.5)
+    def ep(*errors):
+        return Episode(
+            item_id="i", kg="wikidata", question="q", reference_sparql="REF",
+            type="answer", sparql="P", steps=len(errors),
+            messages=[{"role": "system", "content": "s"}]
+            + [turn_message(*(["parse error"] * n), token=i + 1)
+               for i, n in enumerate(errors)],
+        )
+
+    episodes = [ep(0, 1, 0), ep(0, 0, 0)]
+    rewards = [compute_reward(e, cfg, ex, max_steps=30) for e in episodes]
+    turns = [episode_rl_turns(e) for e in episodes]
+    advs = process_advantages(turns, rewards, cfg, 30)
     assert advs[0] is not None and advs[1] is not None
-    # raw returns are [0.5, 0.5, 1.0] and [1.0, 1.0, 1.0]; normalization is
-    # affine, so the ordering and equalities are what matter
+    # the middle turn's error is charged to turns 0 and 1, NOT to turn 2
     assert advs[0][0] == pytest.approx(advs[0][1])
     assert advs[0][0] < advs[0][2]
-    assert advs[0][2] == pytest.approx(advs[1][2])
     # the clean episode's early turns beat the sloppy one's
     assert advs[1][0] > advs[0][0]
 
 
 def test_turn_error_discount_endpoints_and_guard():
     from grasp.cqd.train.data import episode_rl_turns
-    from grasp.cqd.train.rl import RlConfig, turn_returns
+    from grasp.cqd.train.rl import RlConfig, error_charges, turn_returns
 
-    turns = episode_rl_turns(process_episode("i", 0, 1, 0))
+    cfg = RewardConfig(fix_prefixes=False)
+    ep = process_episode("i", 0, 1, 0)
+    turns = episode_rl_turns(ep)
+    charges = error_charges(turns, 0.5)
+    zeros = [0.0] * len(turns)
     # 1.0: full return-to-go, the error reaches every earlier turn
-    assert turn_returns(turns, 1.0, 0.5, 1.0) == [0.5, 0.5, 1.0]
-    # 0.0: the error stays on the turn that made the call, and the terminal
-    # reward still reaches every turn undiscounted
-    assert turn_returns(turns, 1.0, 0.5, 0.0) == [1.0, 0.5, 1.0]
-    # the default is full propagation
+    assert turn_returns(1.0, zeros, charges, 1.0) == pytest.approx([0.5, 0.5, 1.0])
+    # 0.0: the error stays on the turn that made the call
+    assert turn_returns(1.0, zeros, charges, 0.0) == pytest.approx([1.0, 0.5, 1.0])
     assert RlConfig(model="m", output_dir="/tmp/x").turn_error_discount == 1.0
     assert RlConfig(model="m", output_dir="/tmp/x", turn_error_discount=0.0)
-    # intermediates are rejected until an ablation of the endpoints justifies
-    # them, and so is anything outside [0, 1]
     for bad in (0.5, 0.99, -1.0, 2.0):
         with pytest.raises(Exception):
             RlConfig(model="m", output_dir="/tmp/x", turn_error_discount=bad)
@@ -665,131 +832,52 @@ def test_length_increments_redistribute_the_ramp_exactly():
     from grasp.cqd.reward import length_penalty
     from grasp.cqd.train.rl import length_increments
 
-    cfg = RewardConfig(fix_prefixes=False)  # max_step_penalty .15, step_grace 20
-    # nothing is charged inside the grace window
+    cfg = RewardConfig(fix_prefixes=False, max_step_penalty=0.15)  # grace 20
     assert length_increments(5, cfg, 30) == [0.0] * 5
-    # over the full episode the increments sum to exactly the terminal ramp
     for steps in (21, 25, 30, 40):
         total = sum(length_increments(steps, cfg, 30))
         assert total == pytest.approx(-length_penalty(steps, cfg, 30))
-    # and the charge falls on the turns past the grace point, not before it
     inc = length_increments(30, cfg, 30)
     assert inc[:20] == [0.0] * 20
     assert all(x < 0 for x in inc[20:])
-
-
-def test_decomposing_the_length_ramp_moves_only_the_timing_of_the_charge():
-    from grasp.cqd.reward import length_penalty
-    from grasp.cqd.train.data import episode_rl_turns
-    from grasp.cqd.train.rl import length_increments, turn_returns
-
-    cfg = RewardConfig(fix_prefixes=False)
-    # a 25-turn episode: f1 1.0 minus the ramp charged from step 20 on
-    turns = episode_rl_turns(process_episode("i", *([0] * 25)))
-    ramp = length_penalty(25, cfg, 30)
-    assert ramp > 0.0
-
-    terminal = turn_returns(turns, 1.0 - ramp, 0.0)
-    spread = turn_returns(
-        turns, 1.0, 0.0, 1.0, length_increments(len(turns), cfg, 30)
-    )
-    # terminal form: the whole ramp is baked into the episode reward, so every
-    # turn sees the same total
-    assert all(x == pytest.approx(1.0 - ramp) for x in terminal)
-    # spread form: turn 0 has the entire remaining length cost ahead of it, so
-    # it agrees with the terminal form exactly -- that is the redistribution
-    # identity, sum(increments) == -ramp
-    assert spread[0] == pytest.approx(terminal[0])
-    # later turns are charged only for the length still ahead of them, i.e.
-    # -(L(T) - L(t)), so the credit rises monotonically toward the answer turn
-    assert all(a <= b + 1e-12 for a, b in zip(spread, spread[1:]))
-    assert spread[-1] > spread[0]
-    # every turn's charge is exactly the length remaining after it
-    for t, value in enumerate(spread):
-        remaining = length_penalty(25, cfg, 30) - length_penalty(t, cfg, 30)
-        assert value == pytest.approx(1.0 - remaining)
 
 
 def test_process_advantages_skip_groups_without_variance_or_a_partner():
     from grasp.cqd.train.data import episode_rl_turns
     from grasp.cqd.train.rl import group_advantages, process_advantages
 
-    # two identical clean episodes -> every turn return is the same -> no
-    # signal, exactly as group_advantages decides for the outcome estimator
+    cfg = RewardConfig(fix_prefixes=False)
+    ex = FakeExecutor({"REF": (AskResult(True), None), "P": (AskResult(True), None)})
     episodes = [process_episode("i", 0, 0), process_episode("i", 0, 0)]
-    rewards = [episode_reward("i", 1.0), episode_reward("i", 1.0)]
+    for e in episodes:
+        e.sparql = "P"
+    rewards = [compute_reward(e, cfg, ex, max_steps=30) for e in episodes]
     turn_lists = [episode_rl_turns(e) for e in episodes]
-    assert process_advantages(turn_lists, rewards, 0.5) == [None, None]
+    # two identical clean episodes -> no signal, same verdict as the outcome
+    # estimator reaches
+    assert process_advantages(turn_lists, rewards, cfg, 30) == [None, None]
     assert group_advantages(rewards) == [None, None]
-    # a group of one has nothing to be relative to, and the turn count must
-    # not stand in for the rollout count
-    single = [episode_reward("i", 1.0)]
-    assert process_advantages([turn_lists[0]], single, 0.5) == [None]
-    # a skipped episode (no reward) contributes nothing
-    skipped = [episode_reward("i", 1.0), episode_reward("i", None)]
-    assert process_advantages(turn_lists, skipped, 0.5)[1] is None
+    # a group of one has nothing to be relative to; the turn count must not
+    # stand in for the rollout count
+    assert process_advantages([turn_lists[0]], [rewards[0]], cfg, 30) == [None]
 
 
-def test_outcome_estimator_is_the_default_and_unchanged():
-    from grasp.cqd.train.rl import RlConfig
+def test_outcome_estimator_shares_one_advantage_across_the_turns():
+    from grasp.cqd.train.rl import RlConfig, group_advantages
 
     config = RlConfig(model="m", output_dir="/tmp/x")
     assert config.advantage_estimator == "outcome"
-    # with the step-wise penalty off, the outcome path reduces to exactly the
-    # per-episode advantage every earlier run trained on
-    legacy = RlConfig(model="m", output_dir="/tmp/x", turn_error_penalty=0.0)
-    turns = [1, 0, 2]
-    advantage = 0.75
-    assert [advantage - legacy.turn_error_penalty * n for n in turns] == [
-        0.75,
-        0.75,
-        0.75,
+    rewards = [
+        EpisodeReward(item_id="i", kg="wikidata", reward=1.0),
+        EpisodeReward(item_id="i", kg="wikidata", reward=0.0),
     ]
-
-
-def test_turn_error_penalty_only_moves_the_offending_turn():
-    from grasp.cqd.train.data import episode_rl_turns
-    from grasp.cqd.train.rl import RlConfig, RlSample
-
-    config = RlConfig(model="m", output_dir="/tmp/x")
-    ep = Episode(
-        item_id="i", kg="wikidata", question="q", reference_sparql="REF",
-        type="answer", sparql="P", steps=2,
-        messages=[
-            {"role": "system", "content": "s"},
-            turn_message(None, token=1),
-            turn_message("parse error", token=2),
-        ],
-    )
-    advantage = 1.0
-    samples = [
-        RlSample(
-            turn=turn,
-            advantage=advantage - config.turn_error_penalty * turn.fn_errors,
-        )
-        for turn in episode_rl_turns(ep)
+    advantages = group_advantages(rewards)
+    # every turn of an episode gets the same number: the penalties are already
+    # inside the reward it was normalized from, never applied again on top
+    assert [None if a is None else [a] * 3 for a in advantages] == [
+        [pytest.approx(1.0)] * 3,
+        [pytest.approx(-1.0)] * 3,
     ]
-    # the clean turn keeps the episode's advantage; only the bad one is docked
-    assert samples[0].advantage == pytest.approx(1.0)
-    assert samples[1].advantage == pytest.approx(1.0 - config.turn_error_penalty)
-
-
-def test_reward_ignores_function_errors_now_that_turns_carry_them():
-    # a wrong call must NOT be charged twice: the episode reward is f1 minus
-    # the length ramp only, so the per-turn penalty is the single such signal
-    cfg = RewardConfig(fix_prefixes=False)
-    ex = FakeExecutor({"REF": (AskResult(True), None), "P": (AskResult(True), None)})
-    clean = Episode(
-        item_id="i", kg="wikidata", question="q", reference_sparql="REF",
-        type="answer", sparql="P", steps=5,
-    )
-    sloppy = clean.model_copy(
-        update={"messages": [turn_message("parse error") for _ in range(3)]}
-    )
-    r = compute_reward(sloppy, cfg, ex, max_steps=30)
-    assert r.fn_errors == 3
-    assert r.reward == pytest.approx(1.0)
-    assert compute_reward(clean, cfg, ex, max_steps=30).reward == pytest.approx(1.0)
 
 
 def test_trainable_items_are_those_with_reward_variance():

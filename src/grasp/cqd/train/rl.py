@@ -55,8 +55,12 @@ class RlConfig(BaseModel):
     # loop shape
     num_rounds: int = 10
     items_per_round: int = 8
-    # rollouts per item (the GRPO group size)
-    group_size: int = 4
+    # rollouts per item (the GRPO group size). 8, not 4: the advantage divides
+    # by a std estimated from exactly this many samples, and 4 makes that
+    # estimate very noisy. The comparable KGQA RL work uses 8 (Search-on-Graph-R1)
+    # to 16 (Learning to Refine); 8 doubles rollout cost per round for a much
+    # better-conditioned normalizer.
+    group_size: int = 8
     # optimization
     learning_rate: float = 2e-5
     # PPO clip bounds. We ran DAPO "clip-higher" (0.2/0.28) and the Qwen3-4B
@@ -79,20 +83,12 @@ class RlConfig(BaseModel):
     # silently change a run, and so the two can be ablated against each other
     # on the same pool with the outcome arm bit-identical to the old numbers.
     advantage_estimator: Literal["outcome", "process"] = "outcome"
-    # STEP-WISE penalty per wrong function call, charged to the TURN that made
-    # it rather than to the episode, which would give every turn the same
-    # advantage and never say which call was bad. Mechanically checkable
-    # mistakes (unknown IRIs under know_before_use, unparseable SPARQL, bad
-    # arguments), so no process reward model is needed; this is the rule-based
-    # end of the step-wise reward literature. Keep it SMALL: it taxes
-    # exploratory probing, and unlike group-relative advantages it is not
-    # potential-based, so it does shift the optimum (Ng et al. 1999).
-    # NB the unit depends on the estimator -- ADVANTAGE units under "outcome"
-    # (subtracted after normalization), REWARD units under "process"
-    # (subtracted before return-to-go). Both are O(1) here, so 0.2 is sane
-    # either way, but a value tuned in one mode does not transfer to the other.
-    turn_error_penalty: float = 0.2
-    # how far a wrong call propagates BACKWARDS, under "process" only. The
+    # how far a wrong call propagates BACKWARDS, under "process" only. Both
+    # estimators charge the SAME reward components (f1, the length ramp, the
+    # function-error term, all defined in RewardConfig); "process" only differs
+    # in distributing the two penalties across the turns that earned them
+    # instead of lumping them into the terminal scalar. This is the sole knob
+    # that changes what is charged rather than where. The
     # terminal reward is never discounted: in KGQA the early grounding turns
     # causally determine whether the final query is right, so decaying their
     # outcome credit would starve exactly the turns that decide the episode.
@@ -105,14 +101,6 @@ class RlConfig(BaseModel):
     # how far error credit should travel, and the two endpoints bracket it.
     # Widen this only once a run shows the answer lies between them.
     turn_error_discount: float = 1.0
-    # pay the length ramp out as per-turn increments instead of one terminal
-    # charge, under "process" only. EXACT redistribution: the increments sum to
-    # the same -L(T) the episode reward already carries, so trajectory returns
-    # are unchanged and no policy-invariance argument is needed (category (a),
-    # docs/11-process-supervision.md). What changes is that a turn is charged
-    # for the length still ahead of it, so early turns bear the cost of the
-    # episode being long and the answering turn bears almost none.
-    decompose_length_penalty: bool = False
     grad_accumulation: int = 8
     max_grad_norm: float = 1.0
     # skip turns longer than this many tokens (prompt + completion)
@@ -219,37 +207,43 @@ def group_advantages(rewards: list) -> list[float | None]:
     return advantages
 
 
-# per-turn returns for process supervision, keeping the two reward channels
-# separate because they should propagate differently:
+# per-turn returns for process supervision. Same reward components as the
+# outcome estimator, only distributed:
 #
-#   return(t) = episode_reward + sum_{k >= t} discount^(k-t) * penalty(k)
+#   return(t) = base + sum_{k>=t} length_increment(k)
+#                    + sum_{k>=t} discount^(k-t) * error_charge(k)
 #
-# The episode reward (f1, the length ramp, the give-up / truncation penalties,
-# all exactly as compute_reward defines them) reaches EVERY turn undiscounted.
-# A wrong call decays backwards with turn_error_discount: 1.0 gives full
-# return-to-go, 0.0 keeps it on the turn that made the call.
-#
-# decompose_length_penalty adds a third channel, redistributing the length ramp
-# into per-turn increments; any further per-turn term goes in the same place.
+# `base` is the episode reward with BOTH penalties added back, so it is the bare
+# f1 term; the increments and charges sum to exactly the penalties that were
+# subtracted, leaving the trajectory return identical to the outcome estimator's
+# (docs/11-process-supervision.md S3a). The length channel is undiscounted (it
+# is an outcome-channel term); the error channel decays backwards.
 def turn_returns(
-    turns: list[RlTurn],
-    episode_reward: float,
-    turn_error_penalty: float,
+    base: float,
+    length_increments: list[float],
+    error_charges: list[float],
     turn_error_discount: float = 1.0,
-    length_increments: list[float] | None = None,
 ) -> list[float]:
-    returns = [0.0] * len(turns)
+    returns = [0.0] * len(length_increments)
     running_error = 0.0
     running_length = 0.0
-    for t in reversed(range(len(turns))):
-        running_error = (
-            -turn_error_penalty * turns[t].fn_errors
-            + turn_error_discount * running_error
-        )
-        if length_increments is not None:
-            running_length += length_increments[t]
-        returns[t] = episode_reward + running_length + running_error
+    for t in reversed(range(len(returns))):
+        running_error = error_charges[t] + turn_error_discount * running_error
+        running_length += length_increments[t]
+        returns[t] = base + running_length + running_error
     return returns
+
+
+# split an episode's function-error penalty across the turns that caused it,
+# proportional to each turn's error count. Proportional rather than per-error so
+# the parts sum to EXACTLY the capped episode total (see
+# reward.fn_error_penalty) -- otherwise the two estimators would charge
+# different amounts whenever the cap binds.
+def error_charges(turns: list[RlTurn], fn_penalty: float) -> list[float]:
+    total = sum(turn.fn_errors for turn in turns)
+    if total == 0 or fn_penalty <= 0.0:
+        return [0.0] * len(turns)
+    return [-fn_penalty * turn.fn_errors / total for turn in turns]
 
 
 # EXACT redistribution of the length ramp into per-turn increments (category
@@ -290,31 +284,38 @@ def length_increments(
 def process_advantages(
     episode_turns: list[list[RlTurn]],
     rewards: list,
-    turn_error_penalty: float,
+    reward_config: RewardConfig,
+    max_steps: int,
     turn_error_discount: float = 1.0,
-    decompose_length_penalty: bool = False,
-    reward_config: RewardConfig | None = None,
-    max_steps: int = 0,
 ) -> list[list[float] | None]:
     returns: list[list[float] | None] = []
     for turns, reward in zip(episode_turns, rewards):
         if reward.reward is None or not turns:
             returns.append(None)
             continue
-        base = reward.reward
-        increments = None
-        if decompose_length_penalty and reward_config is not None:
-            # add the ramp back so `base` is ramp-free, then pay it out per
-            # turn; the two sum to the same episode return either way
-            base += reward.step_penalty
-            increments = length_increments(len(turns), reward_config, max_steps)
+        if reward.invalid:
+            # give-ups, broken queries and step-limit truncations are FLAT by
+            # design: among failures, a short or clean one must not outscore a
+            # long or messy one, or the policy learns to quit early. Nothing to
+            # distribute -- every turn carries the same episode reward.
+            returns.append([reward.reward] * len(turns))
+            continue
+        # add both penalties back to recover the bare f1 term, then pay them
+        # out per turn. The length ramp is scaled by f1 exactly as
+        # compute_reward scales it, so the distributed totals equal the amounts
+        # the outcome estimator subtracted and the trajectory return is
+        # identical either way.
+        f1 = reward.f1 or 0.0
+        base = reward.reward + f1 * reward.step_penalty + reward.fn_penalty
+        increments = [
+            f1 * inc for inc in length_increments(len(turns), reward_config, max_steps)
+        ]
         returns.append(
             turn_returns(
-                turns,
                 base,
-                turn_error_penalty,
-                turn_error_discount,
                 increments,
+                error_charges(turns, reward.fn_penalty),
+                turn_error_discount,
             )
         )
 
@@ -919,20 +920,15 @@ def train_rl(
             turn_advantages = process_advantages(
                 episode_turns,
                 rewards,
-                config.turn_error_penalty,
-                config.turn_error_discount,
-                config.decompose_length_penalty,
                 reward_config,
                 rollout_config.max_steps,
+                config.turn_error_discount,
             )
         else:
+            # the episode's single advantage, shared by all of its turns; the
+            # penalties are already inside the reward it was normalized from
             turn_advantages = [
-                None
-                if advantage is None
-                else [
-                    advantage - config.turn_error_penalty * turn.fn_errors
-                    for turn in turns
-                ]
+                None if advantage is None else [advantage] * len(turns)
                 for advantage, turns in zip(group_advantages(rewards), episode_turns)
             ]
 

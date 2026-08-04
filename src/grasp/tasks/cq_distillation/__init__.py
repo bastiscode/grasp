@@ -68,13 +68,21 @@ def rules() -> list[str]:
         "avoid near-duplicates of previous proposals.",
         "Questions must read as a real user would phrase them and must not "
         "mention SPARQL syntax or gratuitously expose implementation details.",
-        "You can make a task easier without simplifying the reference query "
-        "by adding hints to the question instead. Weave in concrete guidance "
-        "the student cannot be expected to infer, such as a specific IRI it "
-        "kept failing to find, a related example, or a description of a "
-        "special command, SERVICE, or knowledge-graph idiosyncrasy, phrased "
-        "as an informed user naturally would. Prefer this over lowering "
-        "difficulty when the reference query is worth keeping intact.",
+        "Adjust difficulty by simplifying the reference query, NOT by naming "
+        "the entities and properties the question is about. The student has "
+        "search functions for those and learning to wield them is most of the "
+        "skill being trained, so an IRI handed over teaches nothing that "
+        "transfers to the next question and reads like nothing a real user "
+        "would ask.",
+        "You MAY explain a knowledge-graph construction pattern the student "
+        "cannot reasonably discover on its own -- how normalized quantity "
+        "values are reached, that qualifiers hang off statement nodes, an "
+        "endpoint-specific service or function. State such a pattern "
+        "GENERICALLY, with placeholders rather than the question's own IRIs "
+        "(e.g. \"normalized quantities are reached via "
+        "p:<prop>/psn:<prop>/wikibase:quantityAmount\"), so the student still "
+        "has to find the properties itself. Showing the shape of a solution "
+        "is teaching; filling it in for the student is not.",
         "Phrase questions so that the expected result is uniquely "
         "determined: name the information the answer should contain "
         "(e.g. names, heights, counts) instead of leaving it implicit, and "
@@ -107,8 +115,7 @@ non-empty, sensible result.
 You should follow a step-by-step approach:
 1. Analyze the CQ and, if given, the previous pair and the student traces. \
 If traces are given, judge how the student did: if it failed or struggled, \
-either propose easier variants that isolate what it got wrong or keep the \
-target and scaffold it with hints in the question (see the rules); if it \
+propose easier variants that isolate what it got wrong; if it \
 succeeded with ease, propose harder variants. Without traces, propose fresh variations of \
 the CQ; if no pair was distilled from the CQ yet, the first proposal should \
 typically be a faithful natural language phrasing of the CQ query itself.

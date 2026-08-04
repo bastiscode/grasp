@@ -49,19 +49,40 @@ class RewardConfig(BaseModel):
     # soft penalties below, which are all expressed as factors of it.
     w_invalid: float = 1.0
     # soft length penalty on VALID episodes: a linear ramp from 0 at
-    # step_grace to its max at the rollout step cap (passed to compute_reward,
-    # the single source of truth for max_steps), to prefer concise solutions
-    # without overriding f1. max_step_penalty is a FACTOR in [0, 1]: the max
-    # length penalty is max_step_penalty * w_invalid, i.e. a fraction of the
-    # give-up penalty, so a factor < 1 guarantees even a max-length
-    # valid-but-wrong answer stays above a give-up (no abstention incentive).
-    # No function error term HERE. Bad calls are penalized per TURN, on the
-    # advantage of the turn that made them (RlConfig.turn_error_penalty): an
-    # episode-level sum would spread the same advantage over every turn, so the
-    # model learns "episodes with bad calls score lower" without ever learning
-    # WHICH call was bad. fn_errors stays on EpisodeReward as a diagnostic.
-    max_step_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
+    # step_grace to max_step_penalty * w_invalid at the rollout step cap
+    # (passed to compute_reward, the single source of truth for max_steps),
+    # scaled by f1 (see compute_reward).
+    #
+    # DEFAULT 0 (OFF). Every comparable KGQA RL system that charges for length
+    # has BINARY correctness -- Search-on-Graph-R1 (multiplicative, up to a 70%
+    # discount), Learning to Refine (0.02/turn), DAPO (soft overlong
+    # punishment) -- where there is no partial credit to trade away, so the
+    # term can only reorder within the correct set or within the wrong set. The
+    # one system with partial-credit F1, KG-R1, has no length penalty at all.
+    # With our f1 a length term buys a genuine f1-for-brevity exchange rate
+    # (at 0.15, an answer could win with up to 15% lower f1 by being maximally
+    # concise), which feeds the partial-solving attractor this project already
+    # sits in. The step BUDGET is enforced as a hard constraint instead, by
+    # w_step_limit: run out and the episode is invalid, with no f1 to trade.
+    # Turn it on only once accuracy stops being the binding constraint, and
+    # then consider setting step_grace from data the way SoG-R1 does (the 75th
+    # percentile of observed turn counts) rather than by hand.
+    max_step_penalty: float = Field(default=0.0, ge=0.0, le=1.0)
     step_grace: int = 20
+    # per-error penalty for function calls the POLICY got wrong (unknown IRIs
+    # under know_before_use, unparseable SPARQL, bad arguments -- server
+    # failures excluded, see client_fn_errors), as a factor of w_invalid.
+    # Lives HERE, in reward units, so both advantage estimators charge the same
+    # thing: "outcome" sums it into the episode reward, "process" redistributes
+    # the identical total across the turns that earned it. Putting it on the
+    # advantage instead (as an earlier version did) made the magnitude mean
+    # different things per estimator and silently confounded the comparison.
+    w_fn_error: float = Field(default=0.05, ge=0.0, le=1.0)
+    # ceiling on the error term alone, as a factor of w_invalid. With
+    # max_step_penalty this bounds the combined soft penalty below w_invalid by
+    # construction, so a valid-but-wrong answer can never sink to or below a
+    # give-up however sloppily it was reached (no abstention incentive).
+    max_fn_penalty: float = Field(default=0.35, ge=0.0, lt=1.0)
     # penalty for burning the whole step budget without ever calling answer or
     # cancel. Above w_invalid so running out of steps ranks strictly below a
     # deliberate give-up: both fail, but the truncation also wasted the budget
@@ -111,6 +132,12 @@ class EpisodeReward(BaseModel):
     # subtracted, so adding it back gives the ramp-free base (see
     # rl.turn_returns and docs/11-process-supervision.md S3a)
     step_penalty: float = 0.0
+    # the function-error penalty charged to this episode (0 for invalid
+    # outcomes, which are flat). Recorded for the same reason as step_penalty:
+    # the process estimator adds both back to recover the bare f1 base before
+    # redistributing them per turn, so the two estimators charge an identical
+    # total and cannot double-count
+    fn_penalty: float = 0.0
     # client-attributable function call errors only
     fn_errors: int = 0
     # no executable final query
@@ -135,6 +162,15 @@ def length_penalty(steps: int, config: "RewardConfig", max_steps: int) -> float:
         config.max_step_penalty
         * config.w_invalid
         * min(1.0, max(0, steps - config.step_grace) / ramp)
+    )
+
+
+# the function-error penalty for an episode: per-error, capped, as a factor of
+# w_invalid. Capped rather than unbounded so max_step_penalty + this stays below
+# w_invalid, keeping a valid-but-wrong answer strictly above a give-up
+def fn_error_penalty(fn_errors: int, config: "RewardConfig") -> float:
+    return (
+        min(config.w_fn_error * fn_errors, config.max_fn_penalty) * config.w_invalid
     )
 
 
@@ -286,13 +322,6 @@ def compute_reward(
         reward.reward = -config.w_step_limit
         return reward
 
-    # soft length penalty, VALID outcomes only (see the invalid branches): a
-    # linear ramp from 0 at step_grace to max_step_penalty*w_invalid at the
-    # step cap (max_steps). A give-up scores -w_invalid, so with the factor
-    # < 1 even a max-length valid-but-wrong answer stays strictly above it.
-    step_penalty = length_penalty(reward.steps, config, max_steps)
-    reward.step_penalty = step_penalty
-
     if episode.sparql is None:
         # No executable final query at all: an explicit cancel without a
         # best attempt, an answer without a query, a step-limit hit, or a
@@ -336,7 +365,32 @@ def compute_reward(
         return reward
 
     reward.f1 = f1_score(pred, target, config.exact_after)
-    reward.reward = config.w_f1 * reward.f1 - step_penalty
+    # soft penalties, charged HERE and only here -- every invalid branch above
+    # already returned with a flat reward and both penalties left at 0.
+    #
+    # The LENGTH ramp is SCALED BY f1, so it only ever tie-breaks among answers
+    # that got something right (Search-on-Graph-R1 makes the same term
+    # multiplicative for the same reason). Ungated it would mean a short wrong
+    # answer beats a long wrong answer, i.e. pay the policy to quit early --
+    # the abstention attractor this project has collapsed into twice. Scaling
+    # rather than gating on a threshold keeps reward strictly increasing in f1
+    # (d/df1 = w_f1 - step_penalty > 0): an `f1 > 0` or `f1 == 1` switch would
+    # make a slightly-right answer score BELOW a completely wrong one, or a
+    # perfect one below a 99% one, and the policy finds such cliffs.
+    #
+    # The ERROR term is deliberately NOT scaled. Making fewer malformed calls
+    # is not the same as taking fewer steps, so it creates no quit-early
+    # pressure; the gradient it leaves among failures points at "issue
+    # well-formed calls", which is the one that took execution failures from
+    # 57% to negligible in the Learning to Refine results. It is capped
+    # (max_fn_penalty) so a valid-but-wrong answer still beats a give-up.
+    reward.step_penalty = length_penalty(reward.steps, config, max_steps)
+    reward.fn_penalty = fn_error_penalty(reward.fn_errors, config)
+    reward.reward = (
+        config.w_f1 * reward.f1
+        - reward.f1 * reward.step_penalty
+        - reward.fn_penalty
+    )
     return reward
 
 
