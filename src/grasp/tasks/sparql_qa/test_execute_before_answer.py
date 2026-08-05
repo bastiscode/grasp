@@ -85,7 +85,7 @@ def test_answering_without_executing_is_rejected():
     t = task()
     with pytest.raises(FunctionCallException) as e:
         t.call_function("answer", answer_args(), set(), None)
-    assert "not executed immediately before" in str(e.value)
+    assert "has never been executed" in str(e.value)
     # rejected means the loop must NOT stop, so the model gets another round
     assert t.answer_rejected
     assert not t.done("answer")
@@ -105,7 +105,7 @@ def test_executing_a_different_query_is_rejected():
     executed(t, other)
     with pytest.raises(FunctionCallException) as e:
         t.call_function("answer", answer_args(), set(), None)
-    assert "not executed immediately before" in str(e.value)
+    assert "not the one you just executed" in str(e.value)
     assert t.answer_rejected
 
 
@@ -133,23 +133,50 @@ def test_an_intervening_non_execute_call_invalidates_the_execute():
     t.messages.append(
         Message.assistant(Response(id="r2", message="checking", tool_calls=[search]))
     )
-    with pytest.raises(FunctionCallException):
+    with pytest.raises(FunctionCallException) as e:
         t.call_function("answer", answer_args(Q), set(), None)
+    # and it must say so: telling a model that DID run the query that it was
+    # never executed reads as false and gives it nothing to act on
+    msg = str(e.value)
+    assert "You did execute" in msg and "another function was called since" in msg
 
 
-def test_a_failed_execute_does_not_count():
-    # reading the trace (rather than being told an execute happened) is what
-    # makes this checkable: the model never saw a result, so it has verified
-    # nothing
+def test_a_client_side_execute_error_does_not_count():
+    # the model's own mistake: it never saw a result, and re-running a fixed
+    # query is a real path forward, so make it do that
     t = task()
-    executed(t, Q, error="SPARQL execution failed in 0.4s: timeout")
-    with pytest.raises(FunctionCallException):
+    executed(t, Q, error="Failed to parse SPARQL query: unexpected token")
+    with pytest.raises(FunctionCallException) as e:
         t.call_function("answer", answer_args(), set(), None)
+    assert "returned an error" in str(e.value)
+
+
+def test_a_backend_timeout_does_NOT_block_the_answer():
+    # not the model's mistake, and re-running usually times out again -- the
+    # gate must not trap the episode in a retry loop it cannot escape
+    t = task()
+    executed(t, Q, error="SPARQL query timed out after 30s")
+    assert t.call_function("answer", answer_args(), set(), None) == "Stopping"
+
+
+def test_a_server_error_does_NOT_block_the_answer():
+    t = task()
+    executed(t, Q, error="503 Server Error: Service Unavailable")
+    assert t.call_function("answer", answer_args(), set(), None) == "Stopping"
+
+
+def test_a_tolerated_error_still_has_to_be_the_right_query():
+    # tolerating backend failures must not become "any timeout unlocks answer"
+    t = task()
+    executed(t, "SELECT ?z WHERE { ?z ?p ?o }", error="SPARQL query timed out")
+    with pytest.raises(FunctionCallException) as e:
+        t.call_function("answer", answer_args(Q), set(), None)
+    assert "not the one you just executed" in str(e.value)
 
 
 def test_a_failed_execute_in_between_also_invalidates():
     # same positional rule: whatever went wrong with the last execute, the
-    # thing directly above the answer is now an error and not Q's result
+    # thing directly above the answer is a different query
     t = task()
     executed(t, Q)
     executed(t, "SELECT ?z WHERE { ?z ?p ?o }", error="timeout")
@@ -207,7 +234,7 @@ def test_executed_queries_do_not_leak_between_episodes():
     first = task()
     executed(first, Q)
     second = task()
-    assert second.just_executed_query() is None
+    assert second.dispatched_tool_calls() == []
     with pytest.raises(FunctionCallException):
         second.call_function("answer", answer_args(), set(), None)
 

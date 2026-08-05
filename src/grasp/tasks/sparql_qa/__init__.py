@@ -26,6 +26,7 @@ from grasp.utils import (
     format_enumerate,
     format_notes,
     format_section,
+    is_server_error,
 )
 
 
@@ -497,14 +498,8 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         # Empty when the task is driven directly (tests, other callers).
         self.messages: list[Message] = []
 
-    def just_executed_query(self) -> str | None:
-        """Normalized query of the tool call IMMEDIATELY preceding this one.
-
-        None unless that call was an `execute` that succeeded -- a search in
-        between, or an execute that errored, both count as nothing executed.
-        Strictly positional on purpose: the gate exists so the model looks at a
-        result before deciding, and a result is most likely to be attended to
-        when it is the last thing in the context before the decision.
+    def dispatched_tool_calls(self) -> list[ToolCall]:
+        """Tool calls of this episode that have actually run, in order.
 
         Read off the trace rather than recorded via a callback: `execute` is
         dispatched inside grasp.functions.call_function and never reaches
@@ -513,26 +508,27 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         the list, with each tool call's result and error filled in in place.
         Calls with neither set have not been dispatched yet: the stopping call
         being checked right now, plus anything the model emitted after it in
-        the same response. Skipping those is what lets a model emit `execute`
+        the same response. Dropping those is what lets a model emit `execute`
         and `answer` together, since the execute runs first.
         """
-        for message in reversed(self.messages):
+        out: list[ToolCall] = []
+        for message in self.messages:
             content = message.content
             if isinstance(content, str):
                 continue
 
-            for tool_call in reversed(content.tool_calls):
+            for tool_call in content.tool_calls:
                 if tool_call.result is None and tool_call.error is None:
                     continue
 
-                if tool_call.name != "execute" or tool_call.error is not None:
-                    return None
+                out.append(tool_call)
 
-                return self.normalize_query(
-                    tool_call.args.get("kg"), tool_call.args.get("sparql")
-                )
+        return out
 
-        return None
+    def executed_query(self, tool_call: ToolCall) -> str | None:
+        return self.normalize_query(
+            tool_call.args.get("kg"), tool_call.args.get("sparql")
+        )
 
     def normalize_query(self, kg: str | None, sparql: str | None) -> str | None:
         """Canonical form for comparing two SPARQL strings.
@@ -574,25 +570,69 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         This makes the instruction enforceable, no more: it guarantees the model
         saw real results for the exact query it submits. It cannot guarantee the
         model reasons well about what it saw -- that is a capability question.
+
+        Each way of failing gets its OWN message. A single message for all of
+        them tells a model that did execute the query "it was not executed",
+        which reads as false and gives it nothing to act on.
         """
         submitted = self.normalize_query(kg, sparql)
+        # what the model should do next, appended to every rejection below
+        habit = (
+            f"Always run the exact query you intend to submit, look at what "
+            f"comes back and confirm it is plausible and what you expected, "
+            f"then call {fn_name} next with that query."
+        )
 
         if submitted is None:
             raise FunctionCallException(
                 f"""\
 The SPARQL query passed to {fn_name} could not be parsed, so it cannot be \
-checked against what you executed. Fix the query, execute it to confirm it \
-returns a plausible result, then call {fn_name} again."""
+checked against what you executed. Fix the query and execute it first. {habit}"""
             )
 
-        if submitted != self.just_executed_query():
+        dispatched = self.dispatched_tool_calls()
+        previous = dispatched[-1] if dispatched else None
+
+        # a) the call right before was not an execute at all
+        if previous is None or previous.name != "execute":
+            ran_earlier = any(
+                call.name == "execute" and self.executed_query(call) == submitted
+                for call in dispatched
+            )
+            if ran_earlier:
+                raise FunctionCallException(
+                    f"""\
+You did execute the SPARQL query passed to {fn_name}, but another function was \
+called since, so its result is no longer the last thing you saw. Execute the \
+query again. {habit}"""
+                )
+
             raise FunctionCallException(
                 f"""\
-The SPARQL query passed to {fn_name} was not executed immediately before, so \
-its result is unverified. Execute this exact query, check that the result is \
-plausible and actually answers the question (e.g. that it returns the items \
-asked for and not intermediate nodes), then call {fn_name} as your very next \
-function call."""
+The SPARQL query passed to {fn_name} has never been executed, so nothing \
+confirms what it returns. {habit}"""
+            )
+
+        # b) an execute ran, but of some other query
+        if self.executed_query(previous) != submitted:
+            raise FunctionCallException(
+                f"""\
+The SPARQL query passed to {fn_name} is not the one you just executed, so its \
+result is unverified. The query you submit must be exactly the query you \
+ran. {habit}"""
+            )
+
+        # c) the right query ran but failed. A backend timeout or 5xx is not
+        # the model's mistake and re-running usually fails the same way, so
+        # accept it rather than trapping the episode in a retry loop -- the
+        # answer is still scored on its own merits. A client-side error (bad
+        # syntax, unknown IRI) is the model's to fix.
+        if previous.error is not None and not is_server_error(previous.error):
+            raise FunctionCallException(
+                f"""\
+Your execution of the SPARQL query passed to {fn_name} returned an error, so \
+you have not seen a result for it. Fix the query and execute it \
+successfully. {habit}"""
             )
 
     def system_information(self) -> str:
