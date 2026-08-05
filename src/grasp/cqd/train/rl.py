@@ -871,6 +871,15 @@ def train_rl(
             learnability_half_life=rollout_config.learnability_half_life,
             target_competence=rollout_config.sample_target_competence,
             new_fraction=new_fraction,
+            # seeded per round (not just once) so the draw still varies round to
+            # round, but is REPRODUCIBLE across runs sharing config.seed -- e.g.
+            # two credit-assignment arms on the same frozen pool draw the exact
+            # same item sequence, so any measured difference is attributable to
+            # credit assignment and not to which random items each arm happened
+            # to see. Only removes THIS source of divergence: competence and
+            # learnability are recorded per-arm, so the weighted (non-new) draws
+            # still diverge once training outcomes differ.
+            seed=config.seed + round_num,
         )
 
         episodes: list = []
