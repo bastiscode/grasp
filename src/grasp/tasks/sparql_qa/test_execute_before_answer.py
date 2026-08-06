@@ -239,19 +239,34 @@ def test_executed_queries_do_not_leak_between_episodes():
         second.call_function("answer", answer_args(), set(), None)
 
 
-def test_cancel_is_never_gated_even_with_a_best_attempt():
-    # deliberate: a model calling cancel has run out of ideas, so rejecting it
-    # cannot yield a verified query -- it only burns steps until the limit,
-    # which scores worse than an honest give-up. best_attempt is explicitly the
-    # model's unverified closest shot.
+def test_cancel_with_a_best_attempt_is_gated_too():
+    # best_attempt earns f1 exactly like an answer, so leaving cancel open lets
+    # RL route around the gate instead of learning to execute
     t = task()
     args = {"explanation": "giving up", "best_attempt": {"kg": "wikidata", "sparql": Q}}
-    assert t.call_function("cancel", args, set(), None) == "Stopping"
+    with pytest.raises(FunctionCallException) as e:
+        t.call_function("cancel", args, set(), None)
+    assert t.answer_rejected
+    assert not t.done("cancel")
+    # the way out must be spelled out, or a stuck model has nowhere to go
+    assert "without a best attempt" in str(e.value)
+
+
+def test_cancel_without_a_best_attempt_is_always_allowed():
+    # the escape hatch that makes gating cancel safe: a model that cannot get
+    # its query to run can still stop cleanly, it just earns no f1 for it
+    t = task()
+    assert t.call_function("cancel", {"explanation": "no idea"}, set(), None) == "Stopping"
     assert not t.answer_rejected
     assert t.done("cancel")
-    # and a cancel without a best attempt has no query at all
-    t2 = task()
-    assert t2.call_function("cancel", {"explanation": "no idea"}, set(), None) == "Stopping"
+
+
+def test_cancel_with_an_executed_best_attempt_is_accepted():
+    t = task()
+    executed(t, Q)
+    args = {"explanation": "close enough", "best_attempt": {"kg": "wikidata", "sparql": Q}}
+    assert t.call_function("cancel", args, set(), None) == "Stopping"
+    assert t.done("cancel")
 
 
 def test_unparseable_submitted_query_is_rejected_with_a_parse_message():

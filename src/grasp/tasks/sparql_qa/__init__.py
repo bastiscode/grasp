@@ -498,19 +498,11 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         # Empty when the task is driven directly (tests, other callers).
         self.messages: list[Message] = []
 
+    # tool calls of this episode that have actually run, in order. Neither
+    # result nor error set means not dispatched yet: the stopping call being
+    # checked now and anything after it in the same response. Skipping those
+    # is what lets a model emit `execute` and `answer` together.
     def dispatched_tool_calls(self) -> list[ToolCall]:
-        """Tool calls of this episode that have actually run, in order.
-
-        Read off the trace rather than recorded via a callback: `execute` is
-        dispatched inside grasp.functions.call_function and never reaches
-        call_function below, but by the time a stopping call is dispatched the
-        assistant message holding it -- and every earlier one -- is already in
-        the list, with each tool call's result and error filled in in place.
-        Calls with neither set have not been dispatched yet: the stopping call
-        being checked right now, plus anything the model emitted after it in
-        the same response. Dropping those is what lets a model emit `execute`
-        and `answer` together, since the execute runs first.
-        """
         out: list[ToolCall] = []
         for message in self.messages:
             content = message.content
@@ -530,14 +522,10 @@ class SparqlQaTask(GraspTask, FeedbackTask):
             tool_call.args.get("kg"), tool_call.args.get("sparql")
         )
 
+    # canonical form for comparing two SPARQL strings: parsing drops comments
+    # and whitespace, fix_prefixes makes `wd:Q42` and the full IRI compare
+    # equal. None when absent or unparseable, which callers treat as no match.
     def normalize_query(self, kg: str | None, sparql: str | None) -> str | None:
-        """Canonical form for comparing two SPARQL strings.
-
-        Parsing drops comments and all whitespace differences for free, and
-        fix_prefixes first resolves prefixed names against the kg's prefix map
-        so `wd:Q42` and the full IRI compare equal. Returns None when the query
-        is absent or unparseable, which the caller treats as "no match".
-        """
         if not sparql:
             return None
 
@@ -554,34 +542,23 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         except Exception:
             return None
 
+    # require the submitted query to be the one just executed. The prompt says
+    # to do this but nothing enforced it, and know_before_answer does not: it
+    # is satisfied by IRIs seen in search results, so a model can ground every
+    # identifier and still submit a query it never ran. Each failure gets its
+    # own message -- one message for all of them tells a model that did run
+    # the query otherwise.
     def check_executed(self, fn_name: str, kg: str, sparql: str) -> None:
-        """Require the submitted query to be the one most recently executed.
-
-        The prompt already instructs the model to execute its final query and
-        sanity-check the result before answering, but nothing enforced it: the
-        know-before-answer gate is satisfied by IRIs seen in SEARCH results, so
-        a model can ground every identifier and still answer a query it never
-        ran. WQSP traces showed exactly that -- 57/60 episodes of a trained
-        checkpoint answered without a single execute, and the two multi-hop
-        failures inspected both submitted a plausible-looking direct property
-        where the reference went through a Freebase event node, which one look
-        at the result (a bare record id instead of a name) would have exposed.
-
-        This makes the instruction enforceable, no more: it guarantees the model
-        saw real results for the exact query it submits. It cannot guarantee the
-        model reasons well about what it saw -- that is a capability question.
-
-        Each way of failing gets its OWN message. A single message for all of
-        them tells a model that did execute the query "it was not executed",
-        which reads as false and gives it nothing to act on.
-        """
         submitted = self.normalize_query(kg, sparql)
-        # what the model should do next, appended to every rejection below
+        # appended to every rejection. cancel also gets told it may drop the
+        # best attempt, the exit that keeps a stuck model from being trapped.
         habit = (
             f"Always run the exact query you intend to submit, look at what "
             f"comes back and confirm it is plausible and what you expected, "
             f"then call {fn_name} next with that query."
         )
+        if fn_name == "cancel":
+            habit += " If you cannot get the query to run, call cancel without a best attempt instead."
 
         if submitted is None:
             raise FunctionCallException(
@@ -666,10 +643,8 @@ successfully. {habit}"""
         self.answer_rejected = False
         task_kwargs = self.config.task_kwargs.get("sparql-qa", {})
         know_before_answer = task_kwargs.get("know_before_answer", True)
-        # opt-in, unlike know_before_answer: this gate rejects roughly 95% of
-        # first answers from a checkpoint trained without it, so defaulting it
-        # on would silently change every existing sparql-qa caller and would
-        # force a baseline arm to disable it explicitly.
+        # opt-in, unlike know_before_answer: too invasive to default on for
+        # callers that never asked for it.
         execute_before_answer = task_kwargs.get("execute_before_answer", False)
         result = "Stopping"
 
@@ -698,22 +673,19 @@ successfully. {habit}"""
         # Both gates raise FunctionCallException to force another round rather
         # than stopping, so the model sees the reason and can act on it.
         #
-        # KNOWN IS CHECKED FIRST, deliberately. Unknown IRIs are the more
-        # fundamental defect, and `execute` enforces know_before_use itself, so
-        # telling a model to execute a query built on identifiers it never saw
-        # just routes it to the same complaint one wasted step later. It also
-        # keeps the error a model saw first before the execute gate existed.
+        # known first: `execute` enforces know_before_use itself, so telling a
+        # model to run a query built on unknown IRIs just routes it to the
+        # same complaint one step later.
         try:
             if know_before_answer:
                 # all non-common-prefix IRIs must be known from the trace
                 check_known(manager, sparql, known)
 
-            # answer only, never cancel: a model calling cancel has run out of
-            # ideas, so rejecting it cannot produce a verified query -- it just
-            # pushes the episode into the step limit, which scores worse than
-            # an honest give-up. best_attempt is by definition the model's
-            # unverified closest shot, so demanding verification is pointless.
-            if execute_before_answer and fn_name == "answer":
+            # BOTH answer and cancel: best_attempt earns f1 just like an
+            # answer, so gating only answer lets RL route around the gate by
+            # cancelling instead. Traps nobody -- cancel without a
+            # best_attempt returns above unconditionally.
+            if execute_before_answer:
                 # the submitted query must be the one just executed
                 self.check_executed(fn_name, kg, sparql)
         except FunctionCallException:
