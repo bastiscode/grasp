@@ -64,32 +64,35 @@ def estimate_embedding_min_score(
 def build_embedding_search_params(
     embeddings: np.ndarray,
     num_samples: int = 4096,
-    percentile: float = DEFAULT_MIN_SCORE_PERCENTILE,
+    percentile: float | None = None,
     margin: float = 0.0,
     seed: int = 22,
     rerank: float = 2.0,
     exact: bool = True,
 ) -> EmbeddingSearchParams:
-    estimated = estimate_embedding_min_score(
-        embeddings,
-        num_samples=num_samples,
-        percentile=percentile,
-        margin=margin,
-        seed=seed,
-    )
-    if estimated is None:
-        return EmbeddingSearchParams(rerank=rerank, exact=exact)
+    estimated = 0.0
+    calibration = None
+    if percentile is not None:
+        estimated = estimate_embedding_min_score(
+            embeddings,
+            num_samples=num_samples,
+            percentile=percentile,
+            margin=margin,
+            seed=seed,
+        )
+        estimated = estimated or 0.0
+        calibration = EmbeddingCalibration(
+            num_samples=num_samples,
+            percentile=percentile,
+            margin=margin,
+            seed=seed,
+        )
 
     return EmbeddingSearchParams(
         min_score=estimated,
         rerank=rerank,
         exact=exact,
-        calibration=EmbeddingCalibration(
-            num_samples=num_samples,
-            percentile=percentile,
-            margin=margin,
-            seed=seed,
-        ),
+        calibration=calibration,
     )
 
 
