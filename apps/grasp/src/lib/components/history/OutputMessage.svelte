@@ -10,6 +10,7 @@
   export let message;
   export let shareConversation = null;
   export let shareDisabled = false;
+  export let shareEnabled = false;
 
 const output = message?.output ?? {};
 const task = message?.task;
@@ -347,31 +348,35 @@ function deriveQleverLink() {
 
   <div class="footer">
     <div class="footer__left">
-      <button
-        type="button"
-        class="share-button"
-        class:share-button--pending={shareStatus === 'pending'}
-        on:click={handleShareClick}
-        disabled={shareStatus === 'pending' || shareDisabled}
-        aria-disabled={shareDisabled}
-        title={shareDisabled
-          ? 'Sharing disabled for imported conversations'
-          : 'Share conversation'}
-      >
-        {#if shareStatus === 'pending'}
-          <span class="share-spinner" aria-hidden="true"></span>
-          Generating link…
-        {:else}
-          <span class="share-icon" aria-hidden="true">⥂</span>
-          {#if shareStatus === 'success'}
-            Share link ready
+      <!-- hidden unless the server has sharing configured: without a share dir
+           it registers no /save route, so the button could only ever 404 -->
+      {#if shareEnabled}
+        <button
+          type="button"
+          class="share-button"
+          class:share-button--pending={shareStatus === 'pending'}
+          on:click={handleShareClick}
+          disabled={shareStatus === 'pending' || shareDisabled}
+          aria-disabled={shareDisabled}
+          title={shareDisabled
+            ? 'Sharing disabled for imported conversations'
+            : 'Share conversation'}
+        >
+          {#if shareStatus === 'pending'}
+            <span class="share-spinner" aria-hidden="true"></span>
+            Generating link…
           {:else}
-            Share
+            <span class="share-icon" aria-hidden="true">⥂</span>
+            {#if shareStatus === 'success'}
+              Share link ready
+            {:else}
+              Share
+            {/if}
           {/if}
+        </button>
+        {#if shareStatus === 'error'}
+          <span class="share-error" role="alert">{shareError}</span>
         {/if}
-      </button>
-      {#if shareStatus === 'error'}
-        <span class="share-error" role="alert">{shareError}</span>
       {/if}
     </div>
     {#if elapsed !== null}
