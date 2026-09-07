@@ -11,6 +11,8 @@ top_k: env(TOP_K:null)
 top_p: env(TOP_P:0.9)
 repeat_penalty: env(REPEAT_PENALTY:null)
 do_sample: env(DO_SAMPLE:true)
+num_beam_groups: env(NUM_BEAM_GROUPS:null)
+diversity_penalty: env(DIVERSITY_PENALTY:0.0)
 
 skeleton_n: env(SKELETON_N:8)
 skeleton_top_k: env(SKELETON_TOP_K:3)

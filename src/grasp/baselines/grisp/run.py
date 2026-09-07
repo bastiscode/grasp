@@ -239,6 +239,14 @@ class GRISPRunConfig(BaseModel):
     repeat_penalty: float | None = None
     do_sample: bool = True
 
+    # diverse beam search: split the beams into groups and penalize tokens an
+    # earlier group already picked at this step, so they spread over different
+    # skeletons instead of paraphrasing one. Needs do_sample=false and
+    # num_beams % groups == 0; one beam per group keeps every chain greedy,
+    # fewer larger groups tend to produce unparseable queries. Off by default.
+    num_beam_groups: int | None = None
+    diversity_penalty: float = 0.0
+
     skeleton_n: int = 8
     skeleton_top_k: int = 3
     # deduplication of generated skeletons before the top k are kept: "exact"
@@ -320,6 +328,22 @@ class GRISPModel:
             yield self.model
 
 
+GROUP_BEAM_SEARCH_REPO = "transformers-community/group-beam-search"
+
+
+def group_beam_search_kwargs(cfg: GRISPRunConfig) -> dict:
+    # transformers v5 dropped group beam search from core; it now lives in a
+    # community custom_generate repo that generate() only loads on request
+    if cfg.num_beam_groups is None or cfg.num_beam_groups <= 1:
+        return {}
+
+    assert not cfg.do_sample, "Group beam search requires do_sample=false"
+    assert cfg.diversity_penalty > 0.0, (
+        "Group beam search without a diversity penalty is plain beam search"
+    )
+    return {"custom_generate": GROUP_BEAM_SEARCH_REPO, "trust_remote_code": True}
+
+
 def generate_skeletons_from_prompt(
     model: GRISPModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -348,6 +372,8 @@ def generate_skeletons_from_prompt(
             **enc,
             generation_config=GenerationConfig(
                 num_beams=n,
+                num_beam_groups=cfg.num_beam_groups,
+                diversity_penalty=cfg.diversity_penalty,
                 temperature=cfg.temperature,
                 top_p=cfg.top_p,
                 top_k=cfg.top_k,
@@ -360,6 +386,7 @@ def generate_skeletons_from_prompt(
                 return_dict_in_generate=True,
                 output_scores=True,
             ),
+            **group_beam_search_kwargs(cfg),
         )
 
     skeletons: list[Skeleton] = []
