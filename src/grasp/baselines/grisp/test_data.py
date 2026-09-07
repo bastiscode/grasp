@@ -2,7 +2,9 @@ from unittest.mock import Mock
 
 from grasp.baselines.grisp.data import (
     BOI,
+    BOR,
     EOI,
+    EOR,
     MAX_PLACEHOLDER_QUERIES,
     SEP,
     Info,
@@ -19,7 +21,7 @@ from grasp.baselines.grisp.data import (
     tokenize_option_answer,
 )
 from grasp.baselines.grisp.utils import load_sparql_parser
-from grasp.sparql.types import Alternative, ObjType
+from grasp.sparql.types import Alternative, ObjType, Selection
 
 SPARQL_PARSER = load_sparql_parser()
 
@@ -74,8 +76,8 @@ class TestPlaceholderValues:
 class TestBuildQueries:
     def test_wordings_kept_per_object_type(self):
         info = Info(
-            prefix="",
             sparql="",
+            sparqls=[],
             queries=["population", "inhabitants"],
             variants=["wdt", None],
             values=["population (wdt)", "inhabitants"],
@@ -96,8 +98,8 @@ class TestBuildQueries:
         # the loop searches wording i for whatever object type the placeholder
         # turns out to take, so index i must mean the same wording everywhere
         info = Info(
-            prefix="",
             sparql="",
+            sparqls=[],
             queries=["population", "inhabitants"],
             variants=["wdt", None],
             values=["population (wdt)", "inhabitants"],
@@ -105,6 +107,87 @@ class TestBuildQueries:
         queries = info.build_queries(OBJ_TYPES)
         assert info.num_queries == 2
         assert all(len(pairs) == info.num_queries for pairs in queries.values())
+
+
+class TestBeamCoherentRendering:
+    # two beams that disagree on both placeholders, so wording 1 of one comes
+    # from the same beam as wording 1 of the other
+    def merged(self, fill_order="left-to-right"):
+        base = parse("SELECT ?x WHERE { <iri>Harz</iri> <iri>has part</iri> ?x }")
+        base.beams = [[{0}] for _ in base.nl_iris]
+        other = parse(
+            "SELECT ?x WHERE { <iri>Harz mountains</iri> <iri>contains</iri> ?x }"
+        )
+        other.beams = [[{1}] for _ in other.nl_iris]
+        merged = merge_skeletons(base, other, SPARQL_PARSER, fill_order)
+        assert merged is not None
+        return merged
+
+    def test_provenance_survives_the_merge(self):
+        assert self.merged().beams == [[{0}, {1}], [{0}, {1}]]
+
+    def test_unresolved_placeholders_follow_the_marked_wording_s_beam(self):
+        info = self.merged().prepare_for_selection()
+        # marking beam 0's wording shows beam 0's wording for the other one too
+        assert info.sparql_for_query(0) == (
+            f"SELECT ?x WHERE {{ {BOR}Harz{EOR} {BOI}has part{EOI} ?x }}"
+        )
+        # and marking beam 1's switches the other one over with it, instead of
+        # mixing beam 1's "Harz mountains" with beam 0's "has part"
+        assert info.sparql_for_query(1) == (
+            f"SELECT ?x WHERE {{ {BOR}Harz mountains{EOR} {BOI}contains{EOI} ?x }}"
+        )
+
+    def test_resolved_placeholders_show_their_identifier_not_a_wording(self):
+        merged = self.merged()
+        manager = Mock()
+        manager.denormalize.return_value = "wd:Q4066"
+        manager.format_iri.return_value = "wd:Q4066"
+        merged.add_selection(
+            Selection(Alternative("wd:Q4066", label="Harz"), ObjType.ENTITY),
+            manager,
+        )
+        info = merged.prepare_for_selection()
+        # the entity is resolved, so only the property is still a wording, and
+        # it follows the beam of the wording now being marked
+        assert info.sparql_for_query(1) == (
+            f"SELECT ?x WHERE {{ wd:Q4066 {BOR}contains{EOR} ?x }}"
+        )
+
+    def test_without_provenance_everything_falls_back_to_the_first_wording(self):
+        base = parse("SELECT ?x WHERE { <iri>Harz</iri> <iri>has part</iri> ?x }")
+        other = parse(
+            "SELECT ?x WHERE { <iri>Harz mountains</iri> <iri>contains</iri> ?x }"
+        )
+        merged = merge_skeletons(base, other, SPARQL_PARSER)
+        assert merged is not None
+        assert merged.beams is None
+
+        info = merged.prepare_for_selection()
+        # the marked placeholder still follows the searched wording, the others
+        # cannot and stay on their first
+        assert info.sparql_for_query(1) == (
+            f"SELECT ?x WHERE {{ {BOR}Harz mountains{EOR} {BOI}has part{EOI} ?x }}"
+        )
+
+    def test_a_beam_truncated_out_falls_back_to_the_first_wording(self):
+        merged = self.merged()
+        # as if merging had dropped beam 1's wording for the second placeholder
+        merged.beams = [[{0}, {1}], [{0}]]
+        info = merged.prepare_for_selection()
+        assert info.sparql_for_query(1) == (
+            f"SELECT ?x WHERE {{ {BOR}Harz mountains{EOR} {BOI}has part{EOI} ?x }}"
+        )
+
+    def test_beam_choice_prefers_coverage_of_the_unresolved_placeholders(self):
+        merged = self.merged()
+        # wording 0 of the marked placeholder came from beams 0 and 2, but only
+        # beam 2 still has a wording for the other placeholder
+        merged.beams = [[{0, 2}, {1}], [{2}, {1}]]
+        info = merged.prepare_for_selection()
+        assert info.sparql_for_query(0) == (
+            f"SELECT ?x WHERE {{ {BOR}Harz{EOR} {BOI}has part{EOI} ?x }}"
+        )
 
 
 class TestMergeSkeletons:
@@ -340,9 +423,7 @@ class TestOptionTokenIds:
         ids = get_option_token_ids(tokenizer, ("A", "B", "C"))
         assert list(ids) == [tokenizer.convert_tokens_to_ids(f"▁{o}") for o in "ABC"]
         # the bare letters are in the vocab but never rendered at a word start
-        assert all(
-            tokenizer.convert_tokens_to_ids(o) not in ids for o in "AB"
-        )
+        assert all(tokenizer.convert_tokens_to_ids(o) not in ids for o in "AB")
 
     def test_tokens_before_the_answer_are_skipped(self):
         tokenizer = FakeTokenizer(prefix=("<think>", "</think>"))

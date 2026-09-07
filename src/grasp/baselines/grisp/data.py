@@ -204,10 +204,11 @@ def extract_queries_and_variants_from_nl_iri(
     ]
 
 
-# only the first wording is shown, so prompts stay single-wording like the
-# skeletons the model writes
-def display_nl_iri(nl_iri: dict) -> str:
-    return f"{BOI}{extract_values_from_nl_iri(nl_iri)[0]}{EOI}"
+# one wording only, so prompts stay single-wording like the skeletons the model
+# writes; index 0 is the best-scoring beam's
+def display_nl_iri(nl_iri: dict, index: int = 0) -> str:
+    values = extract_values_from_nl_iri(nl_iri)
+    return f"{BOI}{values[min(index, len(values) - 1)]}{EOI}"
 
 
 # per-placeholder state: alternatives left to try, which wording to search
@@ -223,8 +224,9 @@ class Candidates:
 
 @dataclass
 class Info:
-    prefix: str
     sparql: str
+    # one render per wording of the marked placeholder
+    sparqls: list[str]
     queries: list[str]
     variants: list[str | None]
     values: list[str]
@@ -232,6 +234,15 @@ class Info:
     @property
     def num_queries(self) -> int:
         return len(self.values)
+
+    # the candidates are searched one wording at a time, so the prompt has to
+    # show the wording they came from or the model matches against the wrong one
+    def sparql_for_query(self, index: int) -> str:
+        return self.sparqls[index]
+
+    # everything before the marked placeholder, from that same render
+    def prefix_for_query(self, index: int) -> str:
+        return self.sparqls[index].split(BOR)[0]
 
     # one entry per wording, so index i is the same wording for every type
     def build_queries(
@@ -257,9 +268,10 @@ class Skeleton:
         parser: LR1Parser,
         fill_order: FillOrder = "left-to-right",
         order: list[int] | None = None,
+        beams: list[list[set[int]]] | None = None,
     ) -> "Skeleton":
         sparql_parse = parser.parse(sparql)
-        return Skeleton(sparql, sparql_parse, parser, fill_order, order)
+        return Skeleton(sparql, sparql_parse, parser, fill_order, order, beams)
 
     def __init__(
         self,
@@ -268,11 +280,16 @@ class Skeleton:
         parser: LR1Parser | None = None,
         fill_order: FillOrder = "left-to-right",
         order: list[int] | None = None,
+        beams: list[list[set[int]]] | None = None,
     ) -> None:
         self.sparql_parse = sparql_parse
         self.sparql_encoded = sparql.encode()
         # placeholders in document (byte) order
         self.nl_iris = list(find_all(self.sparql_parse, "NL_IRI"))
+        # placeholder -> wording -> beams that produced it, so a prompt can show
+        # every placeholder at one beam's wording rather than mixing them. None
+        # outside merging, where each placeholder has one wording anyway.
+        self.beams = beams
         # selections/identifiers are stored in *fill* order (a stack), so
         # pop_selection() undoes the most recent selection for backtracking.
         # self.order maps fill step k -> placeholder (document) index, i.e. the
@@ -465,48 +482,78 @@ class Skeleton:
         filled = self.get_filled_placeholders()
 
         cur = self.nl_iris[idx]
-        cur_start, cur_end = cur["byte_span"]
-
-        # prefix: everything before the current placeholder, with all already
-        # resolved placeholders substituted (under non-left-to-right orders a
-        # resolved placeholder may sit either side of the current one) and any
-        # not-yet-resolved placeholder left as natural language
-        prefix = ""
-        start = 0
-        for i, nl_iri in enumerate(self.nl_iris):
-            byte_start, byte_end = nl_iri["byte_span"]
-            if byte_start >= cur_start:
-                break
-            prefix += self.sparql_encoded[start:byte_start].decode()
-            prefix += filled.get(i, display_nl_iri(nl_iri))
-            start = byte_end
-        prefix += self.sparql_encoded[start:cur_start].decode()
-
         values = extract_values_from_nl_iri(cur)
         queries_and_variants = extract_queries_and_variants_from_nl_iri(cur)
 
-        # tail: everything after the current placeholder, again with resolved
-        # placeholders substituted and unresolved ones left as natural language
-        tail = ""
-        start = cur_end
-        for i, nl_iri in enumerate(self.nl_iris):
-            byte_start, byte_end = nl_iri["byte_span"]
-            if byte_start <= cur_start:
-                continue
-            tail += self.sparql_encoded[start:byte_start].decode()
-            tail += filled.get(i, display_nl_iri(nl_iri))
-            start = byte_end
-        tail += self.sparql_encoded[start:].decode()
-
-        # the marked placeholder shows its first wording too
-        sparql = prefix + f"{BOR}{values[0]}{EOR}" + tail
+        sparqls = [
+            self.render_for_selection(idx, filled, wording)
+            for wording in range(len(values))
+        ]
         return Info(
-            prefix=prefix,
-            sparql=sparql,
+            # the constraint and its memo key are wording-independent
+            sparql=sparqls[0],
+            sparqls=sparqls,
             queries=[query for query, _ in queries_and_variants],
             variants=[variant for _, variant in queries_and_variants],
             values=values,
         )
+
+    # the beam to render the unresolved placeholders at. A wording usually comes
+    # from several beams, so prefer one covering the most of them, since merging
+    # truncates. Ties go to the lowest index, i.e. the best-scoring beam.
+    def pick_beam(self, idx: int, filled: dict[int, str], wording: int) -> int | None:
+        if self.beams is None:
+            return None
+
+        unresolved = [
+            i for i in range(len(self.nl_iris)) if i != idx and i not in filled
+        ]
+        return max(
+            sorted(self.beams[idx][wording]),
+            key=lambda beam: sum(
+                any(beam in beams for beams in self.beams[i]) for i in unresolved
+            ),
+            default=None,
+        )
+
+    # where placeholder i carries beam, falling back to its first wording when
+    # merging truncated that beam's away
+    def wording_for_beam(self, i: int, beam: int | None) -> int:
+        if beam is None or self.beams is None:
+            return 0
+
+        return next(
+            (w for w, beams in enumerate(self.beams[i]) if beam in beams),
+            0,
+        )
+
+    # the skeleton with placeholder idx marked at the given wording: resolved
+    # placeholders substituted by their identifier, unresolved ones shown at the
+    # same beam's wording so the prompt reads as one coherent skeleton
+    def render_for_selection(
+        self,
+        idx: int,
+        filled: dict[int, str],
+        wording: int,
+    ) -> str:
+        beam = self.pick_beam(idx, filled, wording)
+
+        parts = []
+        start = 0
+        for i, nl_iri in enumerate(self.nl_iris):
+            byte_start, byte_end = nl_iri["byte_span"]
+            parts.append(self.sparql_encoded[start:byte_start].decode())
+            if i in filled:
+                parts.append(filled[i])
+            elif i == idx:
+                value = extract_values_from_nl_iri(nl_iri)[wording]
+                parts.append(f"{BOR}{value}{EOR}")
+            else:
+                parts.append(display_nl_iri(nl_iri, self.wording_for_beam(i, beam)))
+            start = byte_end
+
+        parts.append(self.sparql_encoded[start:].decode())
+        return "".join(parts)
 
     def add_selection(self, selection: Selection, manager: KgManager) -> None:
         assert not self.done, "All NL IRIs have already been replaced"
@@ -545,20 +592,40 @@ def merge_skeletons(
         return None
 
     parts = []
+    beams: list[list[set[int]]] = []
     start = 0
-    for base_iri, other_iri in zip(base.nl_iris, other.nl_iris):
+    for i, (base_iri, other_iri) in enumerate(zip(base.nl_iris, other.nl_iris)):
         byte_start, byte_end = base_iri["byte_span"]
         parts.append(base.sparql_encoded[start:byte_start].decode())
-        values = ordered_unique(
-            extract_values_from_nl_iri(base_iri) + extract_values_from_nl_iri(other_iri)
-        )
-        parts.append(f"{BOI}{SEP.join(values[:MAX_PLACEHOLDER_QUERIES])}{EOI}")
+
+        base_values = extract_values_from_nl_iri(base_iri)
+        other_values = extract_values_from_nl_iri(other_iri)
+        values = ordered_unique(base_values + other_values)[:MAX_PLACEHOLDER_QUERIES]
+        parts.append(f"{BOI}{SEP.join(values)}{EOI}")
+
+        # a wording shared by both sides belongs to both their beams
+        origins: dict[str, set[int]] = {}
+        for skeleton, iri_values in ((base, base_values), (other, other_values)):
+            for w, value in enumerate(iri_values):
+                if skeleton.beams is None:
+                    continue
+                origins.setdefault(value, set()).update(skeleton.beams[i][w])
+        beams.append([origins.get(value, set()) for value in values])
+
         start = byte_end
 
     parts.append(base.sparql_encoded[start:].decode())
 
+    # all-or-nothing: without it everything falls back to its first wording
+    known = all(all(placeholder) for placeholder in beams)
+
     try:
-        return Skeleton.parse("".join(parts), parser, fill_order)
+        return Skeleton.parse(
+            "".join(parts),
+            parser,
+            fill_order,
+            beams=beams if known else None,
+        )
     except Exception:
         return None
 

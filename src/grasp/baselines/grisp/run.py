@@ -382,6 +382,10 @@ def generate_skeletons_from_prompt(
             logger.warning(f"Failed to parse skeleton, skipping: {e}")
             continue
 
+        # one wording per placeholder, all from this beam; merging folds these
+        # into the tables the prompts are rendered from
+        skeleton.beams = [[{i}] for _ in skeleton.nl_iris]
+
         if cfg.skeleton_dedupe == "merge":
             # placeholders merge one to one, so the key keeps document order
             key = skeleton_wording_key(skeleton.sparql_parse)
@@ -727,6 +731,11 @@ def select_iris(
         alternatives = candidates.alternatives
         ranking = None
 
+        # the wording these alternatives were searched with; the loop above
+        # advances past it, and leftovers belong to the one searched last
+        query_index = max(candidates.next_query - 1, 0)
+        query_sparql = info.sparql_for_query(query_index)
+
         if cfg.rerank:
             # use model to rerank alternatives before selecting
             # will return an empty list if 'None' is top ranked
@@ -736,7 +745,7 @@ def select_iris(
                 tokenizer,
                 manager,
                 question,
-                info.sparql,
+                query_sparql,
                 skeleton.selections,
                 alternatives,
                 logger,
@@ -745,10 +754,10 @@ def select_iris(
         yield {
             "type": "alternatives",
             "index": skeleton.replaced,
-            "prefix": info.prefix,
-            "sparql": info.sparql,
-            "query": info.queries[0],
-            "variant": info.variants[0],
+            "prefix": info.prefix_for_query(query_index),
+            "sparql": query_sparql,
+            "query": info.queries[query_index],
+            "variant": info.variants[query_index],
             "queries": info.queries,
             "variants": info.variants,
             "alternatives": [
