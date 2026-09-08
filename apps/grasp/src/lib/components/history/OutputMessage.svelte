@@ -5,7 +5,7 @@
   import MarkdownContent from '../common/MarkdownContent.svelte';
   import SparqlBlock from '../common/SparqlBlock.svelte';
   import { prettyJson } from '../../utils/formatters.js';
-  import { QLEVER_HOSTS, sharePathForId } from '../../constants.js';
+  import { isQleverHost, sharePathForId } from '../../constants.js';
 
   export let message;
   export let shareConversation = null;
@@ -136,7 +136,7 @@ function deriveQleverLink() {
   if (!sparql || !endpoint) return null;
   try {
     const url = new URL(endpoint);
-    if (!QLEVER_HOSTS.includes(url.host)) return null;
+    if (!isQleverHost(url.host)) return null;
       const base = endpoint.replace('/api', '');
       const separator = base.includes('?') ? '&' : '?';
       return `${base}${separator}query=${encodeURIComponent(sparql)}&exec=true`;
