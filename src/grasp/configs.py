@@ -51,6 +51,10 @@ class ExamplesConfig(IndexConfig):
 
 
 class ShapeConfig(IndexConfig):
+    # larger classes are profiled from a sample of this many instances,
+    # drawn as this many evenly spread windows
+    max_profile_instances: int = 100_000
+    profile_windows: int = 10
     max_properties_per_class: int = 30
     dense_max_properties_per_class: int = 10
     # separate caps so inverse edges can never displace outgoing ones

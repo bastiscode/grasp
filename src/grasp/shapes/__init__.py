@@ -66,11 +66,18 @@ class ClassProfile(BaseModel):
     iri: str
     short_iri: str
     total_entities: int = 0
+    # instances profiled if the class was sampled, 0 if profiled exhaustively
+    profiled_entities: int = 0
     properties: list[PropertyProfile] = Field(default_factory=list)
     # inverse edges: properties for which instances of this class are the *object*.
     # reuses PropertyProfile, where `targets` holds the *source* classes rather
     # than the target ones, and `entity_count` counts distinct receiving instances.
     incoming: list[PropertyProfile] = Field(default_factory=list)
+
+    # coverage counts are over the profiled instances, not the whole extension
+    @property
+    def share_base(self) -> int:
+        return self.profiled_entities or self.total_entities
 
 
 class ShapeSample(BaseModel):
