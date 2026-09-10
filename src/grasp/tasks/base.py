@@ -28,11 +28,13 @@ class GraspTask(ABC):
         managers: list[KgManager],
         config: GraspConfig,
         known: set[str] | None = None,
+        example_indices: dict | None = None,
     ) -> None:
         self.managers = managers
         self.config = config
         self.state: Any = None
         self.known = known or set()
+        self.example_indices = example_indices or {}
 
     @abstractmethod
     def system_information(self) -> str: ...

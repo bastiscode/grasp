@@ -65,7 +65,11 @@ should be an ASK query.',
     ]
 
 
-def functions(managers: list[KgManager], config: GraspConfig) -> list[dict]:
+def functions(
+    managers: list[KgManager],
+    config: GraspConfig,
+    example_indices: dict,
+) -> list[dict]:
     kgs = [manager.kg for manager in managers]
     fns = [
         {
@@ -139,7 +143,7 @@ the SPARQL query needs to be executed",
         },
     ]
 
-    fns.extend(example_functions(config))
+    fns.extend(example_functions(config, example_indices))
 
     return fns
 
@@ -497,7 +501,7 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         return rules()
 
     def function_definitions(self) -> list[dict]:
-        return functions(self.managers, self.config)
+        return functions(self.managers, self.config, self.example_indices)
 
     def call_function(
         self,

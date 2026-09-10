@@ -16,6 +16,7 @@ from grasp.tasks.exploration.structural import (  # noqa: E402
     StructuralExplorationState,
     StructuralExplorationTask,
 )
+
 __all__ = [
     "FunctionalExplorationState",
     "FunctionalExplorationTask",

@@ -102,7 +102,9 @@ class StructuralExplorationTask(GraspTask):
         kgs = [m.kg for m in self.managers]
         functions = note_function_definitions(self.managers)
         functions.append(find_frequent_function_definition(kgs, self.config.list_k))
-        functions.extend(example_function_definitions(self.config))
+        functions.extend(
+            example_function_definitions(self.config, self.example_indices)
+        )
         return functions
 
     def call_function(

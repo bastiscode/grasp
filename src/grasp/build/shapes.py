@@ -49,13 +49,7 @@ def distinct_members(pattern: str, class_term: str = "?class") -> str:
     # a class is always an IRI; filtering here also prunes before the DISTINCT
     if class_term == "?class":
         inner += "\n      FILTER(ISIRI(?class))"
-    return (
-        f"  {{\n"
-        f"    SELECT DISTINCT {project} WHERE {{\n"
-        f"{inner}\n"
-        f"    }}\n"
-        f"  }}"
-    )
+    return f"  {{\n    SELECT DISTINCT {project} WHERE {{\n{inner}\n    }}\n  }}"
 
 
 def build_total_entities_query(pattern: str) -> str:
@@ -1017,8 +1011,6 @@ def build_shapes(
         logger.warning(f"Skipped {skipped:,} class(es) due to query failures")
 
     if sampled:
-        logger.info(
-            f"Sampled {sampled:,} class(es) too large to profile exhaustively"
-        )
+        logger.info(f"Sampled {sampled:,} class(es) too large to profile exhaustively")
     logger.info(f"Built {len(samples)} shapes")
     return samples, total_classes

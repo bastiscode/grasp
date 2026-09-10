@@ -56,10 +56,11 @@ def get_task(
     managers: list[KgManager],
     config: GraspConfig,
     known: set[str] | None = None,
+    example_indices: dict | None = None,
 ) -> GraspTask:
     if task not in _REGISTRY:
         raise ValueError(f"Unknown task {task}")
-    return _REGISTRY[task](managers, config, known)
+    return _REGISTRY[task](managers, config, known, example_indices)
 
 
 def rules() -> list[str]:

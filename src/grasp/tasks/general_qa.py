@@ -63,7 +63,7 @@ class GeneralQaTask(SparqlQaTask):
         return rules()
 
     def function_definitions(self) -> list[dict]:
-        return sparql_qa_example_functions(self.config)
+        return sparql_qa_example_functions(self.config, self.example_indices)
 
     def call_function(
         self,

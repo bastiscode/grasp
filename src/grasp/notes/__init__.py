@@ -26,6 +26,8 @@ from grasp.model import get_model
 from grasp.tasks import get_task
 from grasp.tasks.cea import AnnotationState, CeaSample
 from grasp.tasks.entities import prepare_entity
+from grasp.tasks.entity_linking import AnnotationState as TextAnnotationState
+from grasp.tasks.entity_linking import EntityLinkingSample
 from grasp.tasks.exploration import (
     FunctionalExplorationState,
     StructuralExplorationState,
@@ -158,7 +160,8 @@ def take_notes_from_samples(
                 samples=[
                     {
                         "kg": kg,
-                        "input": sample.input(),
+                        # format the input as the agent would receive it
+                        "input": get_task(task, managers, config).setup(sample.input()),
                         "reference": None
                         if ground_truths is None
                         else ground_truths[i],
@@ -431,6 +434,17 @@ def prepare_ground_truth(
         for annot in sample.annotations:
             full_annot = prepare_entity(manager, annot.entity)
             annots.annotate(annot.row, annot.column, full_annot)
+
+        return annots.format()
+
+    elif isinstance(sample, EntityLinkingSample):
+        manager, _ = find_manager(managers, kg)
+
+        annots = TextAnnotationState(sample.text)
+        for annot in sample.annotations:
+            full_annot = prepare_entity(manager, annot.entity)
+            # indices are relative to the annotation window, as in annotate
+            annots.annotate(annot.start_index, annot.end_index, full_annot)
 
         return annots.format()
 

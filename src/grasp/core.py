@@ -154,7 +154,7 @@ def generate(
         config.tool_choice = "auto"
         logger.debug("Setting tool choice to auto for general-qa task")
 
-    task = get_task(task_name, managers, config, past_known)
+    task = get_task(task_name, managers, config, past_known, example_indices)
 
     input = task.setup(input)
 

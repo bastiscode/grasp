@@ -235,7 +235,7 @@ class NotesFromTracesTask(GraspTask):
         # note-taking functions plus the example functions the agent had access
         # to, so the note-taker can retrace and verify example retrievals
         fns = note_function_definitions(self.managers)
-        fns.extend(example_functions(self.config))
+        fns.extend(example_functions(self.config, self.example_indices))
         return fns
 
     def call_function(

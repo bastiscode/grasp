@@ -11,9 +11,9 @@ from grasp.utils import format_section
 
 class NotesFromSamplesState(NotesFromTracesState):
     # task samples to take notes from; each sample is a dict with a "kg", an
-    # "input" (the task input, e.g. a question), and an optional "reference"
-    # (a formatted reference output). No agent trace is involved -- the
-    # note-taker explores the knowledge graphs itself on top of the samples.
+    # "input" (formatted by the task) and an optional "reference" (a formatted
+    # reference output). No agent trace is involved -- the note-taker explores
+    # the knowledge graphs itself on top of the samples.
     samples: list[dict] = []
     # instructions of the underlying task the samples belong to, so the
     # note-taker knows what "solving" a sample means
@@ -73,10 +73,10 @@ def note_taking_instructions(
     fmt = "\n\n".join(formatted)
 
     return f"""\
-Look at the current notes (which might be the same notes provided to the agent). \
-Then add to, delete from, or update them based on the task samples below. Explore \
-the knowledge graphs with the provided functions to figure out how each sample could \
-be solved and to verify or refine a note.
+Look at the current notes - these are the notes the agent will be given when \
+solving such tasks. Then add to, delete from, or update them based on the task \
+samples below. Explore the knowledge graphs with the provided functions to figure \
+out how each sample could be solved and to verify or refine a note.
 
 {fmt}"""
 

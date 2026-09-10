@@ -1122,9 +1122,7 @@ def show_ranking_view(ranking_data: dict) -> None:
         return
 
     # Create DataFrame
-    df = pd.DataFrame(table_rows).sort_values(
-        ["Benchmark", "Judge", "Variant"]
-    )
+    df = pd.DataFrame(table_rows).sort_values(["Benchmark", "Judge", "Variant"])
 
     # Define column order
     display_columns = ["Benchmark", "Judge", "Variant"]
@@ -1557,9 +1555,7 @@ def show_comprehensive_view(available_data: dict) -> None:
     sorted_kgs = sorted(kg_benchmarks.keys())
 
     selected_benchmark_keys = {
-        (kg, benchmark)
-        for kg in sorted_kgs
-        for benchmark in kg_benchmarks[kg]
+        (kg, benchmark) for kg in sorted_kgs for benchmark in kg_benchmarks[kg]
     }
     displayed_model_names = [
         model_name
@@ -1656,11 +1652,14 @@ def show_comprehensive_view(available_data: dict) -> None:
 
             rank = rankings.get((kg, benchmark), {}).get(model_name)
             if rank == 0:
-                best_tie = sum(
-                    1
-                    for value in rankings.get((kg, benchmark), {}).values()
-                    if value == 0
-                ) > 1
+                best_tie = (
+                    sum(
+                        1
+                        for value in rankings.get((kg, benchmark), {}).values()
+                        if value == 0
+                    )
+                    > 1
+                )
                 style_df.iloc[i, j] = STYLE_BEST_TIE if best_tie else STYLE_BEST
             elif rank == 1:
                 style_df.iloc[i, j] = STYLE_SECOND

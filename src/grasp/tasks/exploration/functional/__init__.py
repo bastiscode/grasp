@@ -92,7 +92,7 @@ class FunctionalExplorationTask(GraspTask):
     def function_definitions(self) -> list[dict]:
         return [
             *note_function_definitions(self.managers, kg_specific=False),
-            *example_function_definitions(self.config),
+            *example_function_definitions(self.config, self.example_indices),
         ]
 
     def call_function(
