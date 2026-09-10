@@ -333,24 +333,13 @@ so always keep that in mind and adjust the occurrence_index accordingly.""",
         {
             "name": "show_current_annotations",
             "description": "Show the current annotation state of the excerpt of the text to annotate.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
+            # an empty object schema makes some vllm models generate endlessly
+            "parameters": {},
         },
         {
             "name": "finalize",
             "description": "Finalize your annotations in the given excerpt and stop the annotation process.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
+            "parameters": {},
         },
     ]
     return fns
