@@ -232,6 +232,7 @@ Reference description:
             {
                 "name": "stop",
                 "description": "Stop the setup process.",
+                "parameters": {},
             },
         ]
 

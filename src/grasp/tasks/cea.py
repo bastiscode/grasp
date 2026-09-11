@@ -280,10 +280,13 @@ This function overwrites any previous annotation of the cell.""",
         {
             "name": "show_annotations",
             "description": "Show the current annotations for the table.",
+            # an empty object schema makes some vllm models generate endlessly
+            "parameters": {},
         },
         {
             "name": "stop",
             "description": "Finalize your annotations and stop the annotation process.",
+            "parameters": {},
         },
     ]
     return fns

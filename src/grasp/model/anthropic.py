@@ -113,7 +113,7 @@ class AnthropicModel(Model):
                 "name": fn["name"],
                 "description": fn.get("description", ""),
                 # anthropic requires a schema, also for no-argument functions
-                "input_schema": fn["parameters"]
+                "input_schema": fn.get("parameters")
                 or {"type": "object", "properties": {}},
             }
             for fn in fns

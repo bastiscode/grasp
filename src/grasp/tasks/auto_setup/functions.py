@@ -9,6 +9,8 @@ from grasp.sparql.utils import (
 STOP_FUNCTION = {
     "name": "stop",
     "description": "Stop the setup process.",
+    # an empty object schema makes some vllm models generate endlessly
+    "parameters": {},
 }
 
 
@@ -36,6 +38,7 @@ def index_functions(index_name: str = "entities") -> list[dict]:
         {
             "name": "show_setup",
             "description": "Show the current index and info SPARQL queries for the knowledge graph.",
+            "parameters": {},
         },
         {
             "name": "set_query",
@@ -76,6 +79,7 @@ def index_functions(index_name: str = "entities") -> list[dict]:
                 "authoring the literals index to see which literals the entity index "
                 "already covers, and avoid duplicating that coverage in the literals "
                 "index.",
+                "parameters": {},
             }
         )
 
@@ -88,6 +92,7 @@ def info_functions() -> list[dict]:
         {
             "name": "show_setup",
             "description": "Show the current prefixes and description of the knowledge graph.",
+            "parameters": {},
         },
         {
             "name": "add_prefix",

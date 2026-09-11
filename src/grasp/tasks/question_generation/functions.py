@@ -53,6 +53,8 @@ def function_definitions(kgs: list[str]) -> list[dict]:
         {
             "name": "stop",
             "description": "Stop the question generation process.",
+            # an empty object schema makes some vllm models generate endlessly
+            "parameters": {},
         },
     ]
 

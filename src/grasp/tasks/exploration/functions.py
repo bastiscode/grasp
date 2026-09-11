@@ -87,6 +87,8 @@ def note_function_definitions(
         {
             "name": "stop",
             "description": "Stop the note taking process.",
+            # an empty object schema makes some vllm models generate endlessly
+            "parameters": {},
         },
     ]
 
