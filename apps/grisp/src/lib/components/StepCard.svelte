@@ -120,6 +120,37 @@
 
     return reordered;
   }
+
+  // constraint query and index search are skipped on a memo hit after backtracking
+  function formatTimings(t) {
+    const parts = [
+      `constraint ${t.constraint.toFixed(2)}s`,
+      `search ${t.search.toFixed(2)}s`,
+    ];
+    if (t.rerank > 0) parts.push(`rerank ${t.rerank.toFixed(2)}s`);
+    return parts.join(' · ');
+  }
+
+  // one short tag per raw beam, pointing at the final skeleton it ended up in
+  function beamStatus(beam) {
+    const target = beam.into !== null && beam.into !== undefined ? `#${beam.into + 1}` : '';
+    switch (beam.status) {
+      case 'kept': return `kept as ${target}`;
+      case 'merged': return `merged into ${target}`;
+      case 'duplicate': return `duplicate of ${target}`;
+      case 'dropped': return 'dropped (beyond top-k)';
+      case 'parse_failed': return 'parse failed';
+      default: return beam.status;
+    }
+  }
+
+  function mergedFrom(idx) {
+    const sources = (step.beams ?? [])
+      .map((beam, i) => ({ beam, i }))
+      .filter(({ beam }) => beam.into === idx && (beam.status === 'kept' || beam.status === 'merged'))
+      .map(({ i }) => i + 1);
+    return sources.length > 1 ? `merged from beams ${sources.join(', ')}` : `from beam ${sources[0] ?? '?'}`;
+  }
 </script>
 
 <div class="step-card">
@@ -128,9 +159,32 @@
       <span class="step-badge step-badge--skeleton">Skeletons</span>
       <span class="step-count">{step.skeletons?.length ?? 0} generated</span>
     </div>
+    {#if step.beams?.length}
+      <div class="beams-header">Beams ({step.beams.length})</div>
+      <div class="skeleton-list">
+        {#each step.beams as beam, i (i)}
+          <div class="beam-item">
+            <div class="beam-meta">
+              <span class="beam-index">Beam {i + 1}</span>
+              <span class="beam-status beam-status--{beam.status}">{beamStatus(beam)}</span>
+            </div>
+            <pre class="skeleton-item" class:skeleton-item--faded={beam.status !== 'kept'}>{beam.skeleton}</pre>
+          </div>
+        {/each}
+      </div>
+      <div class="beams-header">Final skeletons ({step.skeletons?.length ?? 0})</div>
+    {/if}
     <div class="skeleton-list">
       {#each step.skeletons ?? [] as skeleton, i (i)}
-        <pre class="skeleton-item">{skeleton}</pre>
+        <div class="beam-item">
+          {#if step.beams?.length}
+            <div class="beam-meta">
+              <span class="beam-index">#{i + 1}</span>
+              <span class="step-count">{mergedFrom(i)}</span>
+            </div>
+          {/if}
+          <pre class="skeleton-item">{skeleton}</pre>
+        </div>
       {/each}
     </div>
   {:else if step.type === 'skeleton-selections'}
@@ -146,6 +200,9 @@
               <div class="selection-header">
                 <span class="selection-chip">Item {selectionNumber}</span>
                 <span class="selection-query">{selection.query || '?'}</span>
+                {#if selection.timings}
+                  <span class="selection-timing">{formatTimings(selection.timings)}</span>
+                {/if}
               </div>
             {/if}
             <p class="step-detail">{formatSelectionEvent(selection)}</p>
@@ -245,6 +302,64 @@
   .step-meta {
     font-size: 0.8rem;
     color: var(--text-subtle);
+  }
+
+  .selection-timing {
+    margin-left: auto;
+    font-size: 0.72rem;
+    color: var(--text-subtle);
+    white-space: nowrap;
+  }
+
+  .beams-header {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-subtle);
+    margin: var(--spacing-sm) 0 var(--spacing-xs);
+  }
+
+  .beam-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .beam-meta {
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+    font-size: 0.75rem;
+  }
+
+  .beam-index {
+    font-weight: 600;
+    color: var(--text-subtle);
+  }
+
+  .beam-status {
+    padding: 0 0.4rem;
+    border-radius: var(--radius-sm);
+    background: rgba(100, 116, 139, 0.12);
+    color: #475569;
+  }
+
+  .beam-status--kept {
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+  }
+
+  .beam-status--merged {
+    background: rgba(52, 74, 154, 0.1);
+    color: var(--color-uni-blue);
+  }
+
+  .beam-status--parse_failed {
+    background: rgba(220, 38, 38, 0.1);
+    color: #b91c1c;
+  }
+
+  .skeleton-item--faded {
+    opacity: 0.6;
   }
 
   .skeleton-list {

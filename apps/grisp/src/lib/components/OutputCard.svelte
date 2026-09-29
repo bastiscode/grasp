@@ -6,6 +6,8 @@
 
   const out = output?.output ?? {};
   const elapsed = typeof output?.elapsed === 'number' ? output.elapsed : null;
+  const skeletonsTime = typeof output?.timings?.skeletons === 'number' ? output.timings.skeletons : null;
+  const resolutionTime = typeof output?.timings?.resolution === 'number' ? output.timings.resolution : null;
   const error = output?.error ?? null;
 
   const sparql = out?.sparql ?? null;
@@ -26,7 +28,10 @@
   <div class="output-header">
     <h2 class="output-title">Output</h2>
     {#if elapsed !== null}
-      <span class="chip">{elapsed.toFixed(2)}s</span>
+      <span class="chip">
+        {elapsed.toFixed(2)}s{#if skeletonsTime !== null && resolutionTime !== null}
+          &nbsp;(skeletons {skeletonsTime.toFixed(2)}s · resolution {resolutionTime.toFixed(2)}s){/if}
+      </span>
     {/if}
   </div>
 
@@ -39,16 +44,16 @@
     </div>
   {/if}
 
+  {#if result}
+    <MarkdownContent content={toMarkdown(result)} />
+  {/if}
+
   {#if sparql}
     <SparqlBlock code={sparql} {endpoint} />
   {/if}
 
   {#if selections}
     <MarkdownContent content={toMarkdown(selections)} />
-  {/if}
-
-  {#if result}
-    <MarkdownContent content={toMarkdown(result)} />
   {/if}
 
   {#if !sparql && !result && !error}

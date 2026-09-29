@@ -168,7 +168,7 @@
       }
 
       if (payload.type === 'skeletons') {
-        steps = [...steps, { type: 'skeletons', skeletons: payload.skeletons }];
+        steps = [...steps, { type: 'skeletons', skeletons: payload.skeletons, beams: payload.beams ?? null }];
       } else if (payload.type === 'selection') {
         steps = [...steps, {
           type: 'selection',

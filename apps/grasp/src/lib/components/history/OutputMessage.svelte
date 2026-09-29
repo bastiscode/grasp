@@ -329,16 +329,16 @@ function deriveQleverLink() {
       <MarkdownContent content={primaryText} />
     {/if}
 
+    {#if result}
+      <MarkdownContent content={toMarkdown(result)} />
+    {/if}
+
     {#if sparql}
       <SparqlBlock code={sparql} qleverLink={qleverLink} label="SPARQL" />
     {/if}
 
     {#if selections}
       <MarkdownContent content={toMarkdown(selections)} />
-    {/if}
-
-    {#if result}
-      <MarkdownContent content={toMarkdown(result)} />
     {/if}
 
     {#if !primaryText && !sparql && !result}
