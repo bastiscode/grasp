@@ -176,6 +176,9 @@ def calculate_average_steps_and_time(
     total_steps = 0
     total_time = 0
     count = 0
+    # converted baselines without timing carry elapsed=None, so average only
+    # over the outputs that were actually timed
+    timed = 0
 
     for output in outputs_dict.values():
         if "messages" in output:
@@ -185,15 +188,16 @@ def calculate_average_steps_and_time(
                 if msg.get("role") not in ["user", "system"]
             )
 
-        if "elapsed" in output:
+        if output.get("elapsed") is not None:
             total_time += output["elapsed"]
+            timed += 1
 
         count += 1
 
     if count == 0:
         return None, None
 
-    return (total_steps / count, total_time / count)
+    return (total_steps / count, total_time / timed if timed else None)
 
 
 def calculate_metrics(
@@ -629,7 +633,7 @@ def show_predictions_view(available_data: dict) -> None:
                     st.metric("F1", "N/A")
 
             with eval_cols[1]:
-                if "prediction" in eval_data and "elapsed" in eval_data["prediction"]:
+                if "prediction" in eval_data and eval_data["prediction"].get("elapsed") is not None:
                     elapsed = eval_data["prediction"]["elapsed"]
                     st.metric("Time (s)", f"{elapsed:.3f}")
                 else:
