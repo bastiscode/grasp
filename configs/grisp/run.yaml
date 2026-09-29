@@ -18,6 +18,7 @@ skeleton_dedupe: env(SKELETON_DEDUPE:merge)
 
 selection_top_k: env(SELECTION_TOP_K:10)
 constrain: env(CONSTRAIN:true)
+constraint_timeout: env(CONSTRAINT_TIMEOUT:1.0)
 backtrack: env(BACKTRACK:true)
 rerank: env(RERANK:true)
 check_empty: env(CHECK_EMPTY:true)

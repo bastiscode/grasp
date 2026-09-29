@@ -248,6 +248,9 @@ class GRISPRunConfig(BaseModel):
     skeleton_dedupe: Literal["exact", "merge"] = "merge"
 
     selection_max_time: float = 60.0
+    # an unanchored constraint (nothing resolved around the placeholder) scans
+    # the whole graph and times out, so fail fast and fall back to plain search
+    constraint_timeout: float = 1.0
     selection_top_k: int = 10
     constrain: bool = True
     backtrack: bool = True
@@ -329,6 +332,7 @@ def generate_skeletons_from_prompt(
     logger: Logger,
     n: int,
     top_k: int,
+    beams: list[dict] | None = None,
 ) -> list[Skeleton]:
     with model.get() as m:
         device = next(m.parameters()).device
@@ -376,6 +380,11 @@ def generate_skeletons_from_prompt(
         else:
             logger.debug(f"Generated skeleton:\n{decoded}")
 
+        # what happened to each raw beam, for the trace and the webapp
+        beam = {"skeleton": decoded, "status": "parse_failed", "into": None}
+        if beams is not None:
+            beams.append(beam)
+
         try:
             skeleton = Skeleton.parse(decoded, parser, cfg.fill_order)  # type: ignore
         except Exception as e:
@@ -402,14 +411,22 @@ def generate_skeletons_from_prompt(
                 )
                 if merged is not None:
                     skeletons[seen[key]] = merged
+                    beam.update(status="merged", into=seen[key])
                     logger.debug(f"Merged wordings into:\n{merged.nl_sparql}")
                     continue
 
+            beam.update(status="duplicate", into=seen[key])
             logger.debug("Already seen skeleton, skipping")
             continue
 
+        beam.update(status="kept", into=len(skeletons))
         seen[key] = len(skeletons)
         skeletons.append(skeleton)
+
+    # skeletons past the top k are generated but never resolved
+    for beam in beams or []:
+        if beam["into"] is not None and beam["into"] >= top_k:
+            beam["status"] = "dropped"
 
     # only take top k skeletons, others are just for logging
     logger.debug(
@@ -426,6 +443,7 @@ def generate_skeletons(
     manager: KgManager,
     parser: LR1Parser,
     logger: Logger,
+    beams: list[dict] | None = None,
 ) -> list[Skeleton]:
     input = get_skeleton_prompt(manager.kg, question)
     return generate_skeletons_from_prompt(
@@ -437,6 +455,7 @@ def generate_skeletons(
         logger,
         n=cfg.skeleton_n,
         top_k=cfg.skeleton_top_k,
+        beams=beams,
     )
 
 
@@ -691,23 +710,30 @@ def select_iris(
         info = skeleton.prepare_for_selection()
         queries = info.build_queries(supports_variants)
 
+        # per-item stage times; memo hits after backtracking cost nothing here
+        timings = {"constraint": 0.0, "search": 0.0, "rerank": 0.0}
+
         # keyed on the full query, not just the prefix, since the constraint now
         # depends on resolved neighbours on both sides of the current placeholder
         if info.sparql not in memo:
+            t = time.monotonic()
             obj_types, identifier_maps = find_candidate_ids(
                 manager,
                 info.sparql,
                 logger,
                 skip_constraint=not cfg.constrain,
                 max_candidates=MAX_IRIS,
+                constraint_timeout=cfg.constraint_timeout,
             )
             memo[info.sparql] = Candidates(obj_types, identifier_maps)
+            timings["constraint"] = time.monotonic() - t
 
         candidates = memo[info.sparql]
 
         # the next wording is searched only once the current one is used up, so
         # the combination the best skeleton proposed is explored first
         while not candidates.alternatives and candidates.next_query < info.num_queries:
+            t = time.monotonic()
             alternative_groups = search_alternatives(
                 manager,
                 candidates.obj_types,
@@ -727,6 +753,7 @@ def select_iris(
                 )
                 if alternative[0].identifier not in candidates.seen
             ]
+            timings["search"] += time.monotonic() - t
 
         alternatives = candidates.alternatives
         ranking = None
@@ -740,6 +767,7 @@ def select_iris(
             # use model to rerank alternatives before selecting
             # will return an empty list if 'None' is top ranked
             # such that we can continue with backtracking
+            t = time.monotonic()
             ranking = rerank_alternatives(
                 model,
                 tokenizer,
@@ -750,6 +778,7 @@ def select_iris(
                 alternatives,
                 logger,
             )
+            timings["rerank"] = time.monotonic() - t
 
         yield {
             "type": "alternatives",
@@ -771,6 +800,7 @@ def select_iris(
                 for alternative, obj_type, variant in alternatives
             ],
             "ranking": ranking,
+            "timings": timings,
         }
 
         if ranking is not None:
@@ -891,6 +921,8 @@ def generate(
     sparql = None
     error = None
     start = time.monotonic()
+    # end of skeleton generation, splits elapsed into the two stages
+    skeletons_end = None
 
     # both oracle modes consume the same gold query (the sample's 'sparql'
     # field) and are mutually exclusive:
@@ -986,7 +1018,9 @@ def generate(
             assert gold_sparql is not None
             nl = gold_sparql_to_nl_skeleton(gold_sparql, manager)
             skeletons = [Skeleton.parse(nl, parser, cfg.fill_order)]
+            beams = None
         else:
+            beams = []
             skeletons = generate_skeletons(
                 model,
                 tokenizer,
@@ -995,11 +1029,14 @@ def generate(
                 manager,
                 parser,
                 logger,
+                beams=beams,
             )
 
+        skeletons_end = time.monotonic()
         yield {
             "type": "skeletons",
             "skeletons": [skeleton.nl_sparql for skeleton in skeletons],
+            "beams": beams,
         }
 
         accept = cfg.improve_threshold
@@ -1212,6 +1249,10 @@ def generate(
         "error": error,
         "output": out,
         "elapsed": end - start,
+        "timings": {
+            "skeletons": None if skeletons_end is None else skeletons_end - start,
+            "resolution": None if skeletons_end is None else end - skeletons_end,
+        },
     }
 
     if yield_output:

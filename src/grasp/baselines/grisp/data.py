@@ -750,6 +750,7 @@ def find_candidate_ids(
     logger: Logger,
     skip_constraint: bool = False,
     max_candidates: int | None = None,
+    constraint_timeout: float = 6.0,
 ) -> tuple[list[ObjType], dict[ObjType, dict[str, list[str]] | None]]:
     # prefix left of the current placeholder, with any unresolved placeholders
     # turned into variables so it parses
@@ -799,8 +800,8 @@ def find_candidate_ids(
                 obj_type.index_name,
                 constraint_sparql,
                 max_candidates,
-                # 6 seconds to execute query, 3 to read result
-                request_timeout=(3.5, 6.0),
+                # constraint_timeout to execute query, 3 seconds to read result
+                request_timeout=(3.5, constraint_timeout),
                 read_timeout=3.0,
             )
             logger.debug(
