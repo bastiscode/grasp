@@ -247,7 +247,7 @@ class GRISPRunConfig(BaseModel):
     # their wordings, which are then searched one after the other.
     skeleton_dedupe: Literal["exact", "merge"] = "merge"
 
-    selection_max_time: float = 60.0
+    selection_max_time: float = 30.0
     # an unanchored constraint (nothing resolved around the placeholder) scans
     # the whole graph and times out, so fail fast and fall back to plain search
     constraint_timeout: float = 1.0
