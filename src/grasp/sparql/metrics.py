@@ -56,9 +56,14 @@ def f1_score(
     pred: SelectResult | AskResult,
     target: SelectResult | AskResult,
     exact: int | bool = 1024,
+    strict_ask: bool = False,
 ) -> float:
-    # if reference is an ask query, convert the select results to a bool
+    # if reference is an ask query, convert the select results to a bool; with
+    # strict_ask a select prediction scores 0 instead, since a non-empty result
+    # also counts as "yes" when the query ignores the question's condition
     if isinstance(target, AskResult):
+        if strict_ask and not isinstance(pred, AskResult):
+            return 0.0
         pred = pred.to_ask_result() if not isinstance(pred, AskResult) else pred
         return float(pred == target)
 
@@ -174,6 +179,16 @@ class TestF1Score(unittest.TestCase):
         self.assertEqual(f1_score(AskResult(True), AskResult(True)), 1.0)
         self.assertEqual(f1_score(AskResult(False), AskResult(False)), 1.0)
         self.assertEqual(f1_score(AskResult(True), AskResult(False)), 0.0)
+
+    def test_f1_score_select_prediction_against_ask_reference(self):
+        # a select prediction is coerced to a bool for an ask reference, unless
+        # strict_ask demands the right query type
+        from grasp.sparql.types import AskResult, SelectResult
+
+        sel = SelectResult(["x"], [{"x": "a"}])
+        self.assertEqual(f1_score(sel, AskResult(True)), 1.0)
+        self.assertEqual(f1_score(sel, AskResult(True), strict_ask=True), 0.0)
+        self.assertEqual(f1_score(AskResult(True), AskResult(True), strict_ask=True), 1.0)
 
     def test_f1_score_ask_prediction_against_select_reference(self):
         # regression: an ask prediction cannot answer a select reference, so it

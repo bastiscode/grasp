@@ -110,6 +110,7 @@ def evaluate_f1(
     fix_prefixes: bool = False,
     sparql_result_max_rows: int | None = 10_000_000,
     log_level: str | int | None = None,
+    strict_ask: bool = False,
 ) -> None:
     logger = get_logger("GRASP EVALUATION", log_level)
 
@@ -211,7 +212,7 @@ def evaluate_f1(
             )
 
         if pred_result is not None:
-            score = f1_score(pred_result, target_result, exact_after)
+            score = f1_score(pred_result, target_result, exact_after, strict_ask)
 
         evaluations[id]["prediction"] = {
             "sparql": sparql,
@@ -219,6 +220,7 @@ def evaluate_f1(
             "size": get_result_size(pred_result),
             "score": score,
             "elapsed": pred["elapsed"],
+            "strict_ask": strict_ask,
         }
         dump_json(evaluations, evaluation_file)
 

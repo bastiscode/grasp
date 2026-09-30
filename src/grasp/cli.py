@@ -436,6 +436,12 @@ def parse_args() -> argparse.Namespace:
         help="Try to fix missing prefix issues in target and prediction SPARQL queries "
         "before evaluating them",
     )
+    eval_f1_parser.add_argument(
+        "--strict-ask",
+        action="store_true",
+        help="Score a non-ASK prediction 0 against an ASK reference instead of "
+        "converting its result to a boolean",
+    )
 
     eval_judge_parser = eval_subparsers.add_parser(
         "judge",
@@ -971,6 +977,7 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             args.fix_prefixes,
             args.sparql_result_max_rows,
             args.log_level,
+            strict_ask=args.strict_ask,
         )
 
     elif eval_cmd == "judge":
