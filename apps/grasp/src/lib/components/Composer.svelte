@@ -53,6 +53,7 @@
   let elLastText = '';
   let elWindow = null;
   let elSpecialInstructions = '';
+  let elPreviousPayload = null;
   let elTextareaEl;
   let elBackdropEl;
   let appliedInitialElRef = null;
@@ -207,9 +208,8 @@
       const payload = buildElPayload();
       if (!payload) return;
       dispatch('submit', { kind: 'entity-linking', payload });
-      // keep the text so that another window of it can be annotated next,
-      // but clear the used window selection
-      elWindow = null;
+      clearElState();
+      elPreviousPayload = payload;
       return;
     }
     if (isCeaTask) {
@@ -704,9 +704,17 @@
     return normalized.replace(/[‘’]/g, "'");
   }
 
+  // like CEA, a restored input (page reload, share link) is only offered for
+  // reuse instead of being put into the editor right away
   function applyInitialEl(payload) {
     if (!payload || typeof payload !== 'object') return;
     if (typeof payload.data !== 'string' || !payload.data) return;
+    elPreviousPayload = { ...payload };
+  }
+
+  function restorePreviousEl() {
+    if (!elPreviousPayload || disabled || isRunning || isCancelling) return;
+    const payload = elPreviousPayload;
     elText = payload.data;
     // keep elLastText in sync so the reactive window reset does not fire
     elLastText = elText;
@@ -737,6 +745,7 @@
     elLastText = '';
     elWindow = null;
     elSpecialInstructions = '';
+    elPreviousPayload = null;
   }
 
   function handleElSelect() {
@@ -1179,6 +1188,22 @@
               disabled={disabled || isRunning || isCancelling}
             ></textarea>
           </div>
+          {#if !elText.trim() && elPreviousPayload && !isRunning && !isCancelling}
+            <div class="composer__reuse">
+              <button
+                type="button"
+                class="composer__reuse-button"
+                on:click={restorePreviousEl}
+                disabled={disabled}
+              >
+                Use previous text
+              </button>
+              <span class="composer__reuse-meta">
+                {elPreviousPayload.data.length.toLocaleString()}
+                {elPreviousPayload.data.length === 1 ? ' character' : ' characters'}
+              </span>
+            </div>
+          {/if}
           {#if elText.trim()}
             <div class="composer__el-window-bar">
               <p class="composer__el-window-status">{elWindowLabel}</p>
