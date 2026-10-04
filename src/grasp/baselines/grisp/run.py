@@ -84,6 +84,13 @@ def parse_args() -> argparse.Namespace:
         "if different from the main model",
     )
     parser.add_argument(
+        "--selection-device",
+        type=str,
+        default=None,
+        help="Device for the selection model when --selection-run is set "
+        "(default: same as --device)",
+    )
+    parser.add_argument(
         "-l",
         "--log-level",
         type=str,
@@ -1339,10 +1346,14 @@ def main(args: argparse.Namespace) -> None:
         selection_model = GRISPModel(model, run_cfg.selection_disable_adapter)
         selection_tokenizer = tokenizer
     elif train_cfg.type == "skeleton":
-        logger.info(f"Loading selection model from {args.selection_run}")
+        selection_device = args.selection_device or args.device
+        logger.info(
+            f"Loading selection model from {args.selection_run} "
+            f"onto device {selection_device}"
+        )
         sel_model, selection_tokenizer = load_model_and_tokenizer(
             args.selection_run,
-            args.device,
+            selection_device,
             args.dtype,
             logger,
         )
