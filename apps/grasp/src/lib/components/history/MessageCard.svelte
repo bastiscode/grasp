@@ -47,8 +47,8 @@
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-sm);
-    flex: 1 1 auto;
-    min-width: 0;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .message-card__marker {
@@ -73,7 +73,9 @@
     gap: var(--spacing-sm);
     align-items: center;
     justify-content: flex-end;
-    flex-shrink: 0;
+    /* shrink below the one-line width of all chips, otherwise they never wrap */
+    flex: 0 1 auto;
+    min-width: 0;
     white-space: nowrap;
   }
 
