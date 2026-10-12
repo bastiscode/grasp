@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY . .
 
 # Install GRASP with all dependencies pinned to known-good versions
-RUN pip install --no-cache-dir -c constraints.txt .
+RUN pip install --no-cache-dir -c constraints.txt ".[evaluation]"
 
 # Run GRASP by default; override flags via `docker run grasp -- <args>`
 ENTRYPOINT ["grasp"]

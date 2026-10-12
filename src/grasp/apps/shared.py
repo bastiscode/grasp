@@ -50,6 +50,10 @@ def load_model_outputs(output_file: str, mtime: float) -> dict:
         assert output["id"] not in outputs_dict, (
             f"Duplicate id {output['id']} in {output_file}"
         )
+        # grisp traces make up most of the file but are never shown, and
+        # st.cache_data copies the whole result on every rerun
+        if isinstance(output.get("output"), dict):
+            output["output"].pop("trace", None)
         outputs_dict[output["id"]] = output
 
     return outputs_dict

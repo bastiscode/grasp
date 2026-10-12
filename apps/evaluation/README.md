@@ -5,7 +5,7 @@ This Streamlit application allows you to compare different SPARQL QA models acro
 ## Usage
 
 1. Navigate to the `apps/evaluation` directory
-2. Install the required dependencies: `pip install -r requirements.txt`
+2. Install the required dependencies: `pip install "../..[evaluation]"`
 3. Run the Streamlit app: `streamlit run app.py ../../data/benchmark`
 
 ## Directory structure
