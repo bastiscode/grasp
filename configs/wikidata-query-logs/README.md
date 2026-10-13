@@ -5,7 +5,8 @@ October 2026. Each run used the GRASP code from the `main` branch as it was
 when the run's `grasp serve` process was (re)started; this branch only adds
 the configs and scripts for the runs.
 
-Tags: `wdql-start` (first run) and `wdql-end` (last run).
+Tags: `wdql-start` (first run) and `wdql-end` (last run, added once
+generation is finished).
 
 | Run | Output period | GRASP commit at start | GRASP commits at likely restarts |
 |---|---|---|---|
