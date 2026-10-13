@@ -1,0 +1,59 @@
+# GraspConfig for Qwen3.8-27B served by vllm on the KI cluster
+# (vllm_qwen38_27b.sh, port 8338, tunnelled to localhost).
+model: env(MODEL:Qwen/Qwen3.8-27B)
+model_provider: env(MODEL_PROVIDER:openai/completions)
+model_endpoint: env(MODEL_ENDPOINT:http://localhost:8338/v1)
+
+model_kwargs:
+  temperature: 0.6
+  top_p: 0.95
+  extra_body:
+    repetition_penalty: 1.05
+    min_p: 0.0
+    top_k: 20
+    chat_template_kwargs:
+      preserve_thinking: true
+      enable_thinking: true
+      reasoning_effort: env(REASONING_EFFORT:medium)
+
+max_completion_tokens: env(MAX_TOKENS:8192)
+max_generation_time: env(MAX_GENERATION_TIME:600)
+# the 120s default trips on long tool-heavy turns over a tunnelled endpoint
+model_timeout: env(TIMEOUT:600.0)
+max_steps: env(MAX_STEPS:128)
+
+tool_choice: env(TOOL_CHOICE:auto)
+
+seed: env(SEED:22)
+
+feedback: env(FEEDBACK:false)
+know_before_use: env(KNOW_BEFORE_USE:false)
+notes_file: env(NOTES_FILE:null)
+
+sparql_connection_timeout: env(SPARQL_CONNECTION_TIMEOUT:6.0)
+sparql_query_timeout: env(SPARQL_QUERY_TIMEOUT:30.0)
+sparql_read_timeout: env(SPARQL_READ_TIMEOUT:10.0)
+
+fn_set: env(FN_SET:all)
+list_k: env(LIST_K:10)
+search_k: env(SEARCH_K:10)
+result_max_rows: env(RESULT_MAX_ROWS:10)
+result_max_columns: env(RESULT_MAX_COLUMNS:10)
+
+force_examples: env(FORCE_EXAMPLES:null)
+random_examples: env(RANDOM_EXAMPLES:false)
+num_examples: env(NUM_EXAMPLES:3)
+
+knowledge_graphs:
+  - kg: env(KG:wikidata)
+    examples: env(KG_EXAMPLES:null)
+    entities: env(ENTITIES_TYPE:fuzzy)
+    properties: env(PROPERTIES_TYPE:embedding)
+    literals: env(LITERALS_TYPE:fuzzy)
+    notes_file: env(KG_NOTES_FILE:null)
+    # own Wikidata QLever (pinned explicitly: endpoint null falls back to qlever.dev);
+    # timeout makes QLever cancel queries the agent has given up on (30s + 10s read)
+    info:
+      endpoint: env(KG_ENDPOINT:http://indus:7011)
+      params:
+        timeout: env(KG_QUERY_TIMEOUT:60s)
