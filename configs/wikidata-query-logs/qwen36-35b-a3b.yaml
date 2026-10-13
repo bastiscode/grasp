@@ -45,7 +45,7 @@ knowledge_graphs:
     example_index: env(KG_EXAMPLES:null)
     notes_file: env(KG_NOTES_FILE:null)
     info:
-      endpoint: env(KG_ENDPOINT:http://localhost:7001)
+      endpoint: env(KG_ENDPOINT:http://localhost:7011)
 
 port: env(PORT:12345)
 max_generation_time: env(MAX_GENERATION_TIME:600)
