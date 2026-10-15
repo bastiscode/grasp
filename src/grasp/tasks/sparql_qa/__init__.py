@@ -372,16 +372,19 @@ def output(
     }
 
     if answer is not None:
+        # .get, not [...]: a call that violated the schema still reaches here
+        # (it was rejected during dispatch, not removed from the trace), and an
+        # exception here escapes the agent loop and kills the whole episode
         output["type"] = "answer"
-        output["answer"] = answer.args["answer"].strip()
-        output["sparql"] = answer.args["sparql"]
-        output["kg"] = answer.args["kg"]
+        output["answer"] = (answer.args.get("answer") or "").strip()
+        output["sparql"] = answer.args.get("sparql")
+        output["kg"] = answer.args.get("kg")
         formatted = output["answer"]
 
     else:
         assert cancel is not None
         output["type"] = "cancel"
-        output["explanation"] = cancel.args["explanation"].strip()
+        output["explanation"] = (cancel.args.get("explanation") or "").strip()
 
         best_attempt = cancel.args.get("best_attempt")
         if best_attempt:

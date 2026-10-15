@@ -19,7 +19,7 @@ from typing import Literal
 import requests
 import torch
 from pydantic import BaseModel, field_validator
-from universal_ml_utils.io import load_jsonl
+from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger
 
 from grasp.core import load_notes, setup
@@ -35,6 +35,7 @@ from grasp.cqd.reward import (
 from grasp.cqd.rollout import collect_rollouts, enable_token_data
 from grasp.cqd.seeds import load_seeds
 from grasp.cqd.train.data import RlTurn, episode_rl_turns
+from grasp.cqd.train.hindsight import generate_hints, modulate, turn_gaps
 
 
 # a holdout validation file paired with its kg (mirrors the note-taking
@@ -108,6 +109,16 @@ class RlConfig(BaseModel):
     # how far error credit should travel, and the two endpoints bracket it.
     # Widen this only once a run shows the answer lies between them.
     turn_error_discount: float = 1.0
+    # self-distillation advantage modulation (see train/hindsight.py). Every
+    # failed rollout gets a per-rollout hindsight sentence from the teacher;
+    # the turns whose logprobs that sentence moves most have their advantage
+    # scaled by 1 + sdpo_lambda * tanh(z) on the within-group standardized
+    # |gap|. 0 disables it and is bit-identical to plain GRPO. Requires a
+    # teacher_config, and costs one teacher call per failed rollout plus two
+    # forwards per episode per round.
+    sdpo_lambda: float = 0.0
+    # concurrent teacher calls for hindsight generation
+    sdpo_parallelism: int = 4
     grad_accumulation: int = 8
     max_grad_norm: float = 1.0
     # skip turns longer than this many tokens (prompt + completion)
@@ -173,6 +184,15 @@ class RlConfig(BaseModel):
     # logging
     wandb_project: str = "grasp-cqd"
     run_name: str = "grpo"
+
+    @field_validator("sdpo_lambda")
+    @classmethod
+    def lambda_cannot_flip_the_sign(cls, v: float) -> float:
+        assert 0.0 <= v <= 1.0, (
+            f"sdpo_lambda must be in [0, 1], got {v}; above 1 the modulation "
+            "factor can go negative and invert an advantage"
+        )
+        return v
 
     @field_validator("turn_error_discount")
     @classmethod
@@ -658,6 +678,7 @@ def run_validation(
     kg_notes: dict[str, list[str]] | None,
     logger,
     num_rollouts: int = 1,
+    dump_file: str | None = None,
 ) -> dict:
     # a held-out metric should measure the agent as it is actually deployed, so
     # GRASP's answer fallback stays ON here (a query recovered from the last
@@ -667,6 +688,12 @@ def run_validation(
     metrics: dict = {}
     f1s: list[float] = []
     total_invalid = 0
+    # dump_file keeps the per-rollout rows. The aggregates below cannot support
+    # a paired comparison, discovery@k, or a per-construct breakdown, and those
+    # are the only ways an effect smaller than the holdout's spread becomes
+    # visible -- so the rows are worth keeping even though nothing reads them
+    # during training.
+    dump_rows: list[dict] = []
     for vf in val_files:
         items = []
         for row in load_jsonl(vf.file):
@@ -713,6 +740,16 @@ def run_validation(
         metrics[f"val/{name}/answered"] = stats["answered"]
 
         for r in rewards:
+            if dump_file:
+                item = pool.items.get(r.item_id)
+                dump_rows.append(
+                    {
+                        **r.model_dump(),
+                        "val_file": name,
+                        "question": item.question if item else None,
+                        "sparql": item.sparql if item else None,
+                    }
+                )
             if r.reward is None:
                 continue
             # honest aggregate: give-ups (f1 None) count as 0, not excluded
@@ -726,6 +763,10 @@ def run_validation(
     if len(f1s) > 1:
         metrics["val/f1_sem"] = statistics.stdev(f1s) / math.sqrt(len(f1s))
     metrics["val/rollouts"] = len(f1s)
+    if dump_file and dump_rows:
+        os.makedirs(os.path.dirname(dump_file) or ".", exist_ok=True)
+        dump_jsonl(dump_rows, dump_file)
+        logger.info(f"wrote {len(dump_rows)} per-rollout rows to {dump_file}")
     return metrics
 
 
@@ -747,6 +788,17 @@ def train_rl(
 
     logger = get_logger("CQD RL", log_level)
     reward_config = reward_config or RewardConfig()
+
+    # the RL path otherwise never re-renders (see train/data.py), so a
+    # tokenizer is loaded only when the gap needs one
+    sdpo_tokenizer = None
+    if config.sdpo_lambda > 0.0:
+        assert teacher_config is not None, (
+            "sdpo_lambda > 0 requires a teacher_config to generate hindsight"
+        )
+        from transformers import AutoTokenizer
+
+        sdpo_tokenizer = AutoTokenizer.from_pretrained(config.model)
 
     curriculum = config.curriculum_interval > 0
     if curriculum:
@@ -998,6 +1050,35 @@ def train_rl(
                 for advantage, turns in zip(group_advantages(rewards), episode_turns)
             ]
 
+        sdpo_metrics = {}
+        if config.sdpo_lambda > 0.0:
+            assert teacher_config is not None and sdpo_tokenizer is not None
+            hints, sdpo_metrics = generate_hints(
+                teacher_config,
+                episodes,
+                rewards,
+                config.sdpo_parallelism,
+                logger,
+            )
+            model.eval()
+            gaps = [
+                turn_gaps(model, sdpo_tokenizer, episode, hint)
+                for episode, hint in zip(episodes, hints)
+            ]
+            model.train()
+            turn_advantages, mod_metrics = modulate(
+                turn_advantages, gaps, rewards, config.sdpo_lambda
+            )
+            sdpo_metrics = {**sdpo_metrics, **mod_metrics}
+            if "sdpo/episodes_modulated" in sdpo_metrics:
+                logger.info(
+                    f"Round {round_num}: modulated "
+                    f"{sdpo_metrics['sdpo/episodes_modulated']} episodes, factor "
+                    f"{sdpo_metrics['sdpo/factor_min']:.3f}-"
+                    f"{sdpo_metrics['sdpo/factor_max']:.3f} "
+                    f"(mean {sdpo_metrics['sdpo/factor_mean']:.3f})"
+                )
+
         samples = []
         skipped_long = 0
         penalized_turns = 0
@@ -1104,6 +1185,7 @@ def train_rl(
                 "pool/covered_seeds": covered_this_round,
                 "pool/reserve": len(reserve),
                 **{f"train/{k}": v for k, v in train_metrics.items()},
+                **sdpo_metrics,
                 **val_metrics,
             }
         )
