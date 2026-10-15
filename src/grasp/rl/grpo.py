@@ -78,6 +78,8 @@ class GrpoConfig(GraspConfig):
     # KL to the base model (k3 estimator); without it policies drifted off
     # distribution into gibberish after ~15 steps in earlier runs
     kl_coef: float = 0.04
+    # cap of the truncated importance weight pi_old / pi_vllm per token
+    tis_cap: float = 2.0
     # turns per optimizer step, loss normalized per token within the window
     grad_accumulation: int = 8
     max_grad_norm: float = 1.0
@@ -86,7 +88,9 @@ class GrpoConfig(GraspConfig):
 
     lora_r: int = 32
     lora_alpha: int = 64
-    lora_dropout: float = 0.05
+    # no dropout: it would make pi_old and the updated policy stochastic and
+    # put noise into the PPO ratio
+    lora_dropout: float = 0.0
     # a module name, list of names, or a regex (needed for multimodal
     # checkpoints where "all-linear" would also adapt the vision tower)
     lora_target_modules: str | list[str] = "all-linear"
@@ -187,6 +191,36 @@ def episode_stats(episodes: list[Episode], rewards: list[EpisodeReward]) -> dict
     return stats
 
 
+# sampling kwargs for training rollouts: temperature 1 without truncation or
+# penalties, so tokens come from exactly the policy the trainer scores (vLLM
+# returns raw logprobs, i.e. before temperature, top-k/p and penalties).
+# Other kwargs, e.g. chat_template_kwargs, are kept.
+SAMPLING_KWARGS = {
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "repetition_penalty",
+}
+
+
+def on_policy_kwargs(model_kwargs: dict) -> dict:
+    kwargs = {k: v for k, v in model_kwargs.items() if k not in SAMPLING_KWARGS}
+    extra_body = {
+        k: v
+        for k, v in (model_kwargs.get("extra_body") or {}).items()
+        if k not in SAMPLING_KWARGS
+    }
+    return {
+        **kwargs,
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "extra_body": {**extra_body, "top_k": -1, "min_p": 0.0},
+    }
+
+
 def load_student_model(config: GrpoConfig, adapter: str | None):
     from peft import LoraConfig, PeftModel, get_peft_model
     from transformers import AutoModelForCausalLM
@@ -232,10 +266,32 @@ def turn_logprobs(model, turn: RlTurn) -> torch.Tensor:
     return torch.log_softmax(logits, dim=-1).gather(-1, completion[:, None]).squeeze(-1)
 
 
+# per-token logprobs of every turn before any update: the current policy
+# (pi_old) and, with the KL penalty on, the base model (adapter disabled).
+# Recomputing pi_old here instead of taking vLLM's logprobs keeps the PPO
+# ratio free of kernel and numerics differences between vLLM and PyTorch.
+@torch.no_grad()
+def pre_update_logprobs(model, samples: list[RlSample], kl: bool) -> list[tuple]:
+    model.eval()
+    out = []
+    for sample in samples:
+        old = turn_logprobs(model, sample.turn).cpu()
+        ref = None
+        if kl:
+            with model.disable_adapter():
+                ref = turn_logprobs(model, sample.turn).cpu()
+        out.append((old, ref))
+    model.train()
+    return out
+
+
 # one pass over the step's turns with clipped policy-gradient updates plus
-# the KL penalty. Token-level loss: per-token losses are summed within each
-# gradient-accumulation window and normalized by its completion token count.
-# Turns are backwarded one at a time to cap memory.
+# the KL penalty. The tokens were sampled by vLLM, not by the PyTorch policy,
+# so each token's loss is weighted by the truncated importance ratio
+# min(pi_old / pi_vllm, tis_cap) (Yao et al. 2025). Token-level loss:
+# per-token losses are summed within each gradient-accumulation window and
+# normalized by its completion token count. Turns are backwarded one at a
+# time to cap memory.
 def train_step(
     model,
     optimizer,
@@ -244,30 +300,45 @@ def train_step(
     config: GrpoConfig,
     seed: int,
 ) -> dict:
-    model.train()
     random.Random(seed).shuffle(samples)
-    total = {"loss": 0.0, "kl_old": 0.0, "kl_ref": 0.0, "clip": 0.0, "tokens": 0}
+    pre = pre_update_logprobs(model, samples, config.kl_coef > 0.0)
+    total = {
+        "loss": 0.0,
+        "kl_old": 0.0,
+        "kl_ref": 0.0,
+        "clip": 0.0,
+        "tokens": 0,
+        "mismatch_abs": 0.0,
+        "mismatch_kl": 0.0,
+        "mismatch_extreme": 0.0,
+        "tis_capped": 0.0,
+    }
     optimizer.zero_grad()
 
     for start in range(0, len(samples), config.grad_accumulation):
         window = samples[start : start + config.grad_accumulation]
+        window_pre = pre[start : start + config.grad_accumulation]
         window_tokens = max(1, sum(len(s.turn.completion_ids) for s in window))
 
-        for sample in window:
+        for sample, (old, ref) in zip(window, window_pre):
             turn = sample.turn
             new = turn_logprobs(model, turn)
-            old = torch.tensor(turn.logprobs, device=new.device, dtype=new.dtype)
+            old = old.to(new.device)
+            vllm = torch.tensor(turn.logprobs, device=new.device, dtype=new.dtype)
+
+            # pi_old / pi_vllm, the sampler-trainer mismatch
+            log_mismatch = old - vllm
+            tis = log_mismatch.exp().clamp(max=config.tis_cap)
 
             ratio = (new - old).exp()
             clipped = ratio.clamp(1 - config.clip_eps_low, 1 + config.clip_eps_high)
-            per_token = -torch.min(ratio * sample.advantage, clipped * sample.advantage)
+            per_token = -tis * torch.min(
+                ratio * sample.advantage, clipped * sample.advantage
+            )
 
             kl_ref = None
-            if config.kl_coef > 0.0:
-                # reference = base model, i.e. the adapter disabled
-                with torch.no_grad(), model.disable_adapter():
-                    ref = turn_logprobs(model, turn)
-                log_r = ref - new
+            if ref is not None:
+                log_r = ref.to(new.device) - new
                 kl_ref = log_r.exp() - log_r - 1.0
                 per_token = per_token + config.kl_coef * kl_ref
 
@@ -289,6 +360,17 @@ def train_step(
                     .item()
                 )
                 total["tokens"] += len(turn.completion_ids)
+                total["mismatch_abs"] += log_mismatch.abs().sum().item()
+                # k3 estimate of KL(pi_vllm || pi_old) on vLLM's samples
+                total["mismatch_kl"] += (
+                    (log_mismatch.exp() - log_mismatch - 1.0).sum().item()
+                )
+                total["mismatch_extreme"] += (
+                    (log_mismatch.abs() > math.log(2)).float().sum().item()
+                )
+                total["tis_capped"] += (
+                    (log_mismatch.exp() > config.tis_cap).float().sum().item()
+                )
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
         optimizer.step()
@@ -303,6 +385,12 @@ def train_step(
         "clip_frac": total["clip"] / tokens,
         "turns": len(samples),
         "tokens": total["tokens"],
+        # sampler-trainer mismatch: mean |log pi_old - log pi_vllm|, its KL,
+        # the share of tokens off by more than 2x, and the share TIS capped
+        "mismatch/abs_logprob": total["mismatch_abs"] / tokens,
+        "mismatch/kl": total["mismatch_kl"] / tokens,
+        "mismatch/extreme_frac": total["mismatch_extreme"] / tokens,
+        "mismatch/tis_capped_frac": total["tis_capped"] / tokens,
     }
 
 
@@ -419,7 +507,10 @@ def train(
     rollout_config.model_provider = "openai/completions"
     rollout_config.model_endpoint = f"{config.vllm_url}/v1"
     rollout_config.model_api_key = rollout_config.model_api_key or "EMPTY"
-    enable_token_data(rollout_config)
+    # validation samples with the configured recipe, training on-policy
+    train_rollout_config = rollout_config.model_copy(deep=True)
+    train_rollout_config.model_kwargs = on_policy_kwargs(config.model_kwargs)
+    enable_token_data(train_rollout_config)
 
     # resume from the last completed step if there is one
     state_file = os.path.join(output_dir, "trainer_state.pt")
@@ -469,6 +560,7 @@ def train(
             unload=None,
         )
     rollout_config.model = served or config.model
+    train_rollout_config.model = rollout_config.model
 
     def validate(step: int) -> dict:
         nonlocal best_score
@@ -511,7 +603,7 @@ def train(
         episodes = collect_rollouts(
             config.task,
             batch,
-            rollout_config,
+            train_rollout_config,
             managers,
             config.group_size,
             config.parallelism,
@@ -560,6 +652,7 @@ def train(
         load_adapter_into_vllm(config.vllm_url, name, path, unload=served)
         served = name
         rollout_config.model = name
+        train_rollout_config.model = name
         torch.save(
             {
                 "step": step,

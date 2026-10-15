@@ -3,6 +3,7 @@
 # trainer share the card.
 #   sbatch --export=ALL slurm_grpo.sbatch                       # full WQSP run
 #   sbatch --export=ALL,SMOKE=1 --time=01:00:00 slurm_grpo.sbatch  # 4 steps on 16 items
+#   sbatch --export=ALL,NUM_EPOCHS=0 slurm_grpo.sbatch          # base model eval only
 # Submit from a login shell, else https_proxy is missing and wandb runs offline.
 # Resuming is automatic: rerun with the same OUT and the trainer continues after
 # the last completed step (adapter, optimizer, lr schedule).
@@ -22,14 +23,16 @@ DATA=/work/dlc2workfs1/swalter-data/grasp-cqd
 CONFIG=${CONFIG:-configs/rl/grpo/wqsp.yaml}
 
 export MODEL=${MODEL:-Qwen/Qwen2.5-7B-Instruct}
+TAG=$(basename "$MODEL" | tr '[:upper:]' '[:lower:]' | tr -d '.')
 case "$MODEL" in
   *Qwen2.5*)
-    TAG=qwen25-7b
     SERVE_FLAGS="--enable-auto-tool-choice --tool-call-parser hermes"
     ;;
-  *Qwen3.5*)
-    TAG=qwen35-9b
+  *Qwen3.5*|*Qwen3.6*|*Qwen3.8*)
     SERVE_FLAGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3"
+    # multimodal hybrid-attention checkpoint: adapt the text stack only, not
+    # the vision tower "all-linear" would also hit
+    export LORA_TARGET_MODULES=${LORA_TARGET_MODULES:-'model\.layers\.\d+\.(mlp\.(gate|up|down)_proj|self_attn\.[qkvo]_proj|linear_attn\.(in_proj_(qkv|z|b|a)|out_proj))'}
     ;;
   *)
     echo "unknown MODEL '$MODEL', add its parser flags (and LORA_TARGET_MODULES)"
@@ -55,6 +58,7 @@ export WANDB_INIT_TIMEOUT=120
 export TRAIN_FILE=${TRAIN_FILE:-$DATA/pools/wqsp_train_pool.jsonl}
 export VAL_FILE=${VAL_FILE:-$DATA/pools/wqsp_val300_pool.jsonl}
 export RUN_NAME=${RUN_NAME:-grpo-wqsp-$TAG}
+[ "${NUM_EPOCHS:-1}" = "0" ] && RUN_NAME=$RUN_NAME-base
 OUT=${OUT:-$DATA/runs-rl/$RUN_NAME}
 if [ "${SMOKE:-0}" = "1" ]; then
   RUN_NAME=$RUN_NAME-smoke

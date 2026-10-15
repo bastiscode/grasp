@@ -1,7 +1,18 @@
+import math
+
+import torch
 from universal_ml_utils.logging import get_logger
 
-from grasp.rl.data import episode_turns
-from grasp.rl.grpo import episode_stats, group_advantages
+from grasp.rl.data import RlTurn, episode_turns
+from grasp.rl.grpo import (
+    GrpoConfig,
+    RlSample,
+    episode_stats,
+    group_advantages,
+    on_policy_kwargs,
+    train_step,
+    turn_logprobs,
+)
 from grasp.rl.reward import (
     CeaScorer,
     EpisodeReward,
@@ -166,3 +177,102 @@ def test_episode_stats_count_functions_per_episode():
     assert stats["env/fn/execute"] == 0.5 and stats["env/fn/answer"] == 1.0
     assert stats["score"] == 0.5 and stats["score_valid"] == 1.0
     assert stats["env/type/answer"] == 0.5
+
+
+def test_on_policy_kwargs_drop_sampling_but_keep_template_kwargs():
+    kwargs = on_policy_kwargs(
+        {
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "presence_penalty": 1.5,
+            "logprobs": True,
+            "extra_body": {
+                "top_k": 20,
+                "min_p": 0.1,
+                "repetition_penalty": 1.1,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        }
+    )
+    assert kwargs == {
+        "logprobs": True,
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "extra_body": {
+            "chat_template_kwargs": {"enable_thinking": False},
+            "top_k": -1,
+            "min_p": 0.0,
+        },
+    }
+
+
+def tiny_policy():
+    from peft import LoraConfig, get_peft_model
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+
+    torch.manual_seed(0)
+    config = Qwen2Config(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+    )
+    lora = LoraConfig(
+        r=4, lora_alpha=8, target_modules="all-linear", init_lora_weights=False
+    )
+    return get_peft_model(Qwen2ForCausalLM(config), lora)
+
+
+def test_train_step_on_policy_has_no_mismatch_and_updates():
+    model = tiny_policy()
+    config = GrpoConfig(train_files=[], grad_accumulation=2, lr_warmup_steps=1)
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad], lr=1e-2
+    )
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: 1.0)
+
+    samples = []
+    for i, advantage in enumerate([1.0, -1.0, 0.5]):
+        turn = RlTurn(
+            prompt_ids=[1, 2, 3 + i], completion_ids=[4, 5 + i], logprobs=[0.0, 0.0]
+        )
+        with torch.no_grad():
+            # vLLM logprobs identical to the trainer's: no mismatch
+            turn.logprobs = turn_logprobs(model, turn).tolist()
+        samples.append(RlSample(turn=turn, advantage=advantage))
+
+    before = [p.clone() for p in model.parameters() if p.requires_grad]
+    metrics = train_step(model, optimizer, scheduler, samples, config, seed=0)
+    after = [p for p in model.parameters() if p.requires_grad]
+
+    assert metrics["mismatch/abs_logprob"] < 1e-5
+    assert metrics["mismatch/tis_capped_frac"] == 0.0
+    assert metrics["tokens"] == 6 and metrics["turns"] == 3
+    assert any(not torch.equal(b, a) for b, a in zip(before, after))
+
+
+def test_train_step_reports_mismatch_and_caps_tis():
+    model = tiny_policy()
+    config = GrpoConfig(train_files=[], kl_coef=0.0, tis_cap=2.0)
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad], lr=0.0
+    )
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: 1.0)
+    turn = RlTurn(prompt_ids=[1, 2], completion_ids=[3, 4], logprobs=[0.0, 0.0])
+    with torch.no_grad():
+        hf = turn_logprobs(model, turn).tolist()
+    # vLLM saw token 1 as 10x less likely than the trainer does, token 2 exact
+    turn.logprobs = [hf[0] - math.log(10), hf[1]]
+    metrics = train_step(
+        model,
+        optimizer,
+        scheduler,
+        [RlSample(turn=turn, advantage=1.0)],
+        config,
+        seed=0,
+    )
+    assert metrics["mismatch/extreme_frac"] == 0.5
+    assert metrics["mismatch/tis_capped_frac"] == 0.5
+    assert abs(metrics["mismatch/abs_logprob"] - math.log(10) / 2) < 1e-4

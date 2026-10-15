@@ -2,13 +2,18 @@
 # served by a vLLM server with LoRA enabled, see src/grasp/rl/grpo.py.
 model: env(MODEL:Qwen/Qwen2.5-7B-Instruct)
 vllm_url: env(VLLM_URL:http://localhost:8000)
-# Qwen recipe; no presence/repetition penalty, SPARQL repeats tokens
+# sampling for validation (Qwen non-thinking recipe without presence
+# penalty, SPARQL repeats tokens); training rollouts always sample on-policy
+# at temperature 1 without truncation, see grpo.on_policy_kwargs
 model_kwargs:
   temperature: env(TEMPERATURE:0.7)
   top_p: env(TOP_P:0.8)
   extra_body:
     top_k: env(TOP_K:20)
     min_p: 0.0
+    # Qwen3.5+ think by default; ignored by templates without the switch
+    chat_template_kwargs:
+      enable_thinking: false
 max_completion_tokens: env(MAX_COMPLETION_TOKENS:2048)
 model_timeout: 240
 
