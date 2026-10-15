@@ -1,0 +1,61 @@
+# GRPO baseline on the frozen WQSP training split (freebase). Rollouts are
+# served by a vLLM server with LoRA enabled, see src/grasp/rl/grpo.py.
+model: env(MODEL:Qwen/Qwen2.5-7B-Instruct)
+vllm_url: env(VLLM_URL:http://localhost:8000)
+# Qwen recipe; no presence/repetition penalty, SPARQL repeats tokens
+model_kwargs:
+  temperature: env(TEMPERATURE:0.7)
+  top_p: env(TOP_P:0.8)
+  extra_body:
+    top_k: env(TOP_K:20)
+    min_p: 0.0
+max_completion_tokens: env(MAX_COMPLETION_TOKENS:2048)
+model_timeout: 240
+
+seed: env(SEED:22)
+
+task: sparql-qa
+train_files:
+  - file: env(TRAIN_FILE:data/rl/wqsp/train.jsonl)
+    kg: freebase
+val_files:
+  - file: env(VAL_FILE:data/rl/wqsp/val.jsonl)
+    kg: freebase
+
+fn_set: env(FN_SET:all)
+max_steps: env(MAX_STEPS:30)
+# a guessed IRI becomes a scored function call error instead of a silent one
+know_before_use: true
+task_kwargs:
+  sparql-qa:
+    execute_before_answer: env(EXECUTE_BEFORE_ANSWER:false)
+# no examples: wqsp ships a train example index, retrieving from the split
+# we train on would be both a crutch and a leak
+force_examples: null
+
+knowledge_graphs:
+  - kg: freebase
+    entities: fuzzy
+    properties: embedding
+    info:
+      endpoint: env(FREEBASE_ENDPOINT:http://tagus.informatik.privat:7002)
+
+reward:
+  endpoints:
+    freebase: env(FREEBASE_ENDPOINT:http://tagus.informatik.privat:7002)
+
+num_epochs: env(NUM_EPOCHS:1)
+batch_size: env(BATCH_SIZE:8)
+group_size: env(GROUP_SIZE:8)
+parallelism: env(PARALLELISM:16)
+learning_rate: env(LR:2e-5)
+kl_coef: env(KL_COEF:0.04)
+max_seq_len: 24576
+lora_target_modules: env(LORA_TARGET_MODULES:all-linear)
+
+val_interval: env(VAL_INTERVAL:25)
+val_rollouts: env(VAL_ROLLOUTS:1)
+save_interval: env(SAVE_INTERVAL:50)
+
+wandb_project: env(WANDB_PROJECT:grasp-rl)
+run_name: env(RUN_NAME:grpo-wqsp)
