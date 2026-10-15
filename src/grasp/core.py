@@ -211,6 +211,11 @@ def generate(
     else:
         messages = [Message.system(content=system_instruction)]
 
+    # live reference for tasks that inspect the trace mid-run: the loop
+    # appends here and fills in tool call results in place (sparql-qa's
+    # execute-before-answer gate reads it)
+    task.messages = messages
+
     start = time.monotonic()
 
     # add user input

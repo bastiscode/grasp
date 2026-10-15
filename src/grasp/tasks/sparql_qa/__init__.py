@@ -19,12 +19,14 @@ from grasp.tasks.sparql_qa.examples import (
 from grasp.tasks.sparql_qa.examples import (
     functions as example_functions,
 )
+from grasp.sparql.utils import find_terminals, parse_string
 from grasp.tasks.utils import prepare_sparql_result
 from grasp.utils import (
     FunctionCallException,
     format_enumerate,
     format_notes,
     format_section,
+    is_server_error,
 )
 
 
@@ -374,16 +376,19 @@ def output(
     }
 
     if answer is not None:
+        # .get, not [...]: a call that violated the schema still reaches here
+        # (it was rejected during dispatch, not removed from the trace), and an
+        # exception here escapes the agent loop and kills the whole episode
         output["type"] = "answer"
-        output["answer"] = answer.args["answer"].strip()
-        output["sparql"] = answer.args["sparql"]
-        output["kg"] = answer.args["kg"]
+        output["answer"] = (answer.args.get("answer") or "").strip()
+        output["sparql"] = answer.args.get("sparql")
+        output["kg"] = answer.args.get("kg")
         formatted = output["answer"]
 
     else:
         assert cancel is not None
         output["type"] = "cancel"
-        output["explanation"] = cancel.args["explanation"].strip()
+        output["explanation"] = (cancel.args.get("explanation") or "").strip()
 
         best_attempt = cancel.args.get("best_attempt")
         if best_attempt:
@@ -494,6 +499,126 @@ class SparqlQaTask(GraspTask, FeedbackTask):
     # stopping so the model gets another round to verify them
     answer_rejected: bool = False
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # live reference to the agent loop's message list, set by grasp.core.
+        # Empty when the task is driven directly (tests, other callers).
+        self.messages: list[Message] = []
+
+    # tool calls of this episode that have actually run, in order. Neither
+    # result nor error set means not dispatched yet: the stopping call being
+    # checked now and anything after it in the same response. Skipping those
+    # is what lets a model emit `execute` and `answer` together.
+    def dispatched_tool_calls(self) -> list[ToolCall]:
+        out: list[ToolCall] = []
+        for message in self.messages:
+            content = message.content
+            if isinstance(content, str):
+                continue
+
+            for tool_call in content.tool_calls:
+                if tool_call.result is None and tool_call.error is None:
+                    continue
+
+                out.append(tool_call)
+
+        return out
+
+    def executed_query(self, tool_call: ToolCall) -> str | None:
+        return self.normalize_query(
+            tool_call.args.get("kg"), tool_call.args.get("sparql")
+        )
+
+    # canonical form for comparing two SPARQL strings: parsing drops comments
+    # and whitespace, fix_prefixes makes `wd:Q42` and the full IRI compare
+    # equal. None when absent or unparseable, which callers treat as no match.
+    def normalize_query(self, kg: str | None, sparql: str | None) -> str | None:
+        if not sparql:
+            return None
+
+        try:
+            manager, _ = find_manager(self.managers, kg or self.managers[0].kg)
+            parse, _ = parse_string(
+                manager.fix_prefixes(sparql),
+                manager.sparql_parser,
+                skip_empty=True,
+            )
+            return " ".join(
+                t["value"] for t in find_terminals(parse) if t.get("value")
+            )
+        except Exception:
+            return None
+
+    # require the submitted query to be the one just executed. The prompt says
+    # to do this but nothing enforced it, and know_before_answer does not: it
+    # is satisfied by IRIs seen in search results, so a model can ground every
+    # identifier and still submit a query it never ran. Each failure gets its
+    # own message -- one message for all of them tells a model that did run
+    # the query otherwise.
+    def check_executed(self, fn_name: str, kg: str, sparql: str) -> None:
+        submitted = self.normalize_query(kg, sparql)
+        # appended to every rejection. cancel also gets told it may drop the
+        # best attempt, the exit that keeps a stuck model from being trapped.
+        habit = (
+            f"Always run the exact query you intend to submit, look at what "
+            f"comes back and confirm it is plausible and what you expected, "
+            f"then call {fn_name} next with that query."
+        )
+        if fn_name == "cancel":
+            habit += " If you cannot get the query to run, call cancel without a best attempt instead."
+
+        if submitted is None:
+            raise FunctionCallException(
+                f"""\
+The SPARQL query passed to {fn_name} could not be parsed, so it cannot be \
+checked against what you executed. Fix the query and execute it first. {habit}"""
+            )
+
+        dispatched = self.dispatched_tool_calls()
+        previous = dispatched[-1] if dispatched else None
+
+        # a) the call right before was not an execute at all
+        if previous is None or previous.name != "execute":
+            ran_earlier = any(
+                call.name == "execute" and self.executed_query(call) == submitted
+                for call in dispatched
+            )
+            if ran_earlier:
+                raise FunctionCallException(
+                    f"""\
+You did execute the SPARQL query passed to {fn_name}, but another function was \
+called since, so its result is no longer the last thing you saw. Execute the \
+query again. {habit}"""
+                )
+
+            raise FunctionCallException(
+                f"""\
+The SPARQL query passed to {fn_name} has never been executed, so nothing \
+confirms what it returns. {habit}"""
+            )
+
+        # b) an execute ran, but of some other query
+        if self.executed_query(previous) != submitted:
+            raise FunctionCallException(
+                f"""\
+The SPARQL query passed to {fn_name} is not the one you just executed, so its \
+result is unverified. The query you submit must be exactly the query you \
+ran. {habit}"""
+            )
+
+        # c) the right query ran but failed. A backend timeout or 5xx is not
+        # the model's mistake and re-running usually fails the same way, so
+        # accept it rather than trapping the episode in a retry loop -- the
+        # answer is still scored on its own merits. A client-side error (bad
+        # syntax, unknown IRI) is the model's to fix.
+        if previous.error is not None and not is_server_error(previous.error):
+            raise FunctionCallException(
+                f"""\
+Your execution of the SPARQL query passed to {fn_name} returned an error, so \
+you have not seen a result for it. Fix the query and execute it \
+successfully. {habit}"""
+            )
+
     def system_information(self) -> str:
         return system_information()
 
@@ -520,15 +645,18 @@ class SparqlQaTask(GraspTask, FeedbackTask):
                 example_indices,
             )
 
-        # fresh attempt to stop; assume it is accepted unless the
-        # know-before-answer check below rejects it
+        # fresh attempt to stop; assume it is accepted unless one of the
+        # gates below rejects it
         self.answer_rejected = False
         task_kwargs = self.config.task_kwargs.get("sparql-qa", {})
         know_before_answer = task_kwargs.get("know_before_answer", True)
+        # opt-in, unlike know_before_answer: too invasive to default on for
+        # callers that never asked for it.
+        execute_before_answer = task_kwargs.get("execute_before_answer", False)
         result = "Stopping"
 
-        if not know_before_answer:
-            # no need to check for known IRIs; accept the answer/cancel call
+        if not know_before_answer and not execute_before_answer:
+            # both gates off; accept the answer/cancel call
             return result
 
         # locate the final query to verify: the answer's query, or a
@@ -548,12 +676,28 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         assert kg is not None and sparql is not None, "kg and sparql must be provided"
 
         manager, _ = find_manager(self.managers, kg)
+
+        # Both gates raise FunctionCallException to force another round rather
+        # than stopping, so the model sees the reason and can act on it.
+        #
+        # known first: `execute` enforces know_before_use itself, so telling a
+        # model to run a query built on unknown IRIs just routes it to the
+        # same complaint one step later.
         try:
-            # all non-common-prefix IRIs must be known from the trace
-            check_known(manager, sparql, known)
+            if know_before_answer:
+                # all non-common-prefix IRIs must be known from the trace
+                check_known(manager, sparql, known)
+
+            # BOTH answer and cancel: best_attempt earns f1 just like an
+            # answer, so gating only answer lets RL route around the gate by
+            # cancelling instead. Traps nobody -- cancel without a
+            # best_attempt returns above unconditionally.
+            if execute_before_answer:
+                # the submitted query must be the one just executed
+                self.check_executed(fn_name, kg, sparql)
         except FunctionCallException:
-            # do not stop; force another round so the model can
-            # verify or replace the unknown IRIs
+            # do not stop; force another round so the model can execute the
+            # query, or verify/replace the unknown IRIs
             self.answer_rejected = True
             raise
 
