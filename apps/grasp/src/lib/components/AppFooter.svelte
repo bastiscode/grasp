@@ -4,13 +4,9 @@
   const year = new Date().getFullYear();
 
   const footerLinks = [
-    { href: BRAND_LINKS.evaluation, label: 'Evaluation' },
-    { href: BRAND_LINKS.data, label: 'Material' },
-  { href: BRAND_LINKS.repo, label: 'GitHub' },
-  { href: BRAND_LINKS.methodPaper, label: 'Method Paper' },
-  { href: BRAND_LINKS.systemPaper, label: 'System Paper' },
-  { href: BRAND_LINKS.entityLinkingPaper, label: 'Entity Linking Paper' }
-];
+    { href: BRAND_LINKS.material, label: 'Papers & Material' },
+    { href: BRAND_LINKS.repo, label: 'GitHub' }
+  ];
 </script>
 
 <footer class="footer">

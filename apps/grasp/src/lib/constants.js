@@ -14,12 +14,8 @@ export const APP_COLORS = Object.freeze({
 export const BRAND_LINKS = Object.freeze({
   chair: 'https://ad.cs.uni-freiburg.de',
   repo: 'https://github.com/ad-freiburg/grasp',
-  methodPaper: 'https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_WB_2025.pdf',
-  systemPaper: 'https://ad-publications.cs.uni-freiburg.de/ISWC_grasp_demo_WB_2025.pdf',
-  entityLinkingPaper:
-    'https://ad-publications.cs.uni-freiburg.de/SEMTAB_entity_linking_grasp_WB_2025.pdf',
-  evaluation: 'evaluate',
-  data: 'https://ad-publications.cs.uni-freiburg.de/grasp/'
+  // papers, their material and evaluation apps are listed on this page
+  material: 'https://ad-publications.cs.uni-freiburg.de/grasp/'
 });
 
 /**
