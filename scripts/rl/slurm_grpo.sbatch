@@ -51,6 +51,12 @@ export HF_HUB_OFFLINE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export VLLM_ALLOW_RUNTIME_LORA_UPDATING=1
 export VLLM_USE_FLASHINFER_SAMPLER=0
+# the trainer runs from its own env: torch 2.12 with triton 3.7.1, which fla's
+# backward needs on Hopper (Qwen3.5 linear attention); vLLM 0.26 pins torch
+# 2.11 and stays in grasp-cqd. tilelang cannot JIT on the nodes (no cc1plus,
+# mismatched CUDA headers), so fla uses its triton kernels.
+TRAIN_PYTHON=${TRAIN_PYTHON:-/work/dlc2workfs1/swalter-env/anaconda/envs/grasp-rl-train/bin/python}
+export FLA_TILELANG=0
 export FREEBASE_ENDPOINT=${FREEBASE_ENDPOINT:-http://tagus.informatik.privat:7002}
 export WANDB_INIT_TIMEOUT=120
 [ -z "${https_proxy:-}" ] && export WANDB_MODE=offline
@@ -103,4 +109,4 @@ case " $served " in
   *) echo "vllm on $PORT serves '$served', expected '$MODEL'"; exit 1 ;;
 esac
 
-python -m grasp.rl.grpo "$CONFIG" "$OUT"
+"$TRAIN_PYTHON" -m grasp.rl.grpo "$CONFIG" "$OUT"
