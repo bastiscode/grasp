@@ -558,7 +558,7 @@ def parse_args() -> argparse.Namespace:
         "--endpoint",
         type=str,
         help="SPARQL endpoint of the knowledge graph "
-        "(if not given, the endpoint at qlever.cs.uni-freiubrg.de/api/<kg> is used)",
+        "(if not given, the endpoint from info.json or qlever.dev/api/<kg> is used)",
     )
     data_parser.add_argument(
         "--index-sparql",

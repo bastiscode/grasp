@@ -106,6 +106,16 @@ pip install git+https://github.com/ad-freiburg/grasp.git@main
 # From PyPI (not recommended as of now, at least as long
 # as GRASP is under heavy development)
 pip install grasp-rdf
+
+# Optional extras:
+# - evaluation: Streamlit apps (apps/evaluation, grasp evaluate expert)
+# - grisp: training and running GRISP
+# - data: rebuilding the benchmark datasets with the Makefile
+pip install "grasp-rdf[evaluation,grisp,data] @ git+https://github.com/ad-freiburg/grasp.git@main"
+
+# To install with the dependency versions we tested, use the constraints file
+# from a clone of this repository:
+pip install -c constraints.txt -e .
 ```
 
 2. Set the `GRASP_INDEX_DIR` env variable. Defaults to `$HOME/.grasp/index` if not
@@ -169,6 +179,19 @@ echo "Where was Angela Merkel born?" | grasp run configs/run.yaml --task general
 grasp run configs/run.yaml --task cea --input-format json \
   --input '{"table": {"header": ["Country", "Capital"], "data": [["France", "Paris"]]}}'
 
+# For entity linking (entity-linking), the input is a JSON object with a "text"
+# field containing "data" (the text to annotate) and optionally
+# "annotate_from"/"annotate_up_to" (character offsets restricting the span to
+# annotate) and "special_instructions". The task links mentions in the text to
+# entities in the knowledge graph.
+grasp run configs/run.yaml --task entity-linking --input-format json \
+  --input '{"text": {"data": "Angela Merkel was born in Hamburg."}}'
+
+# For SPARQL-to-question (sparql-to-question), the input is a SPARQL query and
+# the output are natural language questions that the query answers.
+grasp run configs/run.yaml --task sparql-to-question \
+  --input 'SELECT ?x WHERE { wd:Q567 wdt:P19 ?x }'
+
 # Show all available options:
 grasp run -h
 
@@ -198,7 +221,7 @@ cat data/benchmark/wikidata/qald10/outputs/gpt-41.jsonl | grasp show --skip-syst
 
 # You can also run GRASP in a client-server setup. This is also the server
 # that powers the corresponding web app.
-# To start a GRASP server, by default on port 8000, just run:
+# To start a GRASP server, by default on port 6789, just run:
 grasp serve configs/run.yaml
 
 # For convenience, we also provide a config to run the server with all
@@ -241,9 +264,12 @@ grasp evaluate f1 -h
 grasp evaluate judge -h
 grasp evaluate expert -h
 
-# Build an example index for few-shot learning from a JSONL file of examples:
+# Build an example index for few-shot learning from a JSONL file of examples.
+# The last argument is a short description of the examples, which is shown
+# to the model in the system prompt:
 grasp examples data/benchmark/wikidata/qald10/train.jsonl \
-  data/benchmark/wikidata/qald10/train-example-index
+  data/benchmark/wikidata/qald10/train-example-index \
+  "Question-SPARQL pairs from the QALD-10 train set over Wikidata"
 
 # Merge data from multiple knowledge graphs into a single combined KG.
 # The first KG is the primary one; entities/properties from subsequent KGs
@@ -262,18 +288,31 @@ grasp notes outputs configs/notes/outputs.yaml notes/
 grasp notes explore configs/notes/explore.yaml notes/
 # Generate plausible questions over the configured KGs as bootstrap samples
 # for note taking (no task samples needed):
-grasp notes generate-questions configs/notes/explore.yaml notes/
+grasp notes generate-questions configs/notes/generate_questions.yaml notes/
 ```
 
 ### Server API
 
-When running `grasp serve`, the server exposes the following HTTP endpoints (by default on port 8000).
+When running `grasp serve`, the server exposes the following HTTP endpoints (by default on port 6789).
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/knowledge_graphs` | GET | Returns list of available KG names |
 | `/config` | GET | Returns the server configuration |
 | `/run` | POST | Run GRASP on a single input |
+| `/live` | WebSocket | Run GRASP and stream its steps (used by the web app) |
+| `/save` | POST | Save a web app state for sharing (only if `share` is set) |
+| `/load/{share_id}` | GET | Load a shared web app state (only if `share` is set) |
+| `/transcribe` | POST | Transcribe an audio question (only if `speech_to_text` is set) |
+
+Server-specific config options (see `ServerConfig` in the
+[config code](src/grasp/configs.py)):
+
+- `port`, `max_connections`, `max_generation_time`, `max_idle_time`
+- `log_outputs` / `log_file`: log all outputs / server logs to these files
+- `share`: directory to store shared web app states in
+- `rate_limit` / `rate_limit_window`: max requests per client IP per window (seconds)
+- `speech_to_text`: model and endpoint for transcribing spoken questions
 
 #### `POST /run`
 
@@ -288,14 +327,17 @@ When running `grasp serve`, the server exposes the following HTTP endpoints (by 
 }
 ```
 
-- `task`: one of `"sparql-qa"`, `"general-qa"`, `"cea"`, `"wikidata-query-logs"`
-- `input`: the task input (string for most tasks, JSON object for `"cea"`)
+- `task`: one of `"sparql-qa"`, `"general-qa"`, `"cea"`, `"entity-linking"`,
+  `"sparql-to-question"`, `"wikidata-query-logs"`
+- `input`: the task input (string for most tasks; for `"cea"` a JSON object with
+  `header` and `data`, for `"entity-linking"` a JSON object with `data` and the
+  optional fields shown above)
 - `knowledge_graphs`: list of one or more KG names available on the server
 - `past` *(optional)*: conversation history for multi-turn interactions, with fields `messages` (list of previous messages) and `known` (set of known entity/property IRIs)
 
 **Response:** GRASP output as a JSON object
 
-**Error codes:** `400` invalid KG selection, `429` rate limit exceeded, `503` server busy, `504` generation timeout
+**Error codes:** `400` invalid KG selection, `429` rate limit exceeded, `500` internal error, `503` server busy, `504` generation timeout
 
 ### Run GRASP with Docker
 
@@ -305,9 +347,11 @@ Build the Docker image:
 docker build -t grasp .
 ```
 
-The entrypoint for the Docker image is the `grasp` CLI. To run it with
-Docker, make sure that your `GRASP_INDEX_DIR` is mounted to `/opt/grasp`
-and your API keys (e.g. `OPENAI_API_KEY`) are set as env variables.
+The image installs GRASP with the `evaluation` extra and the tested dependency
+versions from `constraints.txt`. The entrypoint for the Docker image is the
+`grasp` CLI. To run it with Docker, make sure that your `GRASP_INDEX_DIR` is
+mounted to `/opt/grasp` and your API keys (e.g. `OPENAI_API_KEY`) are set as
+env variables.
 
 Some example commands are shown below.
 
@@ -317,7 +361,7 @@ echo "Where was Angela Merkel born?" | \
   docker run -i --rm \
   --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
-  -v $GRASP_INDEX_DIR:/data/index \
+  -v $GRASP_INDEX_DIR:/opt/grasp \
   -e HF_HOME=/hf \
   -v $HF_HOME:/hf \
   grasp run configs/run.yaml
@@ -327,7 +371,7 @@ echo "Where was Angela Merkel born?" | \
 docker run --rm \
   --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
-  -v $GRASP_INDEX_DIR:/data/index \
+  -v $GRASP_INDEX_DIR:/opt/grasp \
   -e HF_HOME=/hf \
   -v $HF_HOME:/hf \
   -v $PWD/my_config.yaml:/grasp/server.yaml \
@@ -347,7 +391,95 @@ as specified in the config code.
 
 The configuration options and the use of env variable placeholders are
 mostly self-explanatory, so we refer you to the [example config files](configs)
-and the [config code](src/grasp/configs.py) for details.
+and the [config code](src/grasp/configs.py) for details. Some options that
+are less obvious are described below.
+
+**Knowledge graphs and indices**
+
+Each entry in `knowledge_graphs` selects a KG and the indices to load for it:
+
+```yaml
+knowledge_graphs:
+  - kg: wikidata
+    entities: fuzzy        # auto, fuzzy, embedding, keyword, or null to disable
+    properties: embedding
+    literals: auto         # fuzzy for more than 1M literals, embedding otherwise
+    shapes: {}             # shape index with default settings, null to disable
+    examples: data/benchmark/wikidata/qald10/train-example-index
+    notes_file: null
+```
+
+**SPARQL endpoint**
+
+By default, GRASP queries the QLever endpoint at `https://qlever.dev/api/<kg_name>`.
+To use another endpoint, set `endpoint` in the KG's `info.json` (see
+[below](#customizing-prefixes-and-info-sparql-queries)) or override it per
+KG in the config. Extra HTTP headers and query parameters for every request can
+be set the same way:
+
+```yaml
+knowledge_graphs:
+  - kg: my-kg
+    info:
+      endpoint: http://localhost:7001
+      headers: {X-Api-Key: ...}
+      params: {timeout: 30s}
+```
+
+Fields set under `info` in the config overwrite the ones from `info.json`.
+
+**Basic Auth**
+
+If an endpoint requires Basic Auth, set the env variables
+`GRASP_BASICAUTH_<KG>_USER` and `GRASP_BASICAUTH_<KG>_PASSWD`, where `<KG>` is
+the KG name in upper case with non-alphanumeric characters replaced by `_`
+(e.g. `GRASP_BASICAUTH_MY_KG_USER` for `my-kg`).
+
+**Search parameters**
+
+Embedding indices store their search parameters (`min_score`, `rerank`,
+`exact`) with the index (see `grasp index -h`). You can override them per index
+in the config:
+
+```yaml
+knowledge_graphs:
+  - kg: wikidata
+    properties:
+      type: embedding
+      params: {min_score: 0.5}
+```
+
+**Additional indices**
+
+Besides entities, properties, and literals, you can load further indices built
+with [search-rdf](https://github.com/ad-freiburg/search-rdf). Put the search-rdf
+build config at `$GRASP_INDEX_DIR/<kg_name>/indices.yaml` and build the
+indices into `$GRASP_INDEX_DIR/<kg_name>/<name>`. GRASP reads `name`, `type`,
+and `description` of each entry under `indices`, and loads the ones you select
+in the config via `indices: [<name>, ...]`.
+
+**Task options**
+
+Task-specific options are set under `task_kwargs`, keyed by task name, e.g.:
+
+```yaml
+task_kwargs:
+  sparql-qa:
+    know_before_answer: true   # only allow IRIs seen in earlier function call results
+  cea:
+    context_rows: null         # rows of table context shown to the model
+    know_before_annotate: true
+  entity-linking:
+    context: null              # characters of surrounding text shown to the model
+    know_before_annotate: true
+    show_state_after_annotate: true
+  sparql-to-question:
+    max_questions: 3
+    language: English
+```
+
+See the respective task code in [src/grasp/tasks](src/grasp/tasks) for all
+options and defaults.
 
 ### Build your own knowledge graph indices
 
@@ -414,17 +546,20 @@ in the index, and how their labels and aliases are retrieved.
 > default queries from [here](src/grasp/sparql/queries)
 > - Our custom index data queries for various knowledge graphs
 > are [here](queries)
-> - If there is neither a label nor an alias for an entity/property, we use
-> its IRI as fallback label
-> - For properties, we always add the IRI as alias, to make them searchable by
-> their IRI as well
-> - For literals, the IRI fallback is omitted by default (since literals have no IRI)
+> - By default (`--add-id-as-label auto`), entities without label or alias get
+> no fallback, properties always get their (prefixed) IRI as additional label to
+> make them searchable by IRI, and literals without label use their value as label.
+> Change this with `--add-id-as-label <never|always|empty>`
+> (`empty` means only for items without any label or alias)
 
 With the CLI, you can use the `grasp data` command as follows:
 
 ```bash
 # The index type (entities, properties, or literals) is a required argument.
-# By default, we use https://qlever.cs.uni-freiburg.de/api/<kg_name> as SPARQL endpoint.
+# The SPARQL endpoint is taken from --endpoint, the endpoint in
+# $GRASP_INDEX_DIR/<kg_name>/info.json, or https://qlever.dev/api/<kg_name>
+# (in that order). Headers, query parameters, and Basic Auth are applied as
+# described in section "Configure GRASP".
 # The data will be saved to $GRASP_INDEX_DIR/<kg_name>/entities/data.jsonl
 # and $GRASP_INDEX_DIR/<kg_name>/properties/data.jsonl etc.
 # For example, to get the index data for IMDB:
@@ -440,6 +575,15 @@ grasp data my-imdb entities --endpoint https://my-imdb-sparql-endpoint.com/sparq
 # graphs or those with an unusual schema.
 grasp data imdb entities --index-sparql <path/to/entity.sparql>
 grasp data imdb properties --index-sparql <path/to/property.sparql>
+
+# Replace {key} placeholders in the query, and send extra query parameters
+# or HTTP headers with the request:
+grasp data imdb entities --index-sparql <path/to/entity.sparql> \
+  --replace lang:en --query-parameters timeout:600s --query-headers X-Api-Key:...
+
+# Skip the live query and build the data from SPARQL results in JSON format
+# that you downloaded before:
+grasp data imdb entities --data-file <path/to/results.json>
 
 # Show all available options:
 grasp data -h
@@ -462,10 +606,19 @@ grasp index imdb literals
 
 # You can also change the type of index that is built via --index-type
 # (not applicable for shapes).
-# By default (auto), we build a fuzzy index for entities and an embedding
-# index for properties and literals.
+# By default (auto), we build a fuzzy index for entities, an embedding
+# index for properties, and for literals a fuzzy index if there are more than
+# 1M of them, an embedding index otherwise.
 grasp index imdb entities --index-type <keyword|fuzzy|embedding>
 grasp index imdb properties --index-type <keyword|fuzzy|embedding>
+
+# Embedding indices use Qwen/Qwen3-Embedding-0.6B by default (--emb-model,
+# --emb-device, --emb-batch-size). With --min-score-percentile, a minimum
+# match score is derived from the similarity of random item pairs; with
+# --min-score, --rerank, and --exact you set the search parameters stored
+# with the index directly (they can be overridden in the config, see
+# "Search parameters" above).
+grasp index imdb properties --index-type embedding --min-score-percentile
 
 # For the shape index, a config file is required (see "Build a shape index" below):
 grasp index imdb shapes configs/run.yaml
@@ -504,7 +657,7 @@ entry of your config to disable it.
 There are two more optional steps you can perform to customize the behavior
 of GRASP related to your knowledge graph.
 
-**KG info (prefixes and description)**
+**KG info (description, prefixes, and endpoint)**
 
 First, you can provide metadata about a knowledge graph via an
 `info.json` file. This file can contain a description of the knowledge graph
@@ -520,20 +673,27 @@ in the following format (example for Wikidata):
     "wd": "http://www.wikidata.org/entity/",
     "wdt": "http://www.wikidata.org/prop/direct/",
     // other prefixes ...
-  }
+  },
+  "endpoint": "https://qlever.dev/api/wikidata",
+  "headers": {},
+  "params": {}
 }
 ```
 
-Both fields are optional. The description is shown to the model alongside the
+All fields are optional. The description is shown to the model alongside the
 knowledge graph name and endpoint. The prefixes are used during build time for
-fallback label generation if an entity/property has neither a label nor an
-alias. During runtime, the prefixes are used to shorten IRIs in function call
-results, and allow GRASP to use prefixed instead of full IRIs in function call
-arguments.
+fallback label generation (see `--add-id-as-label` above). During runtime, the
+prefixes are used to shorten IRIs in function call results, and allow GRASP to
+use prefixed instead of full IRIs in function call arguments. Common prefixes
+like `rdf`, `rdfs`, `owl`, `xsd`, or `skos` are always available.
+`endpoint`, `headers`, and `params` set the SPARQL endpoint and extra HTTP
+headers and query parameters used for this knowledge graph (default endpoint is
+`https://qlever.dev/api/<kg_name>`); they can be overridden in the config (see
+"SPARQL endpoint" in section "Configure GRASP").
 
-> Note: For QLever endpoints, we automatically retrieve prefixes via the API at
-> `https://qlever.cs.uni-freiburg.de/api/prefixes/<kg_name>`, so you do not
-> need to create an `info.json` file just for prefixes in that case
+> Note: Prefixes are not retrieved from the endpoint automatically. Run
+> `grasp setup <kg_name> info <config>` to let an agent create `info.json`
+> for you.
 
 **Info SPARQL queries**
 
@@ -593,8 +753,7 @@ a small language model to generate SPARQL skeletons, then iteratively retrieving
 and re-ranking entities using the GRASP search indices.
 
 See the arXiv preprint at [arxiv.org/abs/2604.21133](https://arxiv.org/abs/2604.21133)
-for details. The exact version of the code used in the paper is tagged
-[`GRISP`](https://github.com/ad-freiburg/grasp/tree/GRISP) in this repository.
+for details.
 
 Follow [these instructions](src/grasp/baselines/grisp/README.md) to train,
 run, and evaluate GRISP. To run the GRISP web app, follow
@@ -607,75 +766,53 @@ evaluation app for the SPARQL QA task.
 
 ## Supported models
 
-GRASP supports OpenAI models (via the Responses or Chat Completions API), Anthropic
-models (via the Messages API), and any OpenAI-compatible API endpoint (vLLM, Ollama,
-SGLang, Gemini, etc.). The model name and provider are set separately in the config
-file (or via env variables):
+GRASP supports OpenAI models (via the Responses or Chat Completions API),
+Anthropic models (via the Messages API), and any OpenAI-compatible API endpoint
+(e.g. vLLM, SGLang, Ollama, or Gemini). The model is set in the config file
+(or via env variables, see [configs/run.yaml](configs/run.yaml)):
 
-- `model`: the model name as expected by the API (e.g. `gpt-5.4-mini`, `Qwen/Qwen3.5-27B`)
-- `model_provider`: `openai/responses` (default, uses the Responses API), `openai/completions` (uses the Chat Completions API), or `anthropic` (uses the Anthropic Messages API)
-- `model_endpoint`: base URL of the API endpoint (defaults to the official OpenAI endpoint)
-- `model_api_key`: API key (defaults to `None`; if unset, the key is read from the env variable designated by the provider's SDK, e.g. `OPENAI_API_KEY` for the OpenAI providers and `ANTHROPIC_API_KEY` for the Anthropic provider)
+- `model`: the model name as expected by the API
+- `model_provider`: `openai/responses` (default, Responses API),
+  `openai/completions` (Chat Completions API, also for OpenAI-compatible
+  endpoints), or `anthropic` (Messages API)
+- `model_endpoint`: base URL of the API endpoint (defaults to the official
+  endpoint of the provider)
+- `model_api_key`: API key (if unset, the key is read from the env variable of
+  the provider's SDK, i.e. `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
+- `model_kwargs`: additional inference parameters passed to the API as is
+  (e.g. reasoning effort, or `extra_body` for vLLM-specific sampling parameters)
 
-### OpenAI
+Note that the `model_kwargs` in [configs/run.yaml](configs/run.yaml)
+(`reasoning`, `text`) are specific to the OpenAI Responses API. Replace them
+when using another provider, otherwise the API call fails.
 
-1. Set `OPENAI_API_KEY` env variable
-2. Set `model` in the config file or with `MODEL` env variable, we tested:
-
-- `gpt-4.1`
-- `gpt-4.1-mini`
-- `o4-mini`
-- `gpt-5.4-mini`
-- `gpt-5.4`
-
-Some models do not support the Responses API and require `model_provider` to be
-set to `openai/completions` to use the Chat Completions API instead (e.g.
-`gpt-4.1`).
-
-### Anthropic
-
-1. Set `model_provider` to `anthropic`
-2. Set `ANTHROPIC_API_KEY` env variable (or `model_api_key` in the config file)
-3. Set `model` in the config file or with `MODEL` env variable, e.g.:
-
-- `claude-opus-4-8`
-- `claude-sonnet-4-6`
-- `claude-haiku-4-5`
-
-### OpenAI-compatible endpoints
-
-Any OpenAI-compatible API endpoint (vLLM, Ollama, SGLang, Gemini, etc.) is supported.
-
-1. Run a server with a model of your choice (see vLLM example below)
-2. Set `model_endpoint` in the config file or with `MODEL_ENDPOINT` env variable
-to the server's base URL (e.g. `http://localhost:8000/v1`)
-3. Set `model` to the model name expected by the server, we tested:
-
-- `Qwen/Qwen2.5-72B-Instruct` (and other sizes)
-- `Qwen/Qwen3.5-27B` (and other sizes)
-- `Qwen/Qwen3-30B-A3B-Thinking-2507` (and other MoE/thinking variants)
-
-#### Run Qwen2.5
-
-Change 72B to 7B, 14B, or 32B to run other sizes. Adapt the tensor parallel size
-to your GPU setup, we used two H100 GPUs for Qwen2.5 72B.
-
-```bash
-vllm serve Qwen/Qwen2.5-72B-Instruct --tool-call-parser hermes \
---enable-auto-tool-choice --tensor-parallel-size 2
-```
-
-#### Run Qwen3
+For example, to serve an open model with vLLM (adapt the tensor parallel size to
+your GPU setup):
 
 ```bash
 vllm serve Qwen/Qwen3.5-27B --reasoning-parser qwen3 \
---tool-call-parser hermes --enable-auto-tool-choice
+  --tool-call-parser hermes --enable-auto-tool-choice --port 8000
+```
+
+and use it with GRASP via these settings in your config:
+
+```yaml
+model: Qwen/Qwen3.5-27B
+model_provider: openai/completions
+model_endpoint: http://localhost:8000/v1
+model_api_key: dummy
+model_kwargs:
+  temperature: 0.6
+  # vLLM-specific sampling parameters go into extra_body
+  extra_body:
+    top_k: 20
 ```
 
 ## Misc
 
 To prepare some benchmark datasets with the [Makefile](Makefile),
-e.g. using `make wikidata-benchmarks`, you first need to clone
+e.g. using `make wikidata-benchmarks`, you need the `data` extra
+(`pip install -e ".[data]"`) and first need to clone
 [github.com/KGQA/KGQA-datasets](https://github.com/KGQA/KGQA-datasets) into `third_party`:
 
 ```bash
@@ -714,15 +851,35 @@ If you use this project, please consider citing the following works:
   year         = {2025}
 }
 
-@inproceedings{GRASP_EntityLinking_WalterB25,
+@inproceedings{DBLP:conf/om2/0002B25,
   author       = {Sebastian Walter and
                   Hannah Bast},
-  title        = {Knowledge Graph Entity Linking via Interactive Reasoning and
-Exploration with {GRASP}},
-  booktitle    = {{OM} 2025 (Ontology Matching Workshop)},
-  note         = {To appear},
+  title        = {Knowledge Graph Entity Linking via Interactive Reasoning and Exploration
+                  with {GRASP}},
+  booktitle    = {OM@ISWC},
   series       = {{CEUR} Workshop Proceedings},
+  volume       = {4144},
+  pages        = {242--248},
   publisher    = {CEUR-WS.org},
   year         = {2025}
 }
+
+@inproceedings{DBLP:conf/sigir/WalterB26,
+  author       = {Sebastian Walter and
+                  Hannah Bast},
+  title        = {The Wikidata Query Logs Dataset},
+  booktitle    = {{SIGIR}},
+  pages        = {3442--3447},
+  publisher    = {{ACM}},
+  year         = {2026}
+}
 ```
+
+The following papers have been accepted at ISWC 2026 and will appear soon:
+
+- Marius Birmele, Sebastian Walter, Hannah Bast: Agentic Knowledge Graph Entity
+  Linking. ISWC 2026 Posters and Demos
+  ([PDF](https://ad-publications.cs.uni-freiburg.de/ISWC_entity_linking_grasp_BWB_2026.pdf))
+- Sebastian Walter, Hannah Bast: GRASP and GRISP for Question Answering over
+  Wikidata. WikiKGQA 2026 Challenge at ISWC 2026
+  ([PDF](https://ad-publications.cs.uni-freiburg.de/WIKIKGQA_grasp_grisp_WB_2026.pdf))

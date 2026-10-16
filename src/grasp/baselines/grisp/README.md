@@ -67,6 +67,7 @@ training significantly.
 ```bash
 # materialize training data for 4 epochs
 python -m grasp.baselines.grisp.materialize \
+  wikidata \
   data/grisp/wikidata/wwq/train.jsonl \
   data/grisp/wikidata/wwq/train.materialized.jsonl \
   4 # number of epochs to materialize data for
@@ -76,10 +77,21 @@ python -m grasp.baselines.grisp.materialize \
 # note: the --is-val flag is important to avoid data
 # augmentations for validation data
 python -m grasp.baselines.grisp.materialize \
+  wikidata \
   data/grisp/wikidata/wwq/val.jsonl \
   data/grisp/wikidata/wwq/val.materialized.jsonl \
   1 \
   --is-val
+
+# if you have no separate validation file, split one off the training data
+# while materializing (validation samples are materialized without augmentation)
+python -m grasp.baselines.grisp.materialize \
+  wikidata \
+  data/grisp/wikidata/wwq/train.jsonl \
+  data/grisp/wikidata/wwq/train.materialized.jsonl \
+  4 \
+  --val-output-file data/grisp/wikidata/wwq/val.materialized.jsonl \
+  --val-split 0.05
 ```
 
 4: Train the model
@@ -134,6 +146,7 @@ python -m grasp.baselines.grisp.bootstrap \
 # 3) materialize the gold data as before, then train v2 on all four tasks by
 #    setting TYPE=all and listing both the gold and bootstrapped materialized
 #    files in train_files (the bootstrap file is already materialized).
+#    Training with TYPE=all requires materialized: true.
 TYPE=all python -m grasp.baselines.grisp.train \
   configs/grisp/train.yaml \
   data/grisp/runs/my-wikidata-wwq-model-all
@@ -156,31 +169,47 @@ is provided [`here`](../../../../configs/grisp/run.yaml).
 ### Use a pre-trained model
 
 Pre-trained GRISP models for Wikidata and Freebase are available
-[here](https://ad-publications.cs.uni-freiburg.de/grisp/). If you want to use
-them, make sure to have set up the GRASP indices for the
-corresponding knowledge graph before running the model.
+[here](https://ad-publications.cs.uni-freiburg.de/grisp/). They were trained
+and evaluated with the GRISP knowledge graph indices from
+[here](https://ad-publications.cs.uni-freiburg.de/grisp/kg-index/), which differ
+from the GRASP ones, so use these. They extract to `wikidata/` and `freebase/`,
+so put them into their own index directory if you also use the GRASP indices.
+Their `info.json` points to the public QLever endpoints. Our experiments used
+our own QLever instance with a Wikidata dump from February 2026 and a Virtuoso
+instance for Freebase, so results can differ slightly. The training data of
+these models (converted and materialized) is available
+[here](https://ad-publications.cs.uni-freiburg.de/grisp/training-data/).
 
 For example, to download and use our Wikidata WDQL model based on Qwen2.5 7B:
 
 ```bash
+# Download and extract the GRISP Wikidata index
+export GRASP_INDEX_DIR=$PWD/grisp-index
+mkdir -p $GRASP_INDEX_DIR
+wget -O - https://ad-publications.cs.uni-freiburg.de/grisp/kg-index/wikidata.tar.gz \
+  | tar -xz -C $GRASP_INDEX_DIR
 # Download the model
-wget https://ad-publications.cs.uni-freiburg.de/grisp/qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26.tar.gz
+wget https://ad-publications.cs.uni-freiburg.de/grisp/checkpoints/grisp/qwen-2.5-7b-instruct-lora-wikidata-09-26-wdql-one-per-cluster-03-09-26-both-27-09-26.tar.gz
 # Extract it
-tar -xzf qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26.tar.gz
+tar -xzf qwen-2.5-7b-instruct-lora-wikidata-09-26-wdql-one-per-cluster-03-09-26-both-27-09-26.tar.gz
 # Run on a single question
 python -m grasp.baselines.grisp.run \
   configs/grisp/run.yaml \
-  qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26 \
+  qwen-2.5-7b-instruct-lora-wikidata-09-26-wdql-one-per-cluster-03-09-26-both-27-09-26 \
   run \
   --input "Where was Angela Merkel born?"
 
 # Or run on a file with questions, e.g. the WWQ test set
 python -m grasp.baselines.grisp.run \
   configs/grisp/run.yaml \
-  qwen-2.5-7b-instruct-lora-wikidata-wdql-both-05-02-26 \
+  qwen-2.5-7b-instruct-lora-wikidata-09-26-wdql-one-per-cluster-03-09-26-both-27-09-26 \
   file \
-  --input-file data/benchmark/wikidata/wwq/test.jsonl
+  --input-file data/benchmark/wikidata/wwq/test.jsonl \
+  --output-file wwq.test.jsonl \
+  --progress
 ```
+
+Without `--output-file`, outputs are printed to stdout as JSONL.
 
 ### Run a custom model
 
@@ -188,12 +217,42 @@ If you trained your own model, just use your training output directory as
 the model path.
 
 ```bash
+# data/grisp/runs/my-wikidata-wwq-model is your training output directory
 python -m grasp.baselines.grisp.run \
   configs/grisp/run.yaml \
-  data/grisp/runs/my-wikidata-wwq-model \ # Path to your training output directory
+  data/grisp/runs/my-wikidata-wwq-model \
   file \
-  --input-file data/benchmark/wikidata/wwq/test.jsonl
+  --input-file data/benchmark/wikidata/wwq/test.jsonl \
+  --output-file data/grisp/runs/my-wikidata-wwq-model/predictions.jsonl
 ```
+
+You can use a different model for IRI selection than for skeleton generation
+with `--selection-run <run directory>` (and `--selection-device`).
+
+### Run options
+
+The most important run config options (see
+[`run.yaml`](../../../../configs/grisp/run.yaml); all can also be set via env
+variables):
+
+- `skeleton_n`, `skeleton_top_k`: number of skeletons sampled, and kept for
+  resolution
+- `skeleton_dedupe`: `merge` (default) folds skeletons that differ only in
+  placeholder wording into one candidate whose wordings are searched one after
+  the other, `exact` only removes identical skeletons
+- `selection_top_k`: number of search results shown to the model per placeholder
+- `constrain`: only offer IRIs that are compatible with the already resolved
+  parts of the query (with `constraint_timeout` per constraint query)
+- `backtrack`: go back to earlier placeholders if no candidate fits
+- `rerank`: re-rank the search results with the model (listwise selection)
+- `check_empty`: discard candidates whose query has an empty result
+- `fill_order`: see below
+
+For analysis, `file` also supports two oracle modes that need the gold `sparql`
+field in the input: `--oracle-skeleton` derives the skeleton from the gold query
+(isolates IRI selection errors), and `--oracle-correctness <F1 threshold>`
+returns the first candidate that reaches the threshold against the gold query
+(upper bound of a perfect query validator).
 
 ### IRI fill order
 
@@ -203,11 +262,11 @@ option (or the `FILL_ORDER` environment variable):
 
 | `fill_order` | Description |
 |---|---|
-| `left-to-right` (default) | placeholders in document order |
+| `left-to-right` | placeholders in document order |
 | `right-to-left` | placeholders in reverse document order |
 | `entities-then-properties` | all entity placeholders first, then properties, each in document order |
 | `properties-then-entities` | all property placeholders first, then entities, each in document order |
-| `triple-wise-entities-then-properties` | triple by triple (document order); within each triple entities first, then properties (so each property is filled after both its endpoints) |
+| `triple-wise-entities-then-properties` (default) | triple by triple (document order); within each triple entities first, then properties (so each property is filled after both its endpoints) |
 | `random` | a fixed random permutation per skeleton |
 
 The model is trained to be **order-agnostic** (during data generation a random
@@ -224,7 +283,7 @@ the constraint query and selection gracefully falls back to position-only
 filtering for that step.
 
 ```bash
-# e.g. resolve entities before properties
+# e.g. resolve all entities before all properties
 FILL_ORDER=entities-then-properties python -m grasp.baselines.grisp.run \
   configs/grisp/run.yaml \
   data/grisp/runs/my-wikidata-wwq-model \
@@ -235,7 +294,9 @@ FILL_ORDER=entities-then-properties python -m grasp.baselines.grisp.run \
 ## Serve a GRISP model
 
 ```bash
-python -m grasp.baselines.grisp.server configs/grisp/serve.yaml
+# RUN is the model directory to serve (required)
+RUN=data/grisp/runs/my-wikidata-wwq-model \
+  python -m grasp.baselines.grisp.server configs/grisp/server.yaml
 ```
 
 The server runs on port 6790 by default and exposes the following HTTP endpoints.
@@ -245,6 +306,7 @@ The server runs on port 6790 by default and exposes the following HTTP endpoints
 | `/knowledge_graphs` | GET | Returns list with the configured KG name |
 | `/config` | GET | Returns the server configuration |
 | `/run` | POST | Run GRISP on a single question |
+| `/live` | WebSocket | Run GRISP and stream its steps (used by the web app) |
 
 #### `POST /run`
 
