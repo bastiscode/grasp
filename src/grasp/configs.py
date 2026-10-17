@@ -133,7 +133,7 @@ class GraspConfig(ModelConfig):
         "search_filter",
         "search_constraints",
         "all",
-    ] = "search_filter"
+    ] = "all"
     notes_file: str | None = None
 
     knowledge_graphs: list[KgConfig] = [KgConfig(kg="wikidata")]
