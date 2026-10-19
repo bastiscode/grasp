@@ -88,6 +88,7 @@ function isValidCeaTable(table) {
 }
 
 function annotationHref(annotation) {
+  if (annotation?.identifier === '<NIL>') return null;
   const cleaned = cleanIdentifier(annotation?.identifier);
   if (cleaned) return cleaned;
   if (typeof annotation?.entity === 'string' && annotation.entity.startsWith('wd:')) {

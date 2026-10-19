@@ -7,18 +7,17 @@ from universal_ml_utils.table import generate_table
 from grasp.configs import GraspConfig
 from grasp.examples import Sample
 from grasp.functions import find_manager
-from grasp.manager import KgManager, format_kgs
+from grasp.manager import KgManager
 from grasp.model import Message
-from grasp.sparql.types import Alternative
 from grasp.tasks.base import FeedbackTask, GraspTask
-from grasp.tasks.entities import Entity, prepare_entity
-from grasp.utils import (
-    FunctionCallException,
-    format_enumerate,
-    format_list,
-    format_notes,
-    format_section,
+from grasp.tasks.entities import (
+    Entity,
+    annotation_feedback_instructions,
+    annotation_feedback_system_message,
+    format_annotated_entities,
+    prepare_annotation,
 )
+from grasp.utils import FunctionCallException
 
 
 class CellAnnotation(Entity):
@@ -52,11 +51,11 @@ class Table(BaseModel):
         start = max(0, min(self.annotate_rows) - context)
         end = min(self.height, max(self.annotate_rows) + context + 1)
 
-        trimmed = Table(
-            header=self.header,
-            data=self.data[start:end],
-            annotate_rows=[r - start for r in self.annotate_rows],
-            annotate_columns=self.annotate_columns,
+        trimmed = self.model_copy(
+            update={
+                "data": self.data[start:end],
+                "annotate_rows": [r - start for r in self.annotate_rows],
+            }
         )
         return trimmed, start
 
@@ -64,11 +63,11 @@ class Table(BaseModel):
         def clean(s: str) -> str:
             return " ".join(s.strip().split())
 
-        cleaned = Table(
-            header=[clean(h) for h in self.header],
-            data=[[clean(cell) for cell in row] for row in self.data],
-            annotate_rows=self.annotate_rows,
-            annotate_columns=self.annotate_columns,
+        cleaned = self.model_copy(
+            update={
+                "header": [clean(h) for h in self.header],
+                "data": [[clean(cell) for cell in row] for row in self.data],
+            }
         )
         return cleaned
 
@@ -178,25 +177,14 @@ class AnnotationState:
             max_column_width=sys.maxsize,
         )
 
-        entities: dict[str, Alternative] = {}
-        for annot in self.annotations.values():
-            if annot.identifier in entities:
-                continue
-
-            entities[annot.identifier] = annot.to_alternative()
-
-        if entities:
-            annotations = format_list(
-                alt.get_selection_string() for _, alt in sorted(entities.items())
-            )
-            table += f"\n\nAnnotated entities:\n{annotations}"
-
-        return table
+        return table + format_annotated_entities(self.annotations.values())
 
 
 def rules() -> list[str]:
     return [
-        "If you cannot find a suitable entity for a cell, leave it unannotated.",
+        "If a cell does not refer to an entity, leave it unannotated.",
+        "If a cell refers to an entity that you cannot find in the knowledge graphs, "
+        "annotate it with null.",
         "If there are multiple suitable entities for a cell, choose the one that "
         "fits best in the context of the table, or the one that is more popular/general.",
         "If you find common patterns within or across rows and columns, executing a corresponding SPARQL query "
@@ -248,8 +236,8 @@ This function overwrites any previous annotation of the cell.""",
                         "description": "The column index of the cell to annotate (0-based, ignoring header)",
                     },
                     "entity": {
-                        "type": "string",
-                        "description": "The IRI of the entity to annotate the cell with",
+                        "type": ["string", "null"],
+                        "description": "The IRI of the entity to annotate the cell with, or null if unknown",
                     },
                 },
                 "required": ["kg", "row", "column", "entity"],
@@ -297,32 +285,26 @@ def annotate(
     kg: str,
     row: int,
     column: int,
-    entity: str,
+    entity: str | None,
     state: AnnotationState,
     known: set[str],
-    know_before_annotate: bool = False,
+    know_before_annotate: bool = True,
 ) -> str:
     manager, _ = find_manager(managers, kg)
 
     try:
-        annotation = prepare_entity(manager, entity)
-        if know_before_annotate and annotation.identifier not in known:
-            raise FunctionCallException(
-                f"The entity {entity} cannot be used for annotation "
-                "without being known from previous function call results. "
-                "This does not mean it is invalid, but you should verify "
-                "that it indeed exists (e.g., by listing example triples) "
-                "in the knowledge graphs first."
-            )
-
+        annotation = prepare_annotation(manager, entity, known, know_before_annotate)
         current = state.annotate(row, column, annotation)
     except ValueError as e:
         raise FunctionCallException(str(e)) from e
 
     if current is None:
-        return f"Annotated cell ({row}, {column}) with entity {entity}"
+        return f"Annotated cell ({row}, {column}) with entity {annotation.entity}"
     else:
-        return f"Updated annotation of cell ({row}, {column}) from {current.entity} to {entity}"
+        return (
+            f"Updated annotation of cell ({row}, {column}) "
+            f"from {current.entity} to {annotation.entity}"
+        )
 
 
 def delete(row: int, column: int, state: AnnotationState) -> str:
@@ -424,49 +406,6 @@ def call_function(
         raise ValueError(f"Unknown function {fn_name}")
 
 
-def feedback_system_message(
-    managers: list[KgManager],
-    kg_notes: dict[str, list[str]],
-    notes: list[str],
-) -> str:
-    return "\n\n".join(
-        [
-            "You are a table annotation assistant providing feedback on the "
-            "output of a table annotation system for a given input table.",
-            format_section(
-                "Available knowledge graphs",
-                format_kgs(managers, kg_notes),
-            ),
-            format_section(
-                "General notes across knowledge graphs",
-                format_notes(notes, enumerated=True),
-            ),
-            format_section(
-                "Rules to follow",
-                format_enumerate(rules()) if rules() else "None",
-            ),
-            "Provide your feedback with the give_feedback function.",
-        ]
-    )
-
-
-def feedback_instructions(inputs: list[str], output: dict) -> str:
-    assert inputs, "At least one input is required for feedback"
-
-    sections = []
-    if len(inputs) > 1:
-        sections.append(
-            format_section(
-                "Previous inputs",
-                "\n\n".join(i.strip() for i in inputs[:-1]),
-            )
-        )
-
-    sections.append(format_section("Input", inputs[-1].strip()))
-    sections.append(format_section("Annotations", output["formatted"]))
-    return "\n\n".join(sections)
-
-
 class CeaTask(GraspTask, FeedbackTask):
     name = "cea"
 
@@ -515,9 +454,17 @@ class CeaTask(GraspTask, FeedbackTask):
         return CeaSample
 
     def feedback_system_message(
-        self, kg_notes: dict[str, list[str]], notes: list[str]
+        self,
+        kg_notes: dict[str, list[str]],
+        notes: list[str],
     ) -> str:
-        return feedback_system_message(self.managers, kg_notes, notes)
+        return annotation_feedback_system_message(
+            self.managers,
+            kg_notes,
+            notes,
+            rules(),
+            "table",
+        )
 
     def feedback_instructions(self, inputs: list[str], output: dict) -> str:
-        return feedback_instructions(inputs, output)
+        return annotation_feedback_instructions(inputs, output)

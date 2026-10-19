@@ -6,18 +6,17 @@ from pydantic import BaseModel
 from grasp.configs import GraspConfig
 from grasp.examples import Sample
 from grasp.functions import find_manager
-from grasp.manager import KgManager, format_kgs
+from grasp.manager import KgManager
 from grasp.model import Message
-from grasp.sparql.types import Alternative
 from grasp.tasks.base import FeedbackTask, GraspTask
-from grasp.tasks.entities import Entity, prepare_entity
-from grasp.utils import (
-    FunctionCallException,
-    format_enumerate,
-    format_list,
-    format_notes,
-    format_section,
+from grasp.tasks.entities import (
+    Entity,
+    annotation_feedback_instructions,
+    annotation_feedback_system_message,
+    format_annotated_entities,
+    prepare_annotation,
 )
+from grasp.utils import FunctionCallException
 
 
 class TextAnnotation(Entity):
@@ -201,18 +200,7 @@ class AnnotationState:
             ]
 
         if list_entities:
-            entities: dict[str, Alternative] = {}
-            for annot in self.annotations.values():
-                if annot.identifier in entities:
-                    continue
-
-                entities[annot.identifier] = annot.to_alternative()
-
-            if entities:
-                annotations = format_list(
-                    alt.get_selection_string() for _, alt in sorted(entities.items())
-                )
-                result += f"\n\nAnnotated entities:\n{annotations}"
+            result += format_annotated_entities(self.annotations.values())
 
         return result
 
@@ -387,7 +375,7 @@ def annotate(
     entity: str | None,
     state: AnnotationState,
     known: set[str],
-    know_before_annotate: bool = False,
+    know_before_annotate: bool = True,
     show_state_after_annotation: bool = True,
 ) -> str:
     # A function for the llm to call to annotate the words_to_be_annotated in the text
@@ -399,19 +387,7 @@ def annotate(
     start_idx, end_idx = find_matches(words_to_be_annotated, sequence, occurrence_index)
 
     try:
-        if entity is None:
-            annotation = Entity(identifier="<NIL>", entity="<NIL>")
-        else:
-            annotation = prepare_entity(manager, entity)
-            if know_before_annotate and annotation.identifier not in known:
-                raise FunctionCallException(
-                    f"The entity {entity} cannot be used for annotation "
-                    "without being known from previous function call results. "
-                    "This does not mean it is invalid, but you should verify "
-                    "that it indeed exists (e.g., by listing example triples) "
-                    "in the knowledge graphs first."
-                )
-
+        annotation = prepare_annotation(manager, entity, known, know_before_annotate)
         current = state.annotate(start_idx, end_idx, annotation)
 
     except ValueError as e:
@@ -565,49 +541,6 @@ def call_function(
         raise ValueError(f"Unknown function '{fn_name}'")
 
 
-def feedback_system_message(
-    managers: list[KgManager],
-    kg_notes: dict[str, list[str]],
-    notes: list[str],
-) -> str:
-    return "\n\n".join(
-        [
-            "You are a text annotation assistant providing feedback on the "
-            "output of a text annotation system for a given input text.",
-            format_section(
-                "Available knowledge graphs",
-                format_kgs(managers, kg_notes),
-            ),
-            format_section(
-                "General notes across knowledge graphs",
-                format_notes(notes, enumerated=True),
-            ),
-            format_section(
-                "Rules to follow",
-                format_enumerate(rules()) if rules() else "None",
-            ),
-            "Provide your feedback with the give_feedback function.",
-        ]
-    )
-
-
-def feedback_instructions(inputs: list[str], output: dict) -> str:
-    assert inputs, "At least one input is required for feedback"
-
-    sections = []
-    if len(inputs) > 1:
-        sections.append(
-            format_section(
-                "Previous inputs",
-                "\n\n".join(i.strip() for i in inputs[:-1]),
-            )
-        )
-
-    sections.append(format_section("Input", inputs[-1].strip()))
-    sections.append(format_section("Annotations", output["formatted"]))
-    return "\n\n".join(sections)
-
-
 class EntityLinkingTask(GraspTask, FeedbackTask):
     name = "entity-linking"
 
@@ -656,9 +589,17 @@ class EntityLinkingTask(GraspTask, FeedbackTask):
         return EntityLinkingSample
 
     def feedback_system_message(
-        self, kg_notes: dict[str, list[str]], notes: list[str]
+        self,
+        kg_notes: dict[str, list[str]],
+        notes: list[str],
     ) -> str:
-        return feedback_system_message(self.managers, kg_notes, notes)
+        return annotation_feedback_system_message(
+            self.managers,
+            kg_notes,
+            notes,
+            rules(),
+            "text",
+        )
 
     def feedback_instructions(self, inputs: list[str], output: dict) -> str:
-        return feedback_instructions(inputs, output)
+        return annotation_feedback_instructions(inputs, output)
