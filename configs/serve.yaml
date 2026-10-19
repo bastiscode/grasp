@@ -20,7 +20,7 @@ tool_choice: env(TOOL_CHOICE:auto)
 
 task_kwargs:
   cea:
-    context_rows: env(CEA_CONTEXT_ROWS:10)
+    context: env(CEA_CONTEXT_ROWS:10)
 
 seed: env(SEED:null)
 

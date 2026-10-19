@@ -467,7 +467,7 @@ task_kwargs:
   sparql-qa:
     know_before_answer: true   # only allow IRIs seen in earlier function call results
   cea:
-    context_rows: null         # rows of table context shown to the model
+    context: null              # rows of table context shown to the model
     know_before_annotate: true
     show_state_after_annotate: false  # show the rows to annotate after each (de-)annotation
   entity-linking:

@@ -209,7 +209,7 @@ def rules() -> list[str]:
     return [
         (
             "If you cannot find any suitable entity mention in the text excerpt, "
-            "leave the excerpt unannotated and just finalize."
+            "leave the excerpt unannotated and just stop."
         ),
         (
             "If an entity is cut off at the end of the text or beginning of the text, "
@@ -245,7 +245,7 @@ You need to **exactly follow these step-by-step instructions** to annotate the t
 2. Determine what the text might be about and think about how the entity mentions might be represented with entities in the knowledge graph(s). 
 3. Use the provided functions to search and explore the knowledge graph(s) to find the entities.
 4. Use the annotate function to annotate every entity mention.
-5. When you are certain that the annotation of the current excerpt is correct and complete use the finalize function."""
+5. When you are certain that the annotation of the current excerpt is correct and complete use the stop function."""
 
 
 def functions(managers: list[KgManager]) -> list[dict]:
@@ -319,15 +319,15 @@ so always keep that in mind and adjust the occurrence_index accordingly.""",
             "strict": True,
         },
         {
-            "name": "show_current_annotations",
+            "name": "show_annotations",
             "description": "Show the current annotations of the text excerpt, "
             "including information about the annotated entities.",
             # an empty object schema makes some vllm models generate endlessly
             "parameters": {},
         },
         {
-            "name": "finalize",
-            "description": "Finalize your annotations in the given excerpt and stop the annotation process.",
+            "name": "stop",
+            "description": "Finalize your annotations and stop the annotation process.",
             "parameters": {},
         },
     ]
@@ -532,11 +532,11 @@ def call_function(
             show_state_after_annotate,
         )
 
-    elif fn_name == "show_current_annotations":
+    elif fn_name == "show_annotations":
         return state.format(only_annotation_window=True, list_entities=True)
 
-    elif fn_name == "finalize":
-        return "Finalized the annotation process."
+    elif fn_name == "stop":
+        return "Stopping"
 
     else:
         raise ValueError(f"Unknown function '{fn_name}'")
@@ -572,7 +572,7 @@ class EntityLinkingTask(GraspTask, FeedbackTask):
         )
 
     def done(self, fn_name: str) -> bool:
-        return fn_name == "finalize"
+        return fn_name == "stop"
 
     def setup(self, input: Any) -> str:
         instructions, self.state = input_and_state(input, self.config)

@@ -45,7 +45,7 @@ class Table(BaseModel):
             return self, 0
         elif self.annotate_rows is None:
             # all rows are to be annotated
-            # context_rows does not apply
+            # context does not apply
             return self, 0
 
         start = max(0, min(self.annotate_rows) - context)
@@ -85,17 +85,17 @@ class CeaSample(Sample):
 
 
 class AnnotationState:
-    def __init__(self, table: Table, context_rows: int | None = None) -> None:
+    def __init__(self, table: Table, context: int | None = None) -> None:
         assert len(table.header) > 0, "Header must not be empty"
         assert all(len(row) == len(table.header) for row in table.data), (
             "All rows must have the same length as the header"
         )
 
-        if context_rows is None:
+        if context is None:
             self.table = table
             self.offset = 0
         else:
-            trimmed, offset = table.trim(context_rows)
+            trimmed, offset = table.trim(context)
             self.table = trimmed
             self.offset = offset
 
@@ -388,9 +388,9 @@ def input_and_state(input: Any, config: GraspConfig) -> tuple[str, AnnotationSta
         ) from e
 
     task_kwargs = config.task_kwargs.get("cea", {})
-    context_rows = task_kwargs.get("context_rows", None)
+    context = task_kwargs.get("context", None)
 
-    annots = AnnotationState(table, context_rows)
+    annots = AnnotationState(table, context)
     instructions = input_instructions(annots)
     return instructions, annots
 
