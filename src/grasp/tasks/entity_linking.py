@@ -20,14 +20,14 @@ from grasp.utils import FunctionCallException
 
 
 class TextAnnotation(Entity):
-    start_index: int
-    end_index: int
+    start: int
+    end: int
 
 
 class Text(BaseModel):
     data: str
-    annotate_from: int | None = None
-    annotate_up_to: int | None = None
+    annotate_start: int | None = None
+    annotate_end: int | None = None
     special_instructions: str | None = None
 
     @property
@@ -36,13 +36,11 @@ class Text(BaseModel):
 
     @property
     def start(self) -> int:
-        return self.annotate_from if self.annotate_from is not None else 0
+        return self.annotate_start if self.annotate_start is not None else 0
 
     @property
     def end(self) -> int:
-        return (
-            self.annotate_up_to if self.annotate_up_to is not None else len(self.data)
-        )
+        return self.annotate_end if self.annotate_end is not None else len(self.data)
 
     def trim(self, context: int | None = None) -> tuple["Text", int]:
         # Trims the Text to the start/end values if context is 0, trims the Text to
@@ -51,12 +49,12 @@ class Text(BaseModel):
             raise ValueError(f"context '{context}' must be non negative.")
         if self.start < 0 or self.start >= self.length:
             raise ValueError(
-                f"annotate_from '{self.start}' must be greater than or equal to zero "
+                f"annotate_start '{self.start}' must be greater than or equal to zero "
                 f"and less than length '{self.length}'."
             )
         if self.end <= self.start or self.end > self.length:
             raise ValueError(
-                f"annotate_up_to '{self.end}' must be greater than annotate_from "
+                f"annotate_end '{self.end}' must be greater than annotate_start "
                 f"'{self.start}' and less than or equal to length '{self.length}'."
             )
 
@@ -79,8 +77,8 @@ class Text(BaseModel):
 
         trimmed = Text(
             data=self.data[new_start:new_end],
-            annotate_from=window_start,
-            annotate_up_to=window_end,
+            annotate_start=window_start,
+            annotate_end=window_end,
         )
         return trimmed, new_start
 
@@ -109,37 +107,35 @@ class AnnotationState:
 
     def annotate(
         self,
-        start_index: int,
-        end_index: int,
+        start: int,
+        end: int,
         annotation: Entity | None,
     ) -> Entity | None:
         aws = self.annotation_window.stop - self.annotation_window.start
-        if start_index < 0 or start_index >= aws:
-            raise ValueError(f"Start_index {start_index} out of bounds")
-        if end_index <= start_index or end_index > aws:
-            raise ValueError(f"End_index {end_index} out of bounds")
-        start_index += self.annotation_window.start
-        end_index += self.annotation_window.start
-        current = self.annotations.pop((start_index, end_index), None)
+        if start < 0 or start >= aws:
+            raise ValueError(f"Start {start} out of bounds")
+        if end <= start or end > aws:
+            raise ValueError(f"End {end} out of bounds")
+        start += self.annotation_window.start
+        end += self.annotation_window.start
+        current = self.annotations.pop((start, end), None)
         if annotation is not None:
-            self.annotations[(start_index, end_index)] = annotation
+            self.annotations[(start, end)] = annotation
         return current
 
-    def get(self, start_index: int, end_index: int) -> Entity | None:
-        return self.annotations.get((start_index, end_index), None)
+    def get(self, start: int, end: int) -> Entity | None:
+        return self.annotations.get((start, end), None)
 
     def to_dict(self) -> dict:
         return {
             "formatted": self.format(),
-            "predictions": [
-                {
-                    "entity_reference": a.entity,
-                    "start_char": s + self.offset,
-                    "end_char": e + self.offset,
-                    "identifier": a.identifier,
-                    "label": a.label,
-                }
-                for (s, e), a in self.annotations.items()
+            "annotations": [
+                TextAnnotation(
+                    start=start + self.offset,
+                    end=end + self.offset,
+                    **annot.model_dump(),
+                ).model_dump()
+                for (start, end), annot in self.annotations.items()
             ],
         }
 
@@ -481,7 +477,7 @@ def input_and_state(
     except Exception as e:
         raise ValueError(
             "Entity Linking task input must be a dict with a 'data' and optional "
-            "'annotate_from', 'annotate_up_to', and 'special_instructions' fields."
+            "'annotate_start', 'annotate_end', and 'special_instructions' fields."
         ) from e
 
     el_kwargs = config.task_kwargs.get("entity-linking", {})

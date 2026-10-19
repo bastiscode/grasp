@@ -330,7 +330,7 @@ def format_state_after_annotation(state: AnnotationState) -> str:
     )
 
 
-def delete(
+def delete_annotation(
     row: int,
     column: int,
     state: AnnotationState,
@@ -427,7 +427,7 @@ def call_function(
         )
 
     elif fn_name == "delete_annotation":
-        return delete(
+        return delete_annotation(
             fn_args["row"],
             fn_args["column"],
             state,

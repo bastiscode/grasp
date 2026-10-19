@@ -181,7 +181,7 @@ grasp run configs/run.yaml --task cea --input-format json \
 
 # For entity linking (entity-linking), the input is a JSON object with a "text"
 # field containing "data" (the text to annotate) and optionally
-# "annotate_from"/"annotate_up_to" (character offsets restricting the span to
+# "annotate_start"/"annotate_end" (character offsets restricting the span to
 # annotate) and "special_instructions". The task links mentions in the text to
 # entities in the knowledge graph.
 grasp run configs/run.yaml --task entity-linking --input-format json \

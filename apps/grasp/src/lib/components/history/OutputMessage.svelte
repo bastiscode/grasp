@@ -61,9 +61,11 @@ const elInput =
   typeof message.elInput.data === 'string'
     ? message.elInput
     : null;
+// older outputs use predictions instead of annotations
+const elAnnotationList = output?.annotations ?? output?.predictions;
 const elPredictions =
-  task === 'entity-linking' && Array.isArray(output?.predictions)
-    ? output.predictions.filter(
+  task === 'entity-linking' && Array.isArray(elAnnotationList)
+    ? elAnnotationList.filter(
         (item) => item && typeof item === 'object' && !Array.isArray(item)
       )
     : [];
@@ -316,8 +318,8 @@ function deriveQleverLink() {
     {#if elInput}
       <EntityLinkingAnnotations
         text={elInput.data}
-        annotateFrom={elInput.annotate_from ?? null}
-        annotateUpTo={elInput.annotate_up_to ?? null}
+        annotateStart={elInput.annotate_start ?? elInput.annotate_from ?? null}
+        annotateEnd={elInput.annotate_end ?? elInput.annotate_up_to ?? null}
         predictions={elPredictions}
       />
     {:else if elFormatted}
