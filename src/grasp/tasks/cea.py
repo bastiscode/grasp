@@ -159,7 +159,14 @@ class AnnotationState:
         for r in range(self.table.height):
             yield [self.get(r, c) for c in range(self.table.width)]
 
-    def format(self) -> str:
+    def format(
+        self,
+        only_annotation_window: bool = False,
+        list_entities: bool = True,
+    ) -> str:
+        # If only_annotation_window is true, only the rows to annotate are shown
+        # (with their original row indices). If list_entities is true, the used
+        # entities are listed at the end.
         data = [
             [str(i)]
             + [
@@ -167,6 +174,7 @@ class AnnotationState:
                 for col, annot in zip(row, annots)
             ]
             for i, (row, annots) in enumerate(zip(self.table.data, self.iter()))
+            if not only_annotation_window or self.rows is None or i in self.rows
         ]
         header = ["Row"] + [
             f"Column {i}: {name}" for i, name in enumerate(self.table.header)
@@ -177,7 +185,10 @@ class AnnotationState:
             max_column_width=sys.maxsize,
         )
 
-        return table + format_annotated_entities(self.annotations.values())
+        if list_entities:
+            table += format_annotated_entities(self.annotations.values())
+
+        return table
 
 
 def rules() -> list[str]:
@@ -267,7 +278,8 @@ This function overwrites any previous annotation of the cell.""",
         },
         {
             "name": "show_annotations",
-            "description": "Show the current annotations for the table.",
+            "description": "Show the current annotations of the rows to annotate, "
+            "including information about the annotated entities.",
             # an empty object schema makes some vllm models generate endlessly
             "parameters": {},
         },
@@ -289,6 +301,7 @@ def annotate(
     state: AnnotationState,
     known: set[str],
     know_before_annotate: bool = True,
+    show_state_after_annotation: bool = False,
 ) -> str:
     manager, _ = find_manager(managers, kg)
 
@@ -299,15 +312,30 @@ def annotate(
         raise FunctionCallException(str(e)) from e
 
     if current is None:
-        return f"Annotated cell ({row}, {column}) with entity {annotation.entity}"
+        result = f"Annotated cell ({row}, {column}) with entity {annotation.entity}"
     else:
-        return (
+        result = (
             f"Updated annotation of cell ({row}, {column}) "
             f"from {current.entity} to {annotation.entity}"
         )
+    if show_state_after_annotation:
+        result += format_state_after_annotation(state)
+    return result
 
 
-def delete(row: int, column: int, state: AnnotationState) -> str:
+def format_state_after_annotation(state: AnnotationState) -> str:
+    return (
+        "\n\nThe current annotation state of the rows to annotate is the following:\n"
+        f"{state.format(only_annotation_window=True, list_entities=False)}"
+    )
+
+
+def delete(
+    row: int,
+    column: int,
+    state: AnnotationState,
+    show_state_after_annotation: bool = False,
+) -> str:
     try:
         current = state.annotate(row, column, None)
     except ValueError as e:
@@ -316,7 +344,10 @@ def delete(row: int, column: int, state: AnnotationState) -> str:
     if current is None:
         raise FunctionCallException(f"Cell ({row}, {column}) is not annotated")
 
-    return f"Deleted annotation {current.entity} from cell ({row}, {column})"
+    result = f"Deleted annotation {current.entity} from cell ({row}, {column})"
+    if show_state_after_annotation:
+        result += format_state_after_annotation(state)
+    return result
 
 
 def input_instructions(state: AnnotationState) -> str:
@@ -380,6 +411,7 @@ def call_function(
 
     cea_kwargs = config.task_kwargs.get("cea", {})
     know_before_annotate = cea_kwargs.get("know_before_annotate", True)
+    show_state_after_annotate = cea_kwargs.get("show_state_after_annotate", False)
 
     if fn_name == "annotate":
         return annotate(
@@ -391,13 +423,19 @@ def call_function(
             state,
             known,
             know_before_annotate,
+            show_state_after_annotate,
         )
 
     elif fn_name == "delete_annotation":
-        return delete(fn_args["row"], fn_args["column"], state)
+        return delete(
+            fn_args["row"],
+            fn_args["column"],
+            state,
+            show_state_after_annotate,
+        )
 
     elif fn_name == "show_annotations":
-        return state.format()
+        return state.format(only_annotation_window=True)
 
     elif fn_name == "stop":
         return "Stopping"

@@ -469,6 +469,7 @@ task_kwargs:
   cea:
     context_rows: null         # rows of table context shown to the model
     know_before_annotate: true
+    show_state_after_annotate: false  # show the rows to annotate after each (de-)annotation
   entity-linking:
     context: null              # characters of surrounding text shown to the model
     know_before_annotate: true

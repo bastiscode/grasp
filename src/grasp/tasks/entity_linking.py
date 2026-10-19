@@ -145,13 +145,13 @@ class AnnotationState:
 
     def format(
         self,
-        only_current_window: bool = False,
+        only_annotation_window: bool = False,
         list_entities: bool = True,
     ) -> str:
         # Returns a string with the current annotation state of the text.
         # Annotations are visualized in the following format: '[annotated words](q123)',
         # '[[Nested [annotations](q123)](q456) are supported](q789)'.
-        # If only_current_window is true, only the text of the current annotation window
+        # If only_annotation_window is true, only the text of the current annotation window
         # is shown. If list_entities is true, the used entities are listed at the end.
         result = self.text.data
         # item[0] is (start, end), we sort by end first, then by negative start
@@ -180,7 +180,7 @@ class AnnotationState:
             # prepend current start to the nested list
             nested_list = [start_idx] + nested_list
 
-            if only_current_window and (
+            if only_annotation_window and (
                 start_idx < self.annotation_window.start
                 or end_idx > self.annotation_window.stop
             ):
@@ -192,7 +192,7 @@ class AnnotationState:
             result = prefix + "[" + words + "](" + ann[1].entity + ")" + suffix
 
         # trim to only show the current window
-        if only_current_window:
+        if only_annotation_window:
             added_length = len(result) - self.text.length
             result = result[
                 self.annotation_window.start : self.annotation_window.stop
@@ -320,7 +320,8 @@ so always keep that in mind and adjust the occurrence_index accordingly.""",
         },
         {
             "name": "show_current_annotations",
-            "description": "Show the current annotation state of the excerpt of the text to annotate.",
+            "description": "Show the current annotations of the text excerpt, "
+            "including information about the annotated entities.",
             # an empty object schema makes some vllm models generate endlessly
             "parameters": {},
         },
@@ -406,7 +407,7 @@ def annotate(
     if show_state_after_annotation:
         result += (
             "\n\nThe current annotation state of the text excerpt is the following:\n"
-            f"{state.format(only_current_window=True, list_entities=False)}"
+            f"{state.format(only_annotation_window=True, list_entities=False)}"
         )
     return result
 
@@ -442,7 +443,7 @@ def delete_annotation(
     if show_state_after_annotation:
         result += (
             "\n\nThe current annotation state of the text excerpt is the following:\n"
-            f"{state.format(only_current_window=True, list_entities=False)}"
+            f"{state.format(only_annotation_window=True, list_entities=False)}"
         )
     return result
 
@@ -454,11 +455,11 @@ def input_instructions(
         "This is the full text only for context to better understand entities "
         "that are not clear from the excerpt alone.\n\n"
         "=== START FULL TEXT FOR CONTEXT ===\n"
-        f"{state.format(only_current_window=False)}\n"
+        f"{state.format(only_annotation_window=False)}\n"
         "=== END FULL TEXT FOR CONTEXT ===\n\n"
         "The following is the excerpt of the text that you need to annotate:\n\n"
         "=== START TEXT EXCERPT TO ANNOTATE ===\n"
-        f"{state.format(only_current_window=True)}\n"
+        f"{state.format(only_annotation_window=True)}\n"
         "=== END TEXT EXCERPT TO ANNOTATE ===\n"
     )
     if special_instructions:
@@ -532,7 +533,7 @@ def call_function(
         )
 
     elif fn_name == "show_current_annotations":
-        return state.format(only_current_window=True, list_entities=True)
+        return state.format(only_annotation_window=True, list_entities=True)
 
     elif fn_name == "finalize":
         return "Finalized the annotation process."
