@@ -49,6 +49,7 @@ from grasp.sparql.types import (
     Selection,
     SelectResult,
     SelectRow,
+    TableCell,
     group_selections,
 )
 from grasp.sparql.utils import (
@@ -195,6 +196,152 @@ class KgManager:
             self.auth,
         )
 
+    def sparql_result_table(
+        self,
+        result: SelectResult,
+        show_top_rows: int = 5,
+        show_bottom_rows: int = 5,
+        show_left_columns: int = 5,
+        show_right_columns: int = 5,
+        column_names: list[str] | None = None,
+        clip_literals: bool = True,
+    ) -> tuple[list[str], list[list[TableCell]]]:
+        # header and rows of the shown part of a result, with ... for
+        # omitted rows and columns
+        assert column_names is None or len(column_names) == result.num_columns, (
+            f"Expected {result.num_columns:,} column names"
+        )
+        assert show_top_rows or show_bottom_rows, "At least one row must be shown"
+        assert show_left_columns or show_right_columns, (
+            "At least one column must be shown"
+        )
+
+        left_end = min(show_left_columns, result.num_columns)
+        right_start = result.num_columns - show_right_columns
+        if right_start > left_end:
+            column_indices = list(range(left_end))
+            column_indices.append(-1)
+            column_indices.extend(range(right_start, result.num_columns))
+        else:
+            column_indices = list(range(result.num_columns))
+
+        def format_row(row: SelectRow) -> list[TableCell]:
+            formatted_row = []
+            for c in column_indices:
+                if c < 0:
+                    formatted_row.append(TableCell("..."))
+                    continue
+
+                var = result.variables[c]
+                val = row.get(var, None)
+                if val is None:
+                    formatted_row.append(TableCell(""))
+                    continue
+
+                if val.typ == "bnode":
+                    formatted_row.append(TableCell(val.identifier()))
+
+                elif val.typ == "literal":
+                    if clip_literals:
+                        # replace to modify value
+                        # without messing up original result
+                        val = replace(val, value=clip(val.value))
+
+                    formatted_row.append(
+                        TableCell(self.format_literal(val.identifier()))
+                    )
+
+                else:
+                    assert val.typ == "uri"
+                    identifier = val.identifier()
+                    formatted = self.format_iri(identifier)
+
+                    label = self.get_label(
+                        identifier,
+                        "entities",
+                    ) or self.get_label(identifier, "properties")
+
+                    if label is not None:
+                        formatted = f"{clip(label)} ({formatted})"
+
+                    formatted_row.append(TableCell(formatted, identifier))
+
+            return formatted_row
+
+        column_names = column_names or result.variables
+        header = [column_names[c] if c >= 0 else "..." for c in column_indices]
+        top_end = min(show_top_rows, result.num_rows)
+        bottom_start = max(result.num_rows - show_bottom_rows, top_end)
+
+        data = [format_row(row) for row in result.rows(end=top_end)]
+
+        if bottom_start > top_end:
+            data.append([TableCell("...")] * len(header))
+
+        data.extend(
+            format_row(row) for row in result.rows(bottom_start, result.num_rows)
+        )
+        return header, data
+
+    def format_sparql_table(
+        self,
+        header: list[str],
+        data: list[list[TableCell]],
+    ) -> str:
+        # generate a nicely formatted table
+        return generate_table(
+            [[cell.value for cell in row] for row in data],
+            [header],
+            alignments=["left"] * len(header),
+            max_column_width=sys.maxsize,
+        )
+
+    def format_sparql_result_summary(
+        self,
+        result: SelectResult,
+        show_top_rows: int = 5,
+        show_bottom_rows: int = 5,
+        show_left_columns: int = 5,
+        show_right_columns: int = 5,
+        time: float | None = None,
+    ) -> str:
+        tmf = ""
+        if time is not None:
+            tmf = f" in {time:.2f}s"
+
+        comp = "" if result.complete else "more than "
+        formatted = (
+            f"Got {comp}{result.num_rows:,} row{'s' * (result.num_rows != 1)} and "
+            f"{result.num_columns:,} column{'s' * (result.num_columns != 1)}{tmf}"
+        )
+
+        showing = []
+
+        if result.num_columns - show_right_columns > show_left_columns:
+            # columns restricted
+            show_columns = []
+            if show_left_columns:
+                show_columns.append(f"first {show_left_columns}")
+            if show_right_columns:
+                show_columns.append(f"last {show_right_columns}")
+
+            showing.append(f"the {' and '.join(show_columns)} columns")
+
+        if result.num_rows - show_bottom_rows > show_top_rows:
+            # rows restricted
+            show_rows = []
+            if show_top_rows:
+                show_rows.append(f"first {show_top_rows}")
+            if show_bottom_rows:
+                show_rows.append(f"last {show_bottom_rows}")
+
+            showing.append(f"the {' and '.join(show_rows)} rows")
+
+        if showing:
+            formatted += ", showing " + " and ".join(showing) + " below"
+
+        return formatted
+
     def format_sparql_result(
         self,
         result: SelectResult | AskResult,
@@ -221,122 +368,29 @@ class KgManager:
 
             return f"Got 0 rows and {result.num_columns:,} columns" + tmf
 
-        assert column_names is None or len(column_names) == result.num_columns, (
-            f"Expected {result.num_columns:,} column names"
+        header, data = self.sparql_result_table(
+            result,
+            show_top_rows,
+            show_bottom_rows,
+            show_left_columns,
+            show_right_columns,
+            column_names,
+            clip_literals,
         )
-        assert show_top_rows or show_bottom_rows, "At least one row must be shown"
-        assert show_left_columns or show_right_columns, (
-            "At least one column must be shown"
-        )
-
-        left_end = min(show_left_columns, result.num_columns)
-        right_start = result.num_columns - show_right_columns
-        if right_start > left_end:
-            column_indices = list(range(left_end))
-            column_indices.append(-1)
-            column_indices.extend(range(right_start, result.num_columns))
-        else:
-            column_indices = list(range(result.num_columns))
-
-        def format_row(row: SelectRow) -> list[str]:
-            formatted_row = []
-            for c in column_indices:
-                if c < 0:
-                    formatted_row.append("...")
-                    continue
-
-                var = result.variables[c]
-                val = row.get(var, None)
-                if val is None:
-                    formatted_row.append("")
-                    continue
-
-                if val.typ == "bnode":
-                    formatted_row.append(val.identifier())
-
-                elif val.typ == "literal":
-                    if clip_literals:
-                        # replace to modify value
-                        # without messing up original result
-                        val = replace(val, value=clip(val.value))
-
-                    formatted_row.append(self.format_literal(val.identifier()))
-
-                else:
-                    assert val.typ == "uri"
-                    identifier = val.identifier()
-                    formatted = self.format_iri(identifier)
-
-                    label = self.get_label(
-                        identifier,
-                        "entities",
-                    ) or self.get_label(identifier, "properties")
-
-                    if label is not None:
-                        formatted = f"{clip(label)} ({formatted})"
-
-                    formatted_row.append(formatted)
-
-            return formatted_row
-
-        # generate a nicely formatted table
-        column_names = column_names or result.variables
-        header = [column_names[c] if c >= 0 else "..." for c in column_indices]
-        top_end = min(show_top_rows, result.num_rows)
-        bottom_start = max(result.num_rows - show_bottom_rows, top_end)
-
-        data = [format_row(row) for row in result.rows(end=top_end)]
-
-        if bottom_start > top_end:
-            data.append(["..."] * len(header))
-
-        data.extend(
-            format_row(row) for row in result.rows(bottom_start, result.num_rows)
-        )
-
-        table = generate_table(
-            data,
-            [header],
-            alignments=["left"] * len(header),
-            max_column_width=sys.maxsize,
-        )
+        table = self.format_sparql_table(header, data)
 
         if table_only:
             return table
 
-        comp = "" if result.complete else "more than "
-        formatted = (
-            f"Got {comp}{result.num_rows:,} row{'s' * (result.num_rows != 1)} and "
-            f"{result.num_columns:,} column{'s' * (result.num_columns != 1)}{tmf}"
+        summary = self.format_sparql_result_summary(
+            result,
+            show_top_rows,
+            show_bottom_rows,
+            show_left_columns,
+            show_right_columns,
+            time,
         )
-
-        showing = []
-
-        if right_start > left_end:
-            # columns restricted
-            show_columns = []
-            if show_left_columns:
-                show_columns.append(f"first {show_left_columns}")
-            if show_right_columns:
-                show_columns.append(f"last {show_right_columns}")
-
-            showing.append(f"the {' and '.join(show_columns)} columns")
-
-        if bottom_start > top_end:
-            # rows restricted
-            show_rows = []
-            if show_top_rows:
-                show_rows.append(f"first {show_top_rows}")
-            if show_bottom_rows:
-                show_rows.append(f"last {show_bottom_rows}")
-
-            showing.append(f"the {' and '.join(show_rows)} rows")
-
-        if showing:
-            formatted += ", showing " + " and ".join(showing) + " below"
-
-        formatted += f":\n{table}"
-        return formatted
+        return f"{summary}:\n{table}"
 
     def find_longest_prefix(self, iri: str) -> tuple[str, str] | None:
         return find_longest_prefix(iri, self.prefixes)

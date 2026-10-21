@@ -98,6 +98,28 @@ class ShapeSample(BaseModel):
         return ordered_unique(candidates)
 
 
+class ShapeTargetView(BaseModel):
+    value: str
+    # only set for classes
+    iri: str | None = None
+
+
+class ShapePropertyView(BaseModel):
+    iri: str
+    value: str
+    targets: list[ShapeTargetView]
+    inverse: bool = False
+    cardinality: str = ""
+
+
+class ShapeView(BaseModel):
+    # the part of a class profile shown to the model
+    iri: str
+    value: str
+    properties: list[ShapePropertyView]
+    note: str = ""
+
+
 class ShapeIndex:
     def __init__(
         self,
