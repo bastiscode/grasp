@@ -428,6 +428,10 @@ knowledge_graphs:
 
 Fields set under `info` in the config overwrite the ones from `info.json`.
 
+GRASP sends its query timeout to QLever endpoints, so QLever stops queries
+GRASP has given up on. For other SPARQL servers, set `backend: other` under
+`info`.
+
 **Basic Auth**
 
 If an endpoint requires Basic Auth, set the env variables
