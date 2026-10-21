@@ -96,7 +96,7 @@ class ModelConfig(BaseModel):
     seed: int | None = None
 
     # model parameters
-    model: str = "gpt-5.4-mini"
+    model: str = "gpt-6.1-sol"
     model_provider: Literal[
         "openai/completions",
         "openai/responses",
@@ -190,7 +190,7 @@ class GraspConfig(ModelConfig):
 
 
 class SpeechToTextConfig(BaseModel):
-    model: str = "gpt-4o-transcribe"
+    model: str = "gpt-transcribe"
     model_endpoint: str | None = None
     model_api_key: str | None = Field(default=None, exclude=True)
     model_timeout: float = 30.0
