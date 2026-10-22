@@ -267,6 +267,7 @@ def generate(
         # dont do it on follow ups
         and not past_messages
     ):
+        known_before = set(task.known)
         result = find_examples(
             managers,
             example_indices,  # type: ignore
@@ -293,6 +294,7 @@ def generate(
             name=name,
             args=args,
             result=result,
+            new_known=sorted(task.known - known_before),
         )
         message = Message.assistant(
             Response(
@@ -305,6 +307,7 @@ def generate(
         # yield to user as tool call
         yield {
             "type": "tool",
+            "id": tool_call.id,
             "name": name,
             "args": args,
             "result": tool_call.result.model_dump(),
@@ -422,6 +425,7 @@ def generate(
         # execute tool calls
         for tool_call in response.tool_calls:
             fn_start = time.monotonic()
+            known_before = set(task.known)
             try:
                 result = call_function(
                     config,
@@ -448,6 +452,7 @@ def generate(
 
             tool_call.result = result
             tool_call.elapsed = time.monotonic() - fn_start
+            tool_call.new_known = sorted(task.known - known_before)
             if config.show_limits:
                 # only shown to the model
                 tool_call.result = result.model_copy(
@@ -456,6 +461,7 @@ def generate(
 
             yield {
                 "type": "tool",
+                "id": tool_call.id,
                 "name": tool_call.name,
                 "args": tool_call.args,
                 "result": result.model_dump(),
