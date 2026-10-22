@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from logging import INFO, FileHandler, Formatter, Logger
 from math import ceil
-from typing import Any
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import (
@@ -33,6 +33,8 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from grasp.configs import ServerConfig
 from grasp.core import generate, load_notes, setup
 from grasp.model import Message
+from grasp.provenance import compute_witnesses
+from grasp.sparql.types import Binding
 from grasp.tasks import Task
 from grasp.examples import load_example_indices
 
@@ -47,6 +49,22 @@ class Request(BaseModel):
     input: Any
     knowledge_graphs: conlist(str, min_length=1)  # type: ignore
     past: Past | None = None
+
+
+class RowValue(BaseModel):
+    # a value of a result row, as in the rows of a table result
+    type: Literal["uri", "literal", "bnode"]
+    value: str
+    datatype: str | None = None
+    lang: str | None = None
+
+
+class ProvenanceRequest(BaseModel):
+    kg: str
+    sparql: str
+    # a row of the query result, as in the rows of a table result
+    row: dict[str, RowValue]
+    max_witnesses: int = Field(default=4, ge=1, le=10)
 
 
 class State(BaseModel):
@@ -69,15 +87,27 @@ class RateLimiter:
         self.window = window
         self.requests: defaultdict[str, deque[float]] = defaultdict(deque)
 
-    def check(self, ip: str) -> float | None:
-        now = time.monotonic()
+    def _prune(self, ip: str, now: float) -> deque[float]:
         timestamps = self.requests[ip]
         while timestamps and now - timestamps[0] >= self.window:
             timestamps.popleft()
+        return timestamps
+
+    def check(self, ip: str) -> float | None:
+        # seconds until the next request is allowed, or None if it is;
+        # read-only, the request does not count towards the limit
+        now = time.monotonic()
+        timestamps = self._prune(ip, now)
         if len(timestamps) >= self.limit:
             return self.window - (now - timestamps[0])
-        timestamps.append(now)
         return None
+
+    def check_and_record(self, ip: str) -> float | None:
+        # like check, but an allowed request counts towards the limit
+        retry_after = self.check(ip)
+        if retry_after is None:
+            self.requests[ip].append(time.monotonic())
+        return retry_after
 
 
 def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
@@ -211,6 +241,58 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
     async def get_config():
         return config.model_dump()
 
+    @app.post("/provenance")
+    async def get_provenance(request: ProvenanceRequest, http_request: HTTPRequest):
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        prefix = f"[{client_ip}] [/provenance]"
+
+        # provenance only runs SPARQL queries, so it does not count towards
+        # the limit, but is refused while a client is over it
+        if rate_limiter is not None:
+            retry_after = rate_limiter.check(client_ip)
+            if retry_after is not None:
+                logger.warning(
+                    f"{prefix} Rate limit exceeded, try again in {ceil(retry_after):,}s"
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Too many requests, try again in {ceil(retry_after):,}s",
+                    headers={"Retry-After": str(ceil(retry_after))},
+                )
+
+        manager = next((m for m in managers if m.kg == request.kg), None)
+        if manager is None:
+            raise HTTPException(status_code=400, detail="Unsupported knowledge graph")
+
+        def run_provenance() -> dict:
+            # witnesses for the given row, the query itself is not executed
+            row = {
+                var: Binding(
+                    typ=value.type,
+                    value=value.value,
+                    datatype=value.datatype,
+                    lang=value.lang,
+                )
+                for var, value in request.row.items()
+            }
+            witnesses = compute_witnesses(
+                manager,
+                request.sparql,
+                None,
+                max_witnesses=request.max_witnesses,
+                rows=[(1, row)],
+            )
+            return {"witnesses": witnesses}
+
+        try:
+            return await asyncio.to_thread(run_provenance)
+        except Exception as exc:
+            logger.error(f"{prefix} Failed to compute provenance:\n{exc}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to compute provenance:\n{exc}",
+            )
+
     @app.post("/run")
     async def run_task(request: Request, http_request: HTTPRequest):
         nonlocal active_connections
@@ -220,7 +302,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
         prefix = f"[{client_ip}] [/run]"
 
         if rate_limiter is not None:
-            retry_after = rate_limiter.check(client_ip)
+            retry_after = rate_limiter.check_and_record(client_ip)
             if retry_after is not None:
                 logger.warning(
                     f"{prefix} Rate limit exceeded, try again in {ceil(retry_after):,}s"
@@ -396,7 +478,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                 )
 
                 if rate_limiter is not None:
-                    retry_after = rate_limiter.check(client_ip)
+                    retry_after = rate_limiter.check_and_record(client_ip)
                     if retry_after is not None:
                         logger.warning(
                             f"{prefix} Rate limit exceeded, try again in {ceil(retry_after):,}s"
@@ -564,7 +646,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
             prefix = f"[{client_ip}] [/transcribe]"
 
             if stt_rate_limiter is not None:
-                retry_after = stt_rate_limiter.check(client_ip)
+                retry_after = stt_rate_limiter.check_and_record(client_ip)
                 if retry_after is not None:
                     logger.warning(
                         f"{prefix} Rate limit exceeded, try again in {ceil(retry_after):,}s"

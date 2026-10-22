@@ -25,7 +25,9 @@ from grasp.sparql.types import (
     Selection,
     SelectResult,
     SelectRow,
-    TableCell,
+    TableColumn,
+    TableRow,
+    group_selections,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -649,7 +651,7 @@ def call_function(
             config.sparql_read_timeout,
             config.sparql_result_max_rows,
         )
-        return result.table or result.formatted
+        return result.tool_result()
 
     elif fn_name == "list":
         return list_triples(
@@ -1232,9 +1234,16 @@ def update_known_from_selections(
 class TableResult(ToolCallResult):
     type: str = "table"
     summary: str
-    # the shown part of the table, with ... for omitted rows and columns
-    header: list[str]
-    rows: list[list[TableCell]]
+    # the shown columns and rows of the table, None for omitted ones; rows
+    # keep the values of all columns, e.g. for provenance of a row
+    columns: list[TableColumn | None]
+    rows: list[TableRow | None]
+
+
+class BooleanResult(ToolCallResult):
+    type: str = "boolean"
+    summary: str
+    value: bool
 
 
 @dataclass
@@ -1242,8 +1251,13 @@ class ExecutionResult:
     sparql: str
     formatted: str
     result: SelectResult | AskResult | None = None
-    # the shown part of a select result with at least one row
-    table: TableResult | None = None
+    # the shown part of a select result with at least one row, or the
+    # result of an ask query
+    structured: TableResult | BooleanResult | None = None
+
+    def tool_result(self) -> ToolCallResult:
+        # the structured result if there is one, the formatted one otherwise
+        return self.structured or ToolCallResult(formatted=self.formatted)
 
 
 def execute_sparql(
@@ -1310,10 +1324,18 @@ def execute_sparql(
         half_columns,
         time=diff,
     )
-    if not isinstance(result, SelectResult) or result.num_rows == 0:
+    if isinstance(result, AskResult):
+        boolean = BooleanResult(
+            formatted=formatted,
+            summary=formatted.split("\n", 1)[0].rstrip(":"),
+            value=result.boolean,
+        )
+        return ExecutionResult(sparql, formatted, result, boolean)
+
+    if result.num_rows == 0:
         return ExecutionResult(sparql, formatted, result)
 
-    header, rows = manager.sparql_result_table(
+    columns, rows = manager.sparql_result_table(
         result,
         half_rows,
         half_rows,
@@ -1331,7 +1353,7 @@ def execute_sparql(
     table = TableResult(
         formatted=formatted,
         summary=summary,
-        header=header,
+        columns=columns,
         rows=rows,
     )
     return ExecutionResult(sparql, formatted, result, table)
@@ -1529,7 +1551,7 @@ SELECT ?s ?p ?o WHERE {{
     if not result.data:
         return f"No triples ({suffix})"
 
-    header, rows = manager.sparql_result_table(
+    columns, rows = manager.sparql_result_table(
         result,
         show_top_rows=k,
         show_bottom_rows=0,
@@ -1541,9 +1563,9 @@ SELECT ?s ?p ?o WHERE {{
     )
     summary = f"Triples ({suffix})"
     return TableResult(
-        formatted=f"{summary}:\n{manager.format_sparql_table(header, rows)}",
+        formatted=f"{summary}:\n{manager.format_sparql_table(columns, rows)}",
         summary=summary,
-        header=header,
+        columns=columns,
         rows=rows,
     )
 
@@ -1669,21 +1691,103 @@ def paginate_results(
     return page_items, total_pages, more
 
 
-def alternative_item(alt: Alternative) -> tuple[str, SearchItem]:
-    # selection string and item with the same sampled aliases and infos
+def alternative_item(
+    alt: Alternative,
+    variants: list[str] | None = None,
+) -> tuple[str, SearchItem]:
+    # selection string and item with the same sampled aliases and infos;
+    # variants replace the ones of the alternative if given
     aliases = alt.sample_aliases()
     infos = alt.sample_info()
     item = SearchItem(
         identifier=alt.identifier,
         short_identifier=alt.short_identifier,
         label=alt.label,
-        variants=alt.variants,
+        variants=alt.variants if variants is None else variants,
         matched_label=alt.matched_label,
         aliases=aliases,
         num_aliases=len(alt.aliases or []),
         infos=infos,
     )
-    return alt.get_selection_string(aliases=aliases, infos=infos), item
+    selection = alt.get_selection_string(
+        include_variants=variants,
+        aliases=aliases,
+        infos=infos,
+    )
+    return selection, item
+
+
+class SelectedItem(SearchItem):
+    # where the item is in the query, as character offsets
+    spans: list[tuple[int, int]] = []
+
+
+class SelectionGroup(BaseModel):
+    # the items of a SPARQL query of one type, e.g. its entities
+    name: str
+    items: list[SelectedItem]
+
+
+SELECTION_GROUP_NAMES = [
+    (ObjType.ENTITY, "entities"),
+    (ObjType.PROPERTY, "properties"),
+    (ObjType.UNINDEXED, "other (non-indexed) items"),
+]
+
+
+def format_selection_groups(
+    selections: list[Selection],
+    manager: KgManager | None = None,
+    sparql: str | None = None,
+) -> tuple[str, list[SelectionGroup]]:
+    # the items of a SPARQL query per type, formatted and as groups of items
+    # with the same sampled aliases and infos; with the manager and the
+    # query, also where the items are in it
+    grouped = group_selections(selections)
+
+    formatted = []
+    groups = []
+    for obj_type, name in SELECTION_GROUP_NAMES:
+        if obj_type not in grouped:
+            continue
+
+        lines = []
+        items = []
+        for alt, variants in grouped[obj_type]:
+            line, item = alternative_item(alt, variants)
+            lines.append(line)
+            items.append(SelectedItem(**item.model_dump()))
+
+        formatted.append(f"Using {name}:\n" + format_list(lines))
+        groups.append(SelectionGroup(name=name, items=items))
+
+    if manager is not None and sparql is not None:
+        add_query_spans(groups, manager, sparql)
+
+    return "\n\n".join(formatted), groups
+
+
+def add_query_spans(
+    groups: list[SelectionGroup],
+    manager: KgManager,
+    sparql: str,
+) -> None:
+    # import here to avoid a circular import
+    from grasp.provenance.trace import identifiers, iri_spans
+
+    try:
+        spans = iri_spans(manager, sparql, skip_common=False)
+    except Exception:
+        return
+
+    # items are identified in normalized form, e.g. on Wikidata the
+    # property wdt:P31 in the query by wd:P31
+    for iri, _, start, end in spans:
+        ids = identifiers(manager, iri)
+        for group in groups:
+            for item in group.items:
+                if item.identifier in ids:
+                    item.spans.append((start, end))
 
 
 def format_index_alternatives(

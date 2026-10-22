@@ -130,10 +130,24 @@ SelectRow = dict[str, Binding]
 
 
 @dataclass
-class TableCell:
-    # the value as shown to the model, iri only set for iris
+class TableValue:
+    # a value of a result row, label is the value as shown to the model
+    type: str
     value: str
-    iri: str | None = None
+    label: str
+    datatype: str | None = None
+    lang: str | None = None
+
+
+@dataclass
+class TableColumn:
+    # a column of a result table, name is the column name shown to the model
+    variable: str
+    name: str
+
+
+# rows of a result table keep the values of all columns, also the omitted ones
+TableRow = dict[str, TableValue]
 
 
 @dataclass
