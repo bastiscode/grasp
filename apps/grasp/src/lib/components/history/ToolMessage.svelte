@@ -6,6 +6,7 @@
   import ExamplesResult from './ExamplesResult.svelte';
   import SearchResults from './SearchResults.svelte';
   import ShapesResult from './ShapesResult.svelte';
+  import BooleanResult from './BooleanResult.svelte';
   import TableResult from './TableResult.svelte';
   import {
     flattenFunctionArgs,
@@ -72,7 +73,7 @@
         </span>
       {/if}
       {#each argChips as chip (chip.key)}
-        <span class="arg-chip" title={`${chip.key}: ${chip.value}`}>
+        <span class="arg-chip" title={`${chip.key}: ${chip.value}`} data-arg={chip.key}>
           <span class="arg-chip__key">{chip.key}</span>
           <span
             class="arg-chip__value"
@@ -87,12 +88,18 @@
 
   </svelte:fragment>
 
+  <!-- data attributes mark where provenance highlights items -->
   {#if sparql}
-    <SparqlBlock code={sparql} qleverLink={qleverLink} label="SPARQL" />
+    <div data-arg="sparql">
+      <SparqlBlock code={sparql} qleverLink={qleverLink} label="SPARQL" />
+    </div>
   {/if}
 
+  <div data-part="result">
   {#if result?.type === 'search'}
     <SearchResults {result} />
+  {:else if result?.type === 'boolean'}
+    <BooleanResult {result} />
   {:else if result?.type === 'table'}
     <TableResult {result} />
   {:else if result?.type === 'sparql_qa_examples'}
@@ -104,6 +111,7 @@
   {:else if result?.formatted}
     <MarkdownContent content={nestBulletsUnderEnumeration(result.formatted)} />
   {/if}
+  </div>
 </MessageCard>
 
 <style>
