@@ -98,10 +98,17 @@ class ShapeSample(BaseModel):
         return ordered_unique(candidates)
 
 
+# value is how the model sees an item of a shape, the other fields are its
+# parts, e.g. for displaying it
+
+
 class ShapeTargetView(BaseModel):
     value: str
+    kind: Literal["class", "literal", "iri", "bnode"] = "iri"
     # only set for classes
     iri: str | None = None
+    short_iri: str | None = None
+    label: str | None = None
 
 
 class ShapePropertyView(BaseModel):
@@ -110,6 +117,9 @@ class ShapePropertyView(BaseModel):
     targets: list[ShapeTargetView]
     inverse: bool = False
     cardinality: str = ""
+    short_iri: str = ""
+    label: str | None = None
+    variants: list[str] = Field(default_factory=list)
 
 
 class ShapeView(BaseModel):
@@ -118,6 +128,14 @@ class ShapeView(BaseModel):
     value: str
     properties: list[ShapePropertyView]
     note: str = ""
+    short_iri: str = ""
+    label: str | None = None
+    # outgoing and incoming properties not shown, because of the cap or
+    # because few instances have them
+    omitted: int = 0
+    filtered: int = 0
+    incoming_omitted: int = 0
+    incoming_filtered: int = 0
 
 
 class ShapeIndex:
