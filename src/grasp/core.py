@@ -19,7 +19,7 @@ from grasp.manager.utils import (
     describe_index_type,
     get_common_sparql_prefixes,
 )
-from grasp.model import Message, Model, Response, ToolCall, get_model
+from grasp.model import Message, Model, Response, ToolCall, ToolCallResult, get_model
 from grasp.tasks import get_task
 from grasp.tasks import rules as general_rules
 from grasp.tasks.base import GraspTask
@@ -235,6 +235,9 @@ def generate(
             config.result_max_columns,
         )
 
+        if isinstance(result, str):
+            result = ToolCallResult(formatted=result)
+
         name = "get_random_examples"
         args = {"kg": config.force_examples, "page": 1}
         if not config.random_examples:
@@ -260,7 +263,7 @@ def generate(
             "type": "tool",
             "name": name,
             "args": args,
-            "result": result,
+            "result": tool_call.result.model_dump(),
         }
 
     # log all messages so far
@@ -320,7 +323,7 @@ def generate(
             # the duplicate response's tool calls are not executed; mark
             # their results so the message history stays valid
             for tool_call in response.tool_calls:
-                tool_call.result = "Not executed due to loop"
+                tool_call.result = ToolCallResult(formatted="Not executed due to loop")
 
             # inform the model that a loop was detected and let it recover
             loop_msg = (
@@ -370,6 +373,10 @@ def generate(
                 # traceback_str = "".join(traceback.format_exc())
                 # logger.error(f"Full traceback:\n{traceback_str}")
 
+            # functions return plain strings unless they have a structured result
+            if isinstance(result, str):
+                result = ToolCallResult(formatted=result)
+
             tool_call.result = result
             tool_call.elapsed = time.monotonic() - fn_start
 
@@ -377,7 +384,7 @@ def generate(
                 "type": "tool",
                 "name": tool_call.name,
                 "args": tool_call.args,
-                "result": tool_call.result,
+                "result": tool_call.result.model_dump(),
                 "elapsed": tool_call.elapsed,
             }
 

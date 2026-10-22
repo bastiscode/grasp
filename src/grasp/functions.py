@@ -5,14 +5,16 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, Iterable
 
 from grammar_utils.parse import LR1Parser  # type: ignore
+from pydantic import BaseModel
 from search_rdf import EmbeddingIndex
 from universal_ml_utils.ops import partition_by
 
-from grasp.configs import GraspConfig, ShapeConfig
+from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import get_common_sparql_prefixes
-from grasp.shapes import ShapeSample
+from grasp.model import ToolCallResult
+from grasp.shapes import ShapeView
 from grasp.sparql.item import parse_into_binding
 from grasp.sparql.types import (
     Alternative,
@@ -23,6 +25,7 @@ from grasp.sparql.types import (
     Selection,
     SelectResult,
     SelectRow,
+    TableCell,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -632,9 +635,9 @@ def call_function(
     known: set[str],
     task: "GraspTask | None" = None,
     example_indices: dict | None = None,
-) -> str:
+) -> str | ToolCallResult:
     if fn_name == "execute":
-        return execute_sparql(
+        result = execute_sparql(
             managers,
             fn_args["kg"],
             fn_args["sparql"],
@@ -645,7 +648,8 @@ def call_function(
             config.sparql_request_timeout,
             config.sparql_read_timeout,
             config.sparql_result_max_rows,
-        ).formatted  # type: ignore
+        )
+        return result.table or result.formatted
 
     elif fn_name == "list":
         return list_triples(
@@ -816,14 +820,16 @@ SHAPE_CAVEAT = (
 )
 
 
-def format_shapes(shapes: list[ShapeSample], manager: KgManager) -> str:
-    from grasp.build.shapes import emit_pseudo_shex
+class ShapesResult(ToolCallResult):
+    type: str = "shapes"
+    summary: str = ""
+    shapes: list[ShapeView]
 
-    shape_config = manager.shape_config or ShapeConfig()
-    return format_enumerate(
-        emit_pseudo_shex(shape.profile, manager, shape_config, dense=True)
-        for shape in shapes
-    )
+
+def format_shapes(views: list[ShapeView]) -> str:
+    from grasp.build.shapes import format_shape_view
+
+    return format_enumerate(format_shape_view(view) for view in views)
 
 
 def update_known_from_shape_iris(
@@ -842,7 +848,7 @@ def call_shape_function(
     manager: KgManager,
     config: GraspConfig,
     known: set[str] | None = None,
-) -> str:
+) -> str | ShapesResult:
     if fn_name == "search_shape":
         if shapes.index is None:
             return "Shape search is unavailable: the existing index was cleared after the pattern was changed. Rebuild the index to re-enable shape search."
@@ -860,7 +866,7 @@ def call_shape_function(
         if not results:
             return f"No shapes ({suffix})"
 
-        from grasp.build.shapes import collect_iris
+        from grasp.build.shapes import collect_iris, shape_view
         from grasp.configs import ShapeConfig
 
         shape_config = manager.shape_config or ShapeConfig()
@@ -871,7 +877,16 @@ def call_shape_function(
                     collect_iris(sample.profile, manager, shape_config, dense=True),
                     manager,
                 )
-        return f"Shapes ({suffix}):\n" + format_shapes(results, manager)
+        views = [
+            shape_view(sample.profile, manager, shape_config, dense=True)
+            for sample in results
+        ]
+        summary = f"Shapes ({suffix})"
+        return ShapesResult(
+            formatted=f"{summary}:\n" + format_shapes(views),
+            summary=summary,
+            shapes=views,
+        )
 
     elif fn_name == "get_shape":
         iri_arg = fn_args["iri"]
@@ -891,7 +906,7 @@ def call_shape_function(
             else None
         )
         if sample is not None:
-            from grasp.build.shapes import collect_iris, emit_pseudo_shex
+            from grasp.build.shapes import collect_iris, format_shape_view, shape_view
             from grasp.configs import ShapeConfig
 
             shape_config = manager.shape_config or ShapeConfig()
@@ -901,7 +916,8 @@ def call_shape_function(
                     collect_iris(sample.profile, manager, shape_config),
                     manager,
                 )
-            return emit_pseudo_shex(sample.profile, manager, shape_config)
+            view = shape_view(sample.profile, manager, shape_config)
+            return ShapesResult(formatted=format_shape_view(view), shapes=[view])
 
         if shapes.instance_pattern is None and shapes.schema_pattern is None:
             return (
@@ -918,7 +934,8 @@ def call_shape_function(
         from grasp.build.shapes import (
             collect_iris,
             compute_shape,
-            emit_pseudo_shex,
+            format_shape_view,
+            shape_view,
         )
         from grasp.configs import ShapeConfig
 
@@ -937,7 +954,8 @@ def call_shape_function(
                     collect_iris(profile, manager, shape_config),
                     manager,
                 )
-            return emit_pseudo_shex(profile, manager, shape_config)
+            view = shape_view(profile, manager, shape_config)
+            return ShapesResult(formatted=format_shape_view(view), shapes=[view])
         except Exception as e:
             return (
                 f"Shape for '{iri_arg}' is not in the index and failed "
@@ -945,6 +963,28 @@ def call_shape_function(
             )
 
     raise FunctionCallException(f"Unknown shape function '{fn_name}'")
+
+
+class SearchItem(BaseModel):
+    identifier: str
+    short_identifier: str | None = None
+    label: str | None = None
+    variants: list[str] | None = None
+    matched_label: str | None = None
+    # the sampled aliases and infos shown to the model
+    aliases: list[str] = []
+    num_aliases: int = 0
+    infos: list[str] = []
+
+
+class SearchResult(ToolCallResult):
+    type: str = "search"
+    note: str = ""
+    items: list[SearchItem]
+    start: int
+    page: int
+    total_pages: int
+    more: bool
 
 
 def validate_page(page: int, max_pages: int | None = None) -> None:
@@ -968,7 +1008,7 @@ def search_entity(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -997,7 +1037,7 @@ def search_property(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -1026,7 +1066,7 @@ def search_literal(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -1189,11 +1229,21 @@ def update_known_from_selections(
     )
 
 
+class TableResult(ToolCallResult):
+    type: str = "table"
+    summary: str
+    # the shown part of the table, with ... for omitted rows and columns
+    header: list[str]
+    rows: list[list[TableCell]]
+
+
 @dataclass
 class ExecutionResult:
     sparql: str
     formatted: str
     result: SelectResult | AskResult | None = None
+    # the shown part of a select result with at least one row
+    table: TableResult | None = None
 
 
 def execute_sparql(
@@ -1260,7 +1310,31 @@ def execute_sparql(
         half_columns,
         time=diff,
     )
-    return ExecutionResult(sparql, formatted, result)
+    if not isinstance(result, SelectResult) or result.num_rows == 0:
+        return ExecutionResult(sparql, formatted, result)
+
+    header, rows = manager.sparql_result_table(
+        result,
+        half_rows,
+        half_rows,
+        half_columns,
+        half_columns,
+    )
+    summary = manager.format_sparql_result_summary(
+        result,
+        half_rows,
+        half_rows,
+        half_columns,
+        half_columns,
+        time=diff,
+    )
+    table = TableResult(
+        formatted=formatted,
+        summary=summary,
+        header=header,
+        rows=rows,
+    )
+    return ExecutionResult(sparql, formatted, result, table)
 
 
 def parse_iri_or_literal(
@@ -1313,7 +1387,7 @@ def list_triples(
     known: set[str],
     request_timeout: float | tuple[float, float] | None = None,
     read_timeout: float | None = None,
-) -> str:
+) -> str | TableResult:
     validate_page(page)
 
     manager, _ = find_manager(managers, kg)
@@ -1451,7 +1525,11 @@ SELECT ?s ?p ?o WHERE {{
     update_known_from_rows(known, result.rows(), ent_norm)
     update_known_from_rows(known, result.rows(), prop_norm)
 
-    table = manager.format_sparql_result(
+    suffix = format_page_suffix(page, total_pages, more)
+    if not result.data:
+        return f"No triples ({suffix})"
+
+    header, rows = manager.sparql_result_table(
         result,
         show_top_rows=k,
         show_bottom_rows=0,
@@ -1460,13 +1538,14 @@ SELECT ?s ?p ?o WHERE {{
         # override column names
         column_names=["subject", "property", "object"],
         clip_literals=not unclipped,
-        table_only=True,
     )
-    suffix = format_page_suffix(page, total_pages, more)
-    if not table:
-        return f"No triples ({suffix})"
-
-    return f"Triples ({suffix}):\n{table}"
+    summary = f"Triples ({suffix})"
+    return TableResult(
+        formatted=f"{summary}:\n{manager.format_sparql_table(header, rows)}",
+        summary=summary,
+        header=header,
+        rows=rows,
+    )
 
 
 def search_with_constraints(
@@ -1483,7 +1562,7 @@ def search_with_constraints(
     read_timeout: float | None = None,
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -1569,7 +1648,7 @@ search index due to:
     normalizer = manager.get_normalizer(index)
     update_known_from_alts(known, alternatives, normalizer)
 
-    return info + format_index_alternatives(alternatives, k, page, total_pages, more)
+    return format_index_alternatives(alternatives, k, page, total_pages, more, info)
 
 
 def format_page_suffix(page: int, total_pages: int, more: bool) -> str:
@@ -1590,23 +1669,55 @@ def paginate_results(
     return page_items, total_pages, more
 
 
+def alternative_item(alt: Alternative) -> tuple[str, SearchItem]:
+    # selection string and item with the same sampled aliases and infos
+    aliases = alt.sample_aliases()
+    infos = alt.sample_info()
+    item = SearchItem(
+        identifier=alt.identifier,
+        short_identifier=alt.short_identifier,
+        label=alt.label,
+        variants=alt.variants,
+        matched_label=alt.matched_label,
+        aliases=aliases,
+        num_aliases=len(alt.aliases or []),
+        infos=infos,
+    )
+    return alt.get_selection_string(aliases=aliases, infos=infos), item
+
+
 def format_index_alternatives(
     alternatives: list[Alternative],
     k: int,
     page: int,
     total_pages: int,
     more: bool = False,
-) -> str:
+    note: str = "",
+) -> SearchResult:
     suffix = format_page_suffix(page, total_pages, more)
-    if not alternatives:
-        return f"No results ({suffix})"
+    start = (page - 1) * k
 
-    start_index = (page - 1) * k
-    lines = "\n".join(
-        f"{start_index + i + 1}. {alt.get_selection_string()}"
-        for i, alt in enumerate(alternatives)
+    lines = []
+    items = []
+    for i, alt in enumerate(alternatives):
+        selection, item = alternative_item(alt)
+        lines.append(f"{start + i + 1}. {selection}")
+        items.append(item)
+
+    if lines:
+        formatted = f"Results ({suffix}):\n" + "\n".join(lines)
+    else:
+        formatted = f"No results ({suffix})"
+
+    return SearchResult(
+        formatted=note + formatted,
+        note=note,
+        items=items,
+        start=start,
+        page=page,
+        total_pages=total_pages,
+        more=more,
     )
-    return f"Results ({suffix}):\n{lines}"
 
 
 def search_with_filter(
@@ -1623,7 +1734,7 @@ def search_with_filter(
     read_timeout: float | None = None,
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, others = find_manager(managers, kg)
@@ -1668,4 +1779,4 @@ search index due to:
     normalizer = manager.get_normalizer(index)
     update_known_from_alts(known, alternatives, normalizer)
 
-    return info + format_index_alternatives(alternatives, k, page, total_pages, more)
+    return format_index_alternatives(alternatives, k, page, total_pages, more, info)

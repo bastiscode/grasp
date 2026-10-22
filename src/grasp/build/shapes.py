@@ -14,7 +14,10 @@ from grasp.manager.normalizer import Normalizer
 from grasp.shapes import (
     ClassProfile,
     PropertyProfile,
+    ShapePropertyView,
     ShapeSample,
+    ShapeTargetView,
+    ShapeView,
     Target,
     TargetBnode,
     TargetClass,
@@ -446,20 +449,21 @@ def bracketed(items: list[str]) -> str:
     return f"[ {' '.join(items)} ]"
 
 
-def render_target(target: Target, manager: KgManager) -> str:
+def render_target(target: Target, manager: KgManager) -> ShapeTargetView:
     if isinstance(target, TargetLiteral):
-        return target.datatype
+        return ShapeTargetView(value=target.datatype)
     if isinstance(target, TargetBnode):
-        return "BNODE"
+        return ShapeTargetView(value="BNODE")
     if isinstance(target, TargetClass):
-        return resolve_label(
+        value = resolve_label(
             target.iri,
             "entities",
             target.short_iri,
             manager,
             variants=target.variants or None,
         )
-    return "IRI"
+        return ShapeTargetView(value=value, iri=target.iri)
+    return ShapeTargetView(value="IRI")
 
 
 def select_from(
@@ -530,19 +534,18 @@ def cardinality_tag_for_property(prop: PropertyProfile, total_entities: int) -> 
     return cardinality_tag(coverage, avg_vals)
 
 
-def emit_pseudo_shex(
+def shape_view(
     profile: ClassProfile,
     manager: KgManager,
     shape_config: ShapeConfig,
     dense: bool = False,
-) -> str:
-    header = resolve_label(profile.iri, "entities", profile.short_iri, manager)
-    lines = [f"{header} {{"]
+) -> ShapeView:
+    value = resolve_label(profile.iri, "entities", profile.short_iri, manager)
 
     kept, omitted, filtered = select_properties(profile, shape_config, dense)
     in_kept, in_omitted, in_filtered = select_incoming(profile, shape_config, dense)
 
-    def render(prop: PropertyProfile, inverse: bool) -> str:
+    def view(prop: PropertyProfile, inverse: bool) -> ShapePropertyView:
         prop_str = resolve_label(
             prop.iri,
             "properties",
@@ -550,22 +553,20 @@ def emit_pseudo_shex(
             manager,
             variants=prop.variants or None,
         )
-        if prop.targets:
-            value_str = bracketed([render_target(t, manager) for t in prop.targets])
-        else:
-            value_str = "IRI"
+        # no cardinality tag for inverse edges: coverage and values-per-entity
+        # are defined over the focus class' own instances and do not carry
+        # over to inverse edges.
+        tag = "" if inverse else cardinality_tag_for_property(prop, profile.share_base)
+        return ShapePropertyView(
+            iri=prop.iri,
+            value=prop_str,
+            targets=[render_target(t, manager) for t in prop.targets],
+            inverse=inverse,
+            cardinality=tag,
+        )
 
-        if inverse:
-            # no cardinality tag: coverage and values-per-entity are defined over
-            # the focus class' own instances and do not carry over to inverse edges.
-            return f"  ^{prop_str} {value_str} ;"
-
-        tag = cardinality_tag_for_property(prop, profile.share_base)
-        tag_suffix = f" {tag}" if tag else ""
-        return f"  {prop_str} {value_str}{tag_suffix} ;"
-
-    lines.extend(render(prop, inverse=False) for prop in kept)
-    lines.extend(render(prop, inverse=True) for prop in in_kept)
+    properties = [view(prop, inverse=False) for prop in kept]
+    properties.extend(view(prop, inverse=True) for prop in in_kept)
 
     parts = []
     if omitted:
@@ -577,15 +578,47 @@ def emit_pseudo_shex(
     if in_filtered:
         parts.append(f"{in_filtered:,} incoming filtered (low coverage)")
 
+    note = ""
     if parts:
-        lines.append(f"  ... {', '.join(parts)}")
-    elif not kept and not in_kept:
+        note = f"... {', '.join(parts)}"
+    elif not properties:
         # make the empty case explicit; an empty body on its own is ambiguous
-        lines.append("  # no properties found for this class")
+        note = "# no properties found for this class"
+
+    return ShapeView(iri=profile.iri, value=value, properties=properties, note=note)
+
+
+def format_shape_view(view: ShapeView) -> str:
+    lines = [f"{view.value} {{"]
+
+    for prop in view.properties:
+        if prop.targets:
+            value_str = bracketed([t.value for t in prop.targets])
+        else:
+            value_str = "IRI"
+
+        if prop.inverse:
+            lines.append(f"  ^{prop.value} {value_str} ;")
+            continue
+
+        tag_suffix = f" {prop.cardinality}" if prop.cardinality else ""
+        lines.append(f"  {prop.value} {value_str}{tag_suffix} ;")
+
+    if view.note:
+        lines.append(f"  {view.note}")
 
     lines.append("}")
 
     return "\n".join(lines)
+
+
+def emit_pseudo_shex(
+    profile: ClassProfile,
+    manager: KgManager,
+    shape_config: ShapeConfig,
+    dense: bool = False,
+) -> str:
+    return format_shape_view(shape_view(profile, manager, shape_config, dense))
 
 
 def collect_iris(
