@@ -308,7 +308,7 @@ When running `grasp serve`, the server exposes the following HTTP endpoints (by 
 Server-specific config options (see `ServerConfig` in the
 [config code](src/grasp/configs.py)):
 
-- `port`, `max_connections`, `max_generation_time`, `max_idle_time`
+- `port`, `max_connections`, `max_time` / `grace_time`, `max_idle_time`
 - `log_outputs` / `log_file`: log all outputs / server logs to these files
 - `share`: directory to store shared web app states in
 - `rate_limit` / `rate_limit_window`: max requests per client IP per window (seconds)

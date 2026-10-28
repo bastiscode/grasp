@@ -86,6 +86,9 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")  # type: ignore
     logger = get_logger("GRASP SERVER", log_level)
 
+    # the agent stops itself at max_time, abort only after a grace time
+    hard_limit = config.max_time + config.grace_time
+
     # keep track of connections and limit to 10 concurrent connections
     active_connections = 0
     rate_limiter: RateLimiter | None = None
@@ -303,18 +306,16 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
             try:
                 output = await asyncio.wait_for(
                     asyncio.to_thread(run_generate),
-                    timeout=config.max_generation_time,
+                    timeout=hard_limit,
                 )
             except asyncio.TimeoutError:
                 stop_event.set()
                 logger.warning(
-                    f"{prefix} Generation hit time limit of {config.max_generation_time:,} seconds"
+                    f"{prefix} Generation hit time limit of {hard_limit:,.0f} seconds"
                 )
                 raise HTTPException(
                     status_code=504,
-                    detail=(
-                        f"Generation hit time limit of {config.max_generation_time:,} seconds"
-                    ),
+                    detail=f"Generation hit time limit of {hard_limit:,.0f} seconds",
                 )
             except HTTPException as e:
                 raise e
@@ -478,8 +479,8 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                         if kind == "data":
                             # Check if we've exceeded the time limit
                             current_time = time.monotonic()
-                            if current_time - start_time > config.max_generation_time:
-                                msg = f"Generation hit time limit of {config.max_generation_time:,} seconds"
+                            if current_time - start_time > hard_limit:
+                                msg = f"Generation hit time limit of {hard_limit:,.0f} seconds"
                                 logger.warning(f"{prefix} {msg}")
                                 stop_event.set()
                                 await websocket.send_json({"error": msg})

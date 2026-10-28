@@ -169,6 +169,10 @@ class GraspConfig(ModelConfig):
 
     # interaction parameters
     max_steps: int = 100
+    # in seconds, one last step once reached (as for max_steps)
+    max_time: float | None = None
+    # remaining steps and time in function results
+    show_limits: bool = False
     # how many times the model is allowed to repeat the same response
     # (loop) before we give up; each repetition counts as one loop
     max_loops: int = 1
@@ -208,7 +212,10 @@ class SpeechToTextConfig(BaseModel):
 class ServerConfig(GraspConfig):
     port: int = 6789
     max_connections: int = 10
-    max_generation_time: int = 300
+    # generation is always time limited in the server
+    max_time: float = 300
+    # extra time for the last step before aborting
+    grace_time: float = 120
     max_idle_time: int = 300
     log_outputs: str | None = None
     log_file: str | None = None
