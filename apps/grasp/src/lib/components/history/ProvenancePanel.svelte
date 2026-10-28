@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import SparqlBlock from '../common/SparqlBlock.svelte';
   import ExecutionResult from './ExecutionResult.svelte';
-  import SearchItem from './SearchItem.svelte';
+  import KgItem from './KgItem.svelte';
   import TableResult from './TableResult.svelte';
   import { provenanceEndpoint } from '../../constants.js';
   import { provenanceJump } from '../../stores.js';
@@ -470,7 +470,7 @@
           {@const shown = tip.item.shown_by.shown}
           <div class="tip__shown">
             {#if shown.type === 'item'}
-              <SearchItem item={shown.item} />
+              <KgItem item={shown.item} />
             {:else if shown.type === 'row'}
               <div class="cells">
                 {#each shown.columns.filter(Boolean) as column}
