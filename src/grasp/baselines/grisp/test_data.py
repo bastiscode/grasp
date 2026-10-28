@@ -15,13 +15,13 @@ from grasp.baselines.grisp.data import (
     extract_values_from_nl_iri,
     get_option_token_ids,
     merge_skeletons,
-    search_alternatives,
+    search_kg_items,
     split_values,
     tokenize_messages,
     tokenize_option_answer,
 )
 from grasp.baselines.grisp.utils import load_sparql_parser
-from grasp.sparql.types import Alternative, ObjType, Selection
+from grasp.sparql.types import KgItem, ObjType, Selection
 
 SPARQL_PARSER = load_sparql_parser()
 
@@ -144,7 +144,7 @@ class TestBeamCoherentRendering:
         manager.denormalize.return_value = "wd:Q4066"
         manager.format_iri.return_value = "wd:Q4066"
         merged.add_selection(
-            Selection(Alternative("wd:Q4066", label="Harz"), ObjType.ENTITY),
+            Selection(KgItem(identifier="wd:Q4066", label="Harz"), ObjType.ENTITY),
             manager,
         )
         info = merged.prepare_for_selection()
@@ -283,11 +283,11 @@ class TestMergedSkeletonSelection:
         ]
 
 
-class TestSearchAlternatives:
+class TestSearchKgItems:
     def manager(self, results: dict[str, list[str]]) -> Mock:
         manager = Mock()
         manager.search_index.side_effect = lambda index_name, query, *args: [
-            Alternative(identifier=identifier) for identifier in results.get(query, [])
+            KgItem(identifier=identifier) for identifier in results.get(query, [])
         ]
         return manager
 
@@ -296,7 +296,7 @@ class TestSearchAlternatives:
 
     def test_searches_the_requested_wording(self):
         manager = self.manager({"has part": ["p1"], "contains": ["p2"]})
-        groups = search_alternatives(
+        groups = search_kg_items(
             manager,
             [ObjType.PROPERTY],
             {ObjType.PROPERTY: None},
@@ -310,7 +310,7 @@ class TestSearchAlternatives:
 
     def test_empty_result_leaves_group_out(self):
         manager = self.manager({})
-        groups = search_alternatives(
+        groups = search_kg_items(
             manager,
             [ObjType.PROPERTY],
             {ObjType.PROPERTY: None},
@@ -324,7 +324,7 @@ class TestSearchAlternatives:
     def test_constraint_passed_to_search(self):
         manager = self.manager({"has part": ["p1"]})
         identifier_map = {"p1": ["wdt"]}
-        search_alternatives(
+        search_kg_items(
             manager,
             [ObjType.PROPERTY],
             {ObjType.PROPERTY: identifier_map},
