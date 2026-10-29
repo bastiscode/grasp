@@ -21,12 +21,12 @@ from grasp.baselines.grisp.data import (
     tokenize_option_answer,
 )
 from grasp.baselines.grisp.utils import load_sparql_parser
-from grasp.sparql.types import KgItem, ObjType, Selection
+from grasp.sparql.types import KgItem, TermKind, Selection
 
 SPARQL_PARSER = load_sparql_parser()
 
 # entities support variants, properties do not, mirroring what the run passes
-OBJ_TYPES = {ObjType.ENTITY: False, ObjType.PROPERTY: True}
+KINDS = {TermKind.ENTITY: False, TermKind.PROPERTY: True}
 
 
 def nl_iri(value: str) -> dict:
@@ -82,14 +82,14 @@ class TestBuildQueries:
             variants=["wdt", None],
             values=["population (wdt)", "inhabitants"],
         )
-        queries = info.build_queries(OBJ_TYPES)
+        queries = info.build_queries(KINDS)
         # properties support variants, so the variant is stripped off and passed
         # separately; entities do not, so the raw wording is searched
-        assert queries[ObjType.PROPERTY] == [
+        assert queries[TermKind.PROPERTY] == [
             ("population", "wdt"),
             ("inhabitants", None),
         ]
-        assert queries[ObjType.ENTITY] == [
+        assert queries[TermKind.ENTITY] == [
             ("population (wdt)", None),
             ("inhabitants", None),
         ]
@@ -104,7 +104,7 @@ class TestBuildQueries:
             variants=["wdt", None],
             values=["population (wdt)", "inhabitants"],
         )
-        queries = info.build_queries(OBJ_TYPES)
+        queries = info.build_queries(KINDS)
         assert info.num_queries == 2
         assert all(len(pairs) == info.num_queries for pairs in queries.values())
 
@@ -144,7 +144,7 @@ class TestBeamCoherentRendering:
         manager.denormalize.return_value = "wd:Q4066"
         manager.format_iri.return_value = "wd:Q4066"
         merged.add_selection(
-            Selection(KgItem(identifier="wd:Q4066", label="Harz"), ObjType.ENTITY),
+            Selection(KgItem(identifier="wd:Q4066", label="Harz"), TermKind.ENTITY),
             manager,
         )
         info = merged.prepare_for_selection()
@@ -277,7 +277,7 @@ class TestMergedSkeletonSelection:
 
         info = merged.prepare_for_selection()
         assert info.queries == ["has part", "contains"]
-        assert info.build_queries(OBJ_TYPES)[ObjType.PROPERTY] == [
+        assert info.build_queries(KINDS)[TermKind.PROPERTY] == [
             ("has part", None),
             ("contains", None),
         ]
@@ -292,28 +292,28 @@ class TestSearchKgItems:
         return manager
 
     def queries(self) -> dict:
-        return {ObjType.PROPERTY: [("has part", None), ("contains", None)]}
+        return {TermKind.PROPERTY: [("has part", None), ("contains", None)]}
 
     def test_searches_the_requested_wording(self):
         manager = self.manager({"has part": ["p1"], "contains": ["p2"]})
         groups = search_kg_items(
             manager,
-            [ObjType.PROPERTY],
-            {ObjType.PROPERTY: None},
+            [TermKind.PROPERTY],
+            {TermKind.PROPERTY: None},
             self.queries(),
             1,
             10,
             Mock(),
         )
-        assert [a.identifier for a in groups[ObjType.PROPERTY]] == ["p2"]
+        assert [a.identifier for a in groups[TermKind.PROPERTY]] == ["p2"]
         assert manager.search_index.call_count == 1
 
     def test_empty_result_leaves_group_out(self):
         manager = self.manager({})
         groups = search_kg_items(
             manager,
-            [ObjType.PROPERTY],
-            {ObjType.PROPERTY: None},
+            [TermKind.PROPERTY],
+            {TermKind.PROPERTY: None},
             self.queries(),
             0,
             10,
@@ -326,8 +326,8 @@ class TestSearchKgItems:
         identifier_map = {"p1": ["wdt"]}
         search_kg_items(
             manager,
-            [ObjType.PROPERTY],
-            {ObjType.PROPERTY: identifier_map},
+            [TermKind.PROPERTY],
+            {TermKind.PROPERTY: identifier_map},
             self.queries(),
             0,
             10,

@@ -20,7 +20,7 @@ from grasp.sparql.types import (
     KgItem,
     AskResult,
     Binding,
-    ObjType,
+    TermKind,
     Position,
     Selection,
     SelectResult,
@@ -971,7 +971,7 @@ def call_shape_function(
 class SearchResult(ToolCallResult):
     type: str = "search"
     note: str = ""
-    # sampled, with the aliases and infos shown to the model
+    # trimmed, with the aliases and infos shown to the model
     items: list[KgItem]
     start: int
     page: int
@@ -1177,27 +1177,27 @@ def update_known_from_rows(
 
 def update_known_from_kg_items(
     known: set[str],
-    kg_items: dict[ObjType, list[KgItem]],
+    kg_items: dict[TermKind, list[KgItem]],
     manager: KgManager,
 ):
     # entities
     update_known_from_alts(
         known,
-        kg_items.get(ObjType.ENTITY, []),
-        manager.get_normalizer(ObjType.ENTITY.index_name),
+        kg_items.get(TermKind.ENTITY, []),
+        manager.get_normalizer(TermKind.ENTITY.index_name),
     )
 
     # properties
     update_known_from_alts(
         known,
-        kg_items.get(ObjType.PROPERTY, []),
-        manager.get_normalizer(ObjType.PROPERTY.index_name),
+        kg_items.get(TermKind.PROPERTY, []),
+        manager.get_normalizer(TermKind.PROPERTY.index_name),
     )
 
     # other
     update_known_from_alts(
         known,
-        kg_items.get(ObjType.UNINDEXED, []),
+        kg_items.get(TermKind.UNINDEXED, []),
     )
 
 
@@ -1209,14 +1209,14 @@ def update_known_from_selections(
     # entities
     update_known_from_alts(
         known,
-        (sel.kg_item for sel in selections if sel.obj_type == ObjType.ENTITY),
+        (sel.kg_item for sel in selections if sel.kind == TermKind.ENTITY),
         manager.get_normalizer("entities"),
     )
 
     # properties
     update_known_from_alts(
         known,
-        (sel.kg_item for sel in selections if sel.obj_type == ObjType.PROPERTY),
+        (sel.kg_item for sel in selections if sel.kind == TermKind.PROPERTY),
         manager.get_normalizer("properties"),
     )
 
@@ -1693,9 +1693,9 @@ class SelectionGroup(BaseModel):
 
 
 SELECTION_GROUP_NAMES = [
-    (ObjType.ENTITY, "entities"),
-    (ObjType.PROPERTY, "properties"),
-    (ObjType.UNINDEXED, "other (non-indexed) items"),
+    (TermKind.ENTITY, "entities"),
+    (TermKind.PROPERTY, "properties"),
+    (TermKind.UNINDEXED, "other (non-indexed) items"),
 ]
 
 
@@ -1704,18 +1704,18 @@ def selection_groups(
     manager: KgManager | None = None,
     sparql: str | None = None,
 ) -> list[SelectionGroup]:
-    # the sampled items of a SPARQL query per type; with the manager and the
+    # the trimmed items of a SPARQL query per type; with the manager and the
     # query, also where the items are in it
     grouped = group_selections(selections)
 
     groups = []
-    for obj_type, name in SELECTION_GROUP_NAMES:
-        if obj_type not in grouped:
+    for kind, name in SELECTION_GROUP_NAMES:
+        if kind not in grouped:
             continue
 
         items = [
-            SelectedItem(**{**item.sample().model_dump(), "variants": variants})
-            for item, variants in grouped[obj_type]
+            SelectedItem(**{**item.trim().model_dump(), "variants": variants})
+            for item, variants in grouped[kind]
         ]
         groups.append(SelectionGroup(name=name, items=items))
 
@@ -1767,7 +1767,7 @@ def format_search_results(
     suffix = format_page_suffix(page, total_pages, more)
     start = (page - 1) * k
 
-    items = [item.sample() for item in kg_items]
+    items = [item.trim() for item in kg_items]
     if items:
         formatted = f"Results ({suffix}):\n" + "\n".join(
             f"{start + i + 1}. {format_kg_item(item)}" for i, item in enumerate(items)

@@ -60,7 +60,7 @@ from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.metrics import f1_score
 from grasp.sparql.types import (
     AskResult,
-    ObjType,
+    TermKind,
     Selection,
     SelectResult,
     format_kg_item,
@@ -667,8 +667,8 @@ def select_iris(
     deepest_query: str = skeleton.materialize_partial()
 
     supports_variants = {
-        obj_type: manager.get_normalizer(obj_type.index_name).supports_variants
-        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY]
+        kind: manager.get_normalizer(kind.index_name).supports_variants
+        for kind in [TermKind.ENTITY, TermKind.PROPERTY]
     }
 
     while True:
@@ -735,7 +735,7 @@ def select_iris(
         # depends on resolved neighbours on both sides of the current placeholder
         if info.sparql not in memo:
             t = time.monotonic()
-            obj_types, identifier_maps, constraint = find_candidate_ids(
+            kinds, identifier_maps, constraint = find_candidate_ids(
                 manager,
                 info.sparql,
                 logger,
@@ -743,7 +743,7 @@ def select_iris(
                 max_candidates=MAX_IRIS,
                 constraint_timeout=cfg.constraint_timeout,
             )
-            memo[info.sparql] = Candidates(obj_types, identifier_maps, constraint)
+            memo[info.sparql] = Candidates(kinds, identifier_maps, constraint)
             timings["constraint"] = time.monotonic() - t
 
         candidates = memo[info.sparql]
@@ -757,7 +757,7 @@ def select_iris(
             t = time.monotonic()
             kg_item_groups = search_kg_items(
                 manager,
-                candidates.obj_types,
+                candidates.kinds,
                 candidates.identifier_maps,
                 queries,
                 candidates.next_query,
@@ -824,10 +824,10 @@ def select_iris(
                     # shown in the selection prompt
                     "aliases": kg_item.aliases,
                     "info": kg_item.infos,
-                    "obj_type": obj_type.value,
+                    "kind": kind.value,
                     "variant": variant,
                 }
-                for kg_item, obj_type, variant in kg_items
+                for kg_item, kind, variant in kg_items
             ],
             "ranking": ranking,
             "constraint": asdict(candidates.constraint),
@@ -877,7 +877,7 @@ def select_iris(
 
         # try out the best alternative
         selected = kg_items[0]
-        kg_item, obj_type, variant = selected
+        kg_item, kind, variant = selected
         candidates.kg_items = [a for a in candidates.kg_items if a is not selected]
         candidates.seen.add(kg_item.identifier)
         if not kg_item.variants:
@@ -909,7 +909,7 @@ def select_iris(
         selection = Selection(
             kg_item=kg_item,
             variant=variant,
-            obj_type=obj_type,
+            kind=kind,
         )
         skeleton.add_selection(selection, manager)
         if skeleton.replaced > len(deepest):
@@ -917,7 +917,7 @@ def select_iris(
             deepest_query = skeleton.materialize_partial()
         logger.debug(
             f"Adding the following alternative at placholder {skeleton.replaced}/{skeleton.total}:\n"
-            f"{format_kg_item(kg_item.sample(), variants=show_variants)} "
+            f"{format_kg_item(kg_item.trim(), variants=show_variants)} "
         )
 
         yield {

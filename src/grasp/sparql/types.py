@@ -2,14 +2,18 @@ import random
 from dataclasses import dataclass
 from enum import StrEnum
 from itertools import groupby
-from typing import Any, Iterator
+from types import ModuleType
+from typing import Any, Iterator, Literal
 
 from pydantic import BaseModel
 
 from grasp.utils import clip, format_list
 
 
-class ObjType(StrEnum):
+TrimMode = Literal["sample", "rank"]
+
+
+class TermKind(StrEnum):
     ENTITY = "entity"
     PROPERTY = "property"
     COMMON = "common"
@@ -25,13 +29,13 @@ class ObjType(StrEnum):
 
     @property
     def index_name(self) -> str:
-        if self == ObjType.ENTITY:
+        if self == TermKind.ENTITY:
             return "entities"
-        elif self == ObjType.PROPERTY:
+        elif self == TermKind.PROPERTY:
             return "properties"
-        elif self == ObjType.LITERAL:
+        elif self == TermKind.LITERAL:
             return "literals"
-        raise ValueError(f"ObjType {self.value} has no associated index")
+        raise ValueError(f"TermKind {self.value} has no associated index")
 
 
 class Position(StrEnum):
@@ -227,7 +231,7 @@ class Example:
 
 class KgItem(BaseModel):
     # an entity, property, or other item of a knowledge graph; num_aliases is
-    # the number of aliases before sampling
+    # the number of aliases before trimming
     identifier: str
     short_identifier: str | None = None
     label: str | None = None
@@ -262,19 +266,18 @@ class KgItem(BaseModel):
     def has_variants(self) -> bool:
         return bool(self.variants)
 
-    def sample(self, max_aliases: int = 5, max_infos: int = 10) -> "KgItem":
-        # copy with the aliases and infos shown to the model
-        aliases = self.aliases
-        if max_aliases <= 0:
-            aliases = []
-        elif len(aliases) > max_aliases:
-            aliases = random.sample(aliases, max_aliases)
-
-        infos = self.infos
-        if max_infos <= 0:
-            infos = []
-        elif len(infos) > max_infos:
-            infos = random.sample(infos, max_infos)
+    def trim(
+        self,
+        max_aliases: int = 5,
+        max_infos: int = 10,
+        mode: TrimMode = "sample",
+        seed: int | None = None,
+    ) -> "KgItem":
+        # copy with the aliases and infos shown to the model, rank keeps the
+        # shortest aliases and the longest infos
+        rng = random.Random(seed) if seed is not None else random
+        aliases = trim_values(self.aliases, max_aliases, mode, rng)
+        infos = trim_values(self.infos, max_infos, mode, rng, longest=True)
 
         return self.model_copy(
             update={
@@ -285,13 +288,33 @@ class KgItem(BaseModel):
         )
 
 
+def trim_values(
+    values: list[str],
+    n: int,
+    mode: TrimMode,
+    rng: random.Random | ModuleType,
+    longest: bool = False,
+) -> list[str]:
+    # rank keeps the top n in rank order, sample draws n from the sorted
+    # values and puts them in rank order; neither depends on the order of
+    # the engine
+    if n <= 0:
+        return []
+
+    if mode == "sample" and len(values) > n:
+        values = rng.sample(sorted(values), n)
+
+    values = sorted(values, key=lambda v: (-len(v) if longest else len(v), v))
+    return values[:n]
+
+
 def format_kg_item(
     item: KgItem,
     show_matched_label: bool = True,
     add_info: bool = True,
     variants: list[str] | None = None,
 ) -> str:
-    # formats all aliases and infos of the item, sample it first to show
+    # formats all aliases and infos of the item, trim it first to show
     # only some; variants replace the ones of the item if given
     s = item.get_label() or item.get_identifier()
 
@@ -334,24 +357,24 @@ def format_kg_item(
 
 class Selection:
     kg_item: KgItem
-    obj_type: ObjType
+    kind: TermKind
     variant: str | None
 
     def __init__(
         self,
         kg_item: KgItem,
-        obj_type: ObjType,
+        kind: TermKind,
         variant: str | None = None,
     ) -> None:
         self.kg_item = kg_item
-        self.obj_type = obj_type
+        self.kind = kind
         self.variant = variant
 
     def __repr__(self) -> str:
-        return f"Selection({self.kg_item}, {self.obj_type}, {self.variant})"
+        return f"Selection({self.kg_item}, {self.kind}, {self.variant})"
 
     def __hash__(self) -> int:
-        return hash((self.kg_item, self.obj_type, self.variant))
+        return hash((self.kg_item, self.kind, self.variant))
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, Selection):
@@ -359,13 +382,13 @@ class Selection:
 
         return (
             self.kg_item == other.kg_item
-            and self.obj_type == other.obj_type
+            and self.kind == other.kind
             and self.variant == other.variant
         )
 
     @property
     def is_entity_or_property(self) -> bool:
-        return self.obj_type == ObjType.ENTITY or self.obj_type == ObjType.PROPERTY
+        return self.kind == TermKind.ENTITY or self.kind == TermKind.PROPERTY
 
     def get_natural_sparql_label(self, full_identifier: bool = False) -> str:
         identifier = self.kg_item.get_identifier()
@@ -387,22 +410,22 @@ class Selection:
 
 def group_selections(
     selections: list[Selection],
-) -> dict[ObjType, list[tuple[KgItem, list[str]]]]:
+) -> dict[TermKind, list[tuple[KgItem, list[str]]]]:
     def key(sel: Selection) -> tuple[str, str]:
-        return sel.kg_item.identifier, sel.obj_type.name
+        return sel.kg_item.identifier, sel.kind.name
 
     grouped = {}
     for _, group in groupby(sorted(selections, key=key), key=key):
         selections = list(group)
-        obj_type = selections[0].obj_type
+        kind = selections[0].kind
 
-        if obj_type not in grouped:
-            grouped[obj_type] = []
+        if kind not in grouped:
+            grouped[kind] = []
 
         variants = sorted(
             set(selection.variant for selection in selections if selection.variant)
         )
         item = selections[0].kg_item
-        grouped[obj_type].append((item, variants))
+        grouped[kind].append((item, variants))
 
     return grouped
