@@ -91,6 +91,15 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
 
     # keep track of connections and limit to 10 concurrent connections
     active_connections = 0
+
+    # generation workers still finishing their current step after an abort
+    workers: set[asyncio.Task] = set()
+
+    def worker_done(task: asyncio.Task) -> None:
+        workers.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(f"Generator worker failed:\n{task.exception()}")
+
     rate_limiter: RateLimiter | None = None
     if config.rate_limit is not None:
         rate_limiter = RateLimiter(config.rate_limit, config.rate_limit_window)
@@ -474,18 +483,21 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
 
                 try:
                     while True:
-                        kind, payload = await queue.get()
+                        # abort at the hard limit, also during a running step
+                        remaining = hard_limit - (time.monotonic() - start_time)
+                        try:
+                            kind, payload = await asyncio.wait_for(
+                                queue.get(),
+                                timeout=max(0.0, remaining),
+                            )
+                        except asyncio.TimeoutError:
+                            msg = f"Generation hit time limit of {hard_limit:,.0f} seconds"
+                            logger.warning(f"{prefix} {msg}")
+                            stop_event.set()
+                            await websocket.send_json({"error": msg})
+                            break
 
                         if kind == "data":
-                            # Check if we've exceeded the time limit
-                            current_time = time.monotonic()
-                            if current_time - start_time > hard_limit:
-                                msg = f"Generation hit time limit of {hard_limit:,.0f} seconds"
-                                logger.warning(f"{prefix} {msg}")
-                                stop_event.set()
-                                await websocket.send_json({"error": msg})
-                                break
-
                             output = payload
                             if output["type"] == "output" and output_logger is not None:
                                 output_logger.info(json.dumps(output))
@@ -516,10 +528,10 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
 
                 finally:
                     stop_event.set()
-                    try:
-                        await producer
-                    except Exception as exc:
-                        logger.error(f"{prefix} Generator worker failed:\n{exc}")
+                    # a running step cannot be interrupted, so do not wait for
+                    # the worker, it stops after its current step
+                    workers.add(producer)
+                    producer.add_done_callback(worker_done)
 
         except WebSocketDisconnect:
             pass
