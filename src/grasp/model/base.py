@@ -14,6 +14,25 @@ class ToolCallResult(BaseModel):
     formatted: str
 
 
+class LimitUsage(BaseModel):
+    # steps and seconds used after a function call, out of the limits
+    steps: int
+    max_steps: int
+    elapsed: float
+    max_time: float | None = None
+
+    def format(self) -> str:
+        remaining = [
+            f"{max(0, self.max_steps - self.steps):,} of {self.max_steps:,} steps"
+        ]
+        if self.max_time is not None:
+            remaining.append(
+                f"{max(0, self.max_time - self.elapsed):,.0f} "
+                f"of {self.max_time:,.0f} seconds"
+            )
+        return f"Remaining: {', '.join(remaining)}."
+
+
 class ToolCall(BaseModel):
     id: str
     name: str
@@ -26,6 +45,8 @@ class ToolCall(BaseModel):
     # knowledge graph items this function call added to the known items,
     # e.g. for tracing where the items of a final query come from
     new_known: list[str] | None = None
+    # step and time limits after this call, if shown to the model
+    limits: LimitUsage | None = None
 
     @field_validator("result", mode="before")
     @classmethod
