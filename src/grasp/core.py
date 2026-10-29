@@ -104,7 +104,7 @@ def system_instructions(
             "can be used implicitly in SPARQL queries and function calls."
         )
 
-    rules = general_rules() + task.rules()
+    rules = general_rules(task.config) + task.rules()
     if rules:
         blocks.append(format_section("Rules to follow", format_enumerate(rules)))
 
