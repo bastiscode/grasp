@@ -14,6 +14,14 @@ class ToolCallResult(BaseModel):
     formatted: str
 
 
+class Limits(BaseModel):
+    # steps and seconds used after a function call, out of the limits
+    steps: int
+    max_steps: int
+    elapsed: float
+    max_time: float | None = None
+
+
 class ToolCall(BaseModel):
     id: str
     name: str
@@ -26,6 +34,8 @@ class ToolCall(BaseModel):
     # knowledge graph items this function call added to the known items,
     # e.g. for tracing where the items of a final query come from
     new_known: list[str] | None = None
+    # step and time limits after this call, if shown to the model
+    limits: Limits | None = None
 
     @field_validator("result", mode="before")
     @classmethod

@@ -19,7 +19,15 @@ from grasp.manager.utils import (
     describe_index_type,
     get_common_sparql_prefixes,
 )
-from grasp.model import Message, Model, Response, ToolCall, ToolCallResult, get_model
+from grasp.model import (
+    Limits,
+    Message,
+    Model,
+    Response,
+    ToolCall,
+    ToolCallResult,
+    get_model,
+)
 from grasp.tasks import get_task
 from grasp.tasks import rules as general_rules
 from grasp.tasks.base import GraspTask
@@ -36,11 +44,13 @@ from grasp.utils import (
 )
 
 
-def format_limits(config: GraspConfig, steps: int, elapsed: float) -> str:
-    remaining = [f"{max(0, config.max_steps - steps):,} of {config.max_steps:,} steps"]
-    if config.max_time is not None:
+def format_limits(limits: Limits) -> str:
+    remaining = [
+        f"{max(0, limits.max_steps - limits.steps):,} of {limits.max_steps:,} steps"
+    ]
+    if limits.max_time is not None:
         remaining.append(
-            f"{max(0, config.max_time - elapsed):,.0f} of {config.max_time:,.0f} seconds"
+            f"{max(0, limits.max_time - limits.elapsed):,.0f} of {limits.max_time:,.0f} seconds"
         )
     return f"Remaining: {', '.join(remaining)}."
 
@@ -420,12 +430,14 @@ def generate(
             tool_call.elapsed = time.monotonic() - fn_start
             tool_call.new_known = sorted(task.known - known_before)
             if config.show_limits:
-                # only shown to the model
-                limits = format_limits(
-                    config,
-                    steps,
-                    time.monotonic() - start,
+                tool_call.limits = Limits(
+                    steps=steps,
+                    max_steps=config.max_steps,
+                    elapsed=time.monotonic() - start,
+                    max_time=config.max_time,
                 )
+                # in the formatted result only for the model
+                limits = format_limits(tool_call.limits)
                 tool_call.result = result.model_copy(
                     update={"formatted": f"{result.formatted}\n\n{limits}"}
                 )
@@ -437,6 +449,7 @@ def generate(
                 "args": tool_call.args,
                 "result": result.model_dump(),
                 "elapsed": tool_call.elapsed,
+                "limits": tool_call.limits.model_dump() if tool_call.limits else None,
             }
 
             if task.done(tool_call.name):
