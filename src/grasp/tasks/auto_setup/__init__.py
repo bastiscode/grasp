@@ -15,7 +15,7 @@ from grasp.manager.utils import (
 )
 from grasp.model import Message
 from grasp.sparql.term import extract_sparql_terms
-from grasp.sparql.types import ObjType
+from grasp.sparql.types import TermKind
 from grasp.sparql.utils import (
     get_qlever_endpoint,
     load_class_index_sparql,
@@ -76,8 +76,8 @@ def update_known_from_sparql(sparql: str, known: set[str], manager: KgManager) -
         # temporarily disable info retrieval
         manager.set_info_retrieval(enable=False)
         _, terms = extract_sparql_terms(sparql, manager)
-        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY, ObjType.CLASS]:
-            normalizer = manager.get_normalizer(obj_type.index_name)
+        for kind in [TermKind.ENTITY, TermKind.PROPERTY, TermKind.CLASS]:
+            normalizer = manager.get_normalizer(kind.index_name)
             update_known_from_alts(
                 known,
                 (term.kg_item for term in terms if not term.is_literal),

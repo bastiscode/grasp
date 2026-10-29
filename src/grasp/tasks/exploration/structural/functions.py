@@ -139,6 +139,6 @@ def show_explored(
     items = []
     for iri in page_items:
         item = manager.build_kg_item_with_info(iri, infos.get(iri))
-        items.append(format_kg_item(item.sample()))
+        items.append(format_kg_item(item.trim()))
 
     return header + format_enumerate(items, start=start)
