@@ -276,7 +276,8 @@ def generate(
     for msg in messages:
         logger.debug(format_message(msg))
 
-    num_messages = len(messages)
+    # model responses, injected user messages do not count
+    steps = 0
     error: dict | None = None
 
     # keep track of last serialized message to detect loops
@@ -289,7 +290,6 @@ def generate(
     # one last step once the step or time limit is reached
     over_limit = False
     while True:
-        steps = len(messages) - num_messages
         elapsed = time.monotonic() - start
         if steps >= config.max_steps or (
             config.max_time is not None and elapsed >= config.max_time
@@ -339,6 +339,7 @@ def generate(
             break
 
         messages.append(Message.assistant(response))
+        steps += 1
 
         resp_hash = response.hash()
         if last_resp_hash == resp_hash:
@@ -409,7 +410,9 @@ def generate(
             if config.show_limits:
                 # only shown to the model
                 tool_call.result += "\n\n" + format_limits(
-                    config, len(messages) - num_messages, time.monotonic() - start
+                    config,
+                    steps,
+                    time.monotonic() - start,
                 )
 
             yield {
