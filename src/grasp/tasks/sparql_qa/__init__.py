@@ -5,10 +5,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError
 
 from grasp.configs import GraspConfig
-from grasp.functions import check_known, find_manager
+from grasp.functions import check_known, find_manager, selection_groups
 from grasp.manager import KgManager, format_kgs
-from grasp.model import Message, ToolCall
+from grasp.model import Message, ToolCall, ToolCallResult
 from grasp.model.base import ResponseMessage
+from grasp.provenance.trace import trace_provenance
 from grasp.tasks.base import FeedbackTask, GraspTask
 from grasp.tasks.sparql_qa.examples import (
     SparqlQaSample,
@@ -19,7 +20,7 @@ from grasp.tasks.sparql_qa.examples import (
 from grasp.tasks.sparql_qa.examples import (
     functions as example_functions,
 )
-from grasp.tasks.utils import prepare_sparql_result
+from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import (
     FunctionCallException,
     format_enumerate,
@@ -338,19 +339,15 @@ def prepare_formatted_output(
     )
     manager, _ = find_manager(managers, kg)
 
-    formatted = f"SPARQL query over {kg}:\n```sparql\n{result.sparql}\n```"
-    if selections:
-        formatted += f"\n\n{manager.format_selections(selections)}"
-
-    formatted += f"\n\nExecution result:\n{result.formatted}"
-
-    return {
+    groups = selection_groups(selections, manager, result.sparql)
+    output = {
         "sparql": result.sparql,
-        "selections": manager.format_selections(selections),
-        "result": result.formatted,
+        "selections": [group.model_dump() for group in groups],
+        "result": result.tool_result().model_dump(),
         "endpoint": manager.endpoint,
-        "formatted": formatted,
+        "formatted": format_sparql_result(kg, result, groups),
     }
+    return output
 
 
 def output(
@@ -408,6 +405,12 @@ def output(
     # prepend answer or explanation to formatted output
     formatted_output["formatted"] = formatted + "\n\n" + formatted_output["formatted"]
     output.update(formatted_output)
+
+    # where the query's items come from in the trace, no extra queries
+    manager, _ = find_manager(managers, output["kg"] or managers[0].kg)
+    trace = trace_provenance(manager, output["sparql"], messages)
+    if trace is not None:
+        output["provenance"] = {"trace": trace}
     return output
 
 
@@ -509,7 +512,7 @@ class SparqlQaTask(GraspTask, FeedbackTask):
         fn_args: dict,
         known: set[str],
         example_indices: dict | None,
-    ) -> str:
+    ) -> str | ToolCallResult:
         if fn_name != "answer" and fn_name != "cancel":
             return call_example_function(
                 self.config,

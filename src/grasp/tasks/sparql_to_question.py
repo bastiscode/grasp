@@ -1,7 +1,7 @@
 from typing import Any
 
 from grasp.configs import GraspConfig
-from grasp.functions import ExecutionResult
+from grasp.functions import ExecutionResult, selection_groups
 from grasp.manager import KgManager
 from grasp.model import Message, Response
 from grasp.tasks.base import GraspTask
@@ -131,7 +131,11 @@ def prepare_sparql(
         except Exception:
             pass
 
-    return result, format_sparql_result(manager, result, selections)
+    return result, format_sparql_result(
+        manager.kg,
+        result,
+        selection_groups(selections),
+    )
 
 
 def output(
@@ -144,7 +148,7 @@ def output(
         last = messages[-1]
         assert isinstance(last.content, Response)
         tool_call = last.content.tool_calls[0]
-        output: dict[str, str] = {"formatted": "No output", **tool_call.args}
+        output: dict[str, Any] = {"formatted": "No output", **tool_call.args}
         if tool_call.name == "answer":
             output["type"] = "answer"
             questions = tool_call.args["questions"]
@@ -158,7 +162,7 @@ def output(
             )
 
             output["sparql_fixed"] = result.sparql
-            output["sparql_result"] = result.formatted
+            output["sparql_result"] = result.tool_result().model_dump()
 
             output["formatted"] += formatted
 

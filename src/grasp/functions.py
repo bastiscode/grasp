@@ -5,24 +5,30 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, Iterable
 
 from grammar_utils.parse import LR1Parser  # type: ignore
+from pydantic import BaseModel
 from search_rdf import EmbeddingIndex
 from universal_ml_utils.ops import partition_by
 
-from grasp.configs import GraspConfig, ShapeConfig
+from grasp.configs import GraspConfig
 from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import get_common_sparql_prefixes
-from grasp.shapes import ShapeSample
-from grasp.sparql.item import parse_into_binding
+from grasp.model import ToolCallResult
+from grasp.shapes import ShapeView
+from grasp.sparql.term import parse_into_binding
 from grasp.sparql.types import (
-    Alternative,
+    KgItem,
     AskResult,
     Binding,
-    ObjType,
+    TermKind,
     Position,
     Selection,
     SelectResult,
     SelectRow,
+    TableColumn,
+    TableRow,
+    format_kg_item,
+    group_selections,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -632,9 +638,9 @@ def call_function(
     known: set[str],
     task: "GraspTask | None" = None,
     example_indices: dict | None = None,
-) -> str:
+) -> str | ToolCallResult:
     if fn_name == "execute":
-        return execute_sparql(
+        result = execute_sparql(
             managers,
             fn_args["kg"],
             fn_args["sparql"],
@@ -645,7 +651,8 @@ def call_function(
             config.sparql_request_timeout,
             config.sparql_read_timeout,
             config.sparql_result_max_rows,
-        ).formatted  # type: ignore
+        )
+        return result.tool_result()
 
     elif fn_name == "list":
         return list_triples(
@@ -816,14 +823,16 @@ SHAPE_CAVEAT = (
 )
 
 
-def format_shapes(shapes: list[ShapeSample], manager: KgManager) -> str:
-    from grasp.build.shapes import emit_pseudo_shex
+class ShapesResult(ToolCallResult):
+    type: str = "shapes"
+    summary: str = ""
+    shapes: list[ShapeView]
 
-    shape_config = manager.shape_config or ShapeConfig()
-    return format_enumerate(
-        emit_pseudo_shex(shape.profile, manager, shape_config, dense=True)
-        for shape in shapes
-    )
+
+def format_shapes(views: list[ShapeView]) -> str:
+    from grasp.build.shapes import format_shape_view
+
+    return format_enumerate(format_shape_view(view) for view in views)
 
 
 def update_known_from_shape_iris(
@@ -842,7 +851,7 @@ def call_shape_function(
     manager: KgManager,
     config: GraspConfig,
     known: set[str] | None = None,
-) -> str:
+) -> str | ShapesResult:
     if fn_name == "search_shape":
         if shapes.index is None:
             return "Shape search is unavailable: the existing index was cleared after the pattern was changed. Rebuild the index to re-enable shape search."
@@ -860,7 +869,7 @@ def call_shape_function(
         if not results:
             return f"No shapes ({suffix})"
 
-        from grasp.build.shapes import collect_iris
+        from grasp.build.shapes import collect_iris, shape_view
         from grasp.configs import ShapeConfig
 
         shape_config = manager.shape_config or ShapeConfig()
@@ -871,7 +880,16 @@ def call_shape_function(
                     collect_iris(sample.profile, manager, shape_config, dense=True),
                     manager,
                 )
-        return f"Shapes ({suffix}):\n" + format_shapes(results, manager)
+        views = [
+            shape_view(sample.profile, manager, shape_config, dense=True)
+            for sample in results
+        ]
+        summary = f"Shapes ({suffix})"
+        return ShapesResult(
+            formatted=f"{summary}:\n" + format_shapes(views),
+            summary=summary,
+            shapes=views,
+        )
 
     elif fn_name == "get_shape":
         iri_arg = fn_args["iri"]
@@ -891,7 +909,7 @@ def call_shape_function(
             else None
         )
         if sample is not None:
-            from grasp.build.shapes import collect_iris, emit_pseudo_shex
+            from grasp.build.shapes import collect_iris, format_shape_view, shape_view
             from grasp.configs import ShapeConfig
 
             shape_config = manager.shape_config or ShapeConfig()
@@ -901,7 +919,8 @@ def call_shape_function(
                     collect_iris(sample.profile, manager, shape_config),
                     manager,
                 )
-            return emit_pseudo_shex(sample.profile, manager, shape_config)
+            view = shape_view(sample.profile, manager, shape_config)
+            return ShapesResult(formatted=format_shape_view(view), shapes=[view])
 
         if shapes.instance_pattern is None and shapes.schema_pattern is None:
             return (
@@ -918,7 +937,8 @@ def call_shape_function(
         from grasp.build.shapes import (
             collect_iris,
             compute_shape,
-            emit_pseudo_shex,
+            format_shape_view,
+            shape_view,
         )
         from grasp.configs import ShapeConfig
 
@@ -937,7 +957,8 @@ def call_shape_function(
                     collect_iris(profile, manager, shape_config),
                     manager,
                 )
-            return emit_pseudo_shex(profile, manager, shape_config)
+            view = shape_view(profile, manager, shape_config)
+            return ShapesResult(formatted=format_shape_view(view), shapes=[view])
         except Exception as e:
             return (
                 f"Shape for '{iri_arg}' is not in the index and failed "
@@ -945,6 +966,17 @@ def call_shape_function(
             )
 
     raise FunctionCallException(f"Unknown shape function '{fn_name}'")
+
+
+class SearchResult(ToolCallResult):
+    type: str = "search"
+    note: str = ""
+    # trimmed, with the aliases and infos shown to the model
+    items: list[KgItem]
+    start: int
+    page: int
+    total_pages: int
+    more: bool
 
 
 def validate_page(page: int, max_pages: int | None = None) -> None:
@@ -968,7 +1000,7 @@ def search_entity(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -985,7 +1017,7 @@ def search_entity(
     normalizer = manager.get_normalizer("entities")
     update_known_from_alts(known, alts, normalizer)
 
-    return format_index_alternatives(alts, k, page, total_pages, more)
+    return format_search_results(alts, k, page, total_pages, more)
 
 
 def search_property(
@@ -997,7 +1029,7 @@ def search_property(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -1014,7 +1046,7 @@ def search_property(
     normalizer = manager.get_normalizer("properties")
     update_known_from_alts(known, alts, normalizer)
 
-    return format_index_alternatives(alts, k, page, total_pages, more)
+    return format_search_results(alts, k, page, total_pages, more)
 
 
 def search_literal(
@@ -1026,7 +1058,7 @@ def search_literal(
     query_type: str = "text",
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -1044,7 +1076,7 @@ def search_literal(
     normalizer = manager.get_normalizer("literals")
     update_known_from_alts(known, alts, normalizer)
 
-    return format_index_alternatives(alts, k, page, total_pages, more)
+    return format_search_results(alts, k, page, total_pages, more)
 
 
 COMMON_PREFIXES = get_common_sparql_prefixes()
@@ -1111,7 +1143,7 @@ def update_known_from_iris(
 
 def update_known_from_alts(
     known: set[str],
-    alts: Iterable[Alternative],
+    alts: Iterable[KgItem],
     normalizer: Normalizer | None = None,
 ):
     for alt in alts:
@@ -1143,29 +1175,29 @@ def update_known_from_rows(
     )
 
 
-def update_known_from_alternatives(
+def update_known_from_kg_items(
     known: set[str],
-    alternatives: dict[ObjType, list[Alternative]],
+    kg_items: dict[TermKind, list[KgItem]],
     manager: KgManager,
 ):
     # entities
     update_known_from_alts(
         known,
-        alternatives.get(ObjType.ENTITY, []),
-        manager.get_normalizer(ObjType.ENTITY.index_name),
+        kg_items.get(TermKind.ENTITY, []),
+        manager.get_normalizer(TermKind.ENTITY.index_name),
     )
 
     # properties
     update_known_from_alts(
         known,
-        alternatives.get(ObjType.PROPERTY, []),
-        manager.get_normalizer(ObjType.PROPERTY.index_name),
+        kg_items.get(TermKind.PROPERTY, []),
+        manager.get_normalizer(TermKind.PROPERTY.index_name),
     )
 
     # other
     update_known_from_alts(
         known,
-        alternatives.get(ObjType.UNINDEXED, []),
+        kg_items.get(TermKind.UNINDEXED, []),
     )
 
 
@@ -1177,16 +1209,31 @@ def update_known_from_selections(
     # entities
     update_known_from_alts(
         known,
-        (sel.alternative for sel in selections if sel.obj_type == ObjType.ENTITY),
+        (sel.kg_item for sel in selections if sel.kind == TermKind.ENTITY),
         manager.get_normalizer("entities"),
     )
 
     # properties
     update_known_from_alts(
         known,
-        (sel.alternative for sel in selections if sel.obj_type == ObjType.PROPERTY),
+        (sel.kg_item for sel in selections if sel.kind == TermKind.PROPERTY),
         manager.get_normalizer("properties"),
     )
+
+
+class TableResult(ToolCallResult):
+    type: str = "table"
+    summary: str
+    # the shown columns and rows of the table, None for omitted ones; rows
+    # keep the values of all columns, e.g. for provenance of a row
+    columns: list[TableColumn | None]
+    rows: list[TableRow | None]
+
+
+class BooleanResult(ToolCallResult):
+    type: str = "boolean"
+    summary: str
+    value: bool
 
 
 @dataclass
@@ -1194,6 +1241,13 @@ class ExecutionResult:
     sparql: str
     formatted: str
     result: SelectResult | AskResult | None = None
+    # the shown part of a select result with at least one row, or the
+    # result of an ask query
+    structured: TableResult | BooleanResult | None = None
+
+    def tool_result(self) -> ToolCallResult:
+        # the structured result if there is one, the formatted one otherwise
+        return self.structured or ToolCallResult(formatted=self.formatted)
 
 
 def execute_sparql(
@@ -1260,7 +1314,39 @@ def execute_sparql(
         half_columns,
         time=diff,
     )
-    return ExecutionResult(sparql, formatted, result)
+    if isinstance(result, AskResult):
+        boolean = BooleanResult(
+            formatted=formatted,
+            summary=formatted.split("\n", 1)[0].rstrip(":"),
+            value=result.boolean,
+        )
+        return ExecutionResult(sparql, formatted, result, boolean)
+
+    if result.num_rows == 0:
+        return ExecutionResult(sparql, formatted, result)
+
+    columns, rows = manager.sparql_result_table(
+        result,
+        half_rows,
+        half_rows,
+        half_columns,
+        half_columns,
+    )
+    summary = manager.format_sparql_result_summary(
+        result,
+        half_rows,
+        half_rows,
+        half_columns,
+        half_columns,
+        time=diff,
+    )
+    table = TableResult(
+        formatted=formatted,
+        summary=summary,
+        columns=columns,
+        rows=rows,
+    )
+    return ExecutionResult(sparql, formatted, result, table)
 
 
 def parse_iri_or_literal(
@@ -1313,7 +1399,7 @@ def list_triples(
     known: set[str],
     request_timeout: float | tuple[float, float] | None = None,
     read_timeout: float | None = None,
-) -> str:
+) -> str | TableResult:
     validate_page(page)
 
     manager, _ = find_manager(managers, kg)
@@ -1451,7 +1537,11 @@ SELECT ?s ?p ?o WHERE {{
     update_known_from_rows(known, result.rows(), ent_norm)
     update_known_from_rows(known, result.rows(), prop_norm)
 
-    table = manager.format_sparql_result(
+    suffix = format_page_suffix(page, total_pages, more)
+    if not result.data:
+        return f"No triples ({suffix})"
+
+    columns, rows = manager.sparql_result_table(
         result,
         show_top_rows=k,
         show_bottom_rows=0,
@@ -1460,13 +1550,14 @@ SELECT ?s ?p ?o WHERE {{
         # override column names
         column_names=["subject", "property", "object"],
         clip_literals=not unclipped,
-        table_only=True,
     )
-    suffix = format_page_suffix(page, total_pages, more)
-    if not table:
-        return f"No triples ({suffix})"
-
-    return f"Triples ({suffix}):\n{table}"
+    summary = f"Triples ({suffix})"
+    return TableResult(
+        formatted=f"{summary}:\n{manager.format_sparql_table(columns, rows)}",
+        summary=summary,
+        columns=columns,
+        rows=rows,
+    )
 
 
 def search_with_constraints(
@@ -1483,7 +1574,7 @@ def search_with_constraints(
     read_timeout: float | None = None,
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, _ = find_manager(managers, kg)
@@ -1556,20 +1647,20 @@ search index due to:
 
 """
 
-    alternatives = manager.search_index(
+    kg_items = manager.search_index(
         index,
         query,
         k * max_pages + 1,
         identifier_map,
         query_type=query_type,
     )
-    alternatives, total_pages, more = paginate_results(alternatives, k, page, max_pages)
+    kg_items, total_pages, more = paginate_results(kg_items, k, page, max_pages)
 
     # update known items
     normalizer = manager.get_normalizer(index)
-    update_known_from_alts(known, alternatives, normalizer)
+    update_known_from_alts(known, kg_items, normalizer)
 
-    return info + format_index_alternatives(alternatives, k, page, total_pages, more)
+    return format_search_results(kg_items, k, page, total_pages, more, info)
 
 
 def format_page_suffix(page: int, total_pages: int, more: bool) -> str:
@@ -1590,23 +1681,109 @@ def paginate_results(
     return page_items, total_pages, more
 
 
-def format_index_alternatives(
-    alternatives: list[Alternative],
+class SelectedItem(KgItem):
+    # where the item is in the query, as character offsets
+    spans: list[tuple[int, int]] = []
+
+
+class SelectionGroup(BaseModel):
+    # the items of a SPARQL query of one type, e.g. its entities
+    name: str
+    items: list[SelectedItem]
+
+
+SELECTION_GROUP_NAMES = [
+    (TermKind.ENTITY, "entities"),
+    (TermKind.PROPERTY, "properties"),
+    (TermKind.UNINDEXED, "other (non-indexed) items"),
+]
+
+
+def selection_groups(
+    selections: list[Selection],
+    manager: KgManager | None = None,
+    sparql: str | None = None,
+) -> list[SelectionGroup]:
+    # the trimmed items of a SPARQL query per type; with the manager and the
+    # query, also where the items are in it
+    grouped = group_selections(selections)
+
+    groups = []
+    for kind, name in SELECTION_GROUP_NAMES:
+        if kind not in grouped:
+            continue
+
+        items = [
+            SelectedItem(**{**item.trim().model_dump(), "variants": variants})
+            for item, variants in grouped[kind]
+        ]
+        groups.append(SelectionGroup(name=name, items=items))
+
+    if manager is not None and sparql is not None:
+        add_query_spans(groups, manager, sparql)
+
+    return groups
+
+
+def format_selection_groups(groups: list[SelectionGroup]) -> str:
+    return "\n\n".join(
+        f"Using {group.name}:\n"
+        + format_list(format_kg_item(item) for item in group.items)
+        for group in groups
+    )
+
+
+def add_query_spans(
+    groups: list[SelectionGroup],
+    manager: KgManager,
+    sparql: str,
+) -> None:
+    # import here to avoid a circular import
+    from grasp.provenance.trace import identifiers, iri_spans
+
+    try:
+        spans = iri_spans(manager, sparql, skip_common=False)
+    except Exception:
+        return
+
+    # items are identified in normalized form, e.g. on Wikidata the
+    # property wdt:P31 in the query by wd:P31
+    for iri, _, start, end in spans:
+        ids = identifiers(manager, iri)
+        for group in groups:
+            for item in group.items:
+                if item.identifier in ids:
+                    item.spans.append((start, end))
+
+
+def format_search_results(
+    kg_items: list[KgItem],
     k: int,
     page: int,
     total_pages: int,
     more: bool = False,
-) -> str:
+    note: str = "",
+) -> SearchResult:
     suffix = format_page_suffix(page, total_pages, more)
-    if not alternatives:
-        return f"No results ({suffix})"
+    start = (page - 1) * k
 
-    start_index = (page - 1) * k
-    lines = "\n".join(
-        f"{start_index + i + 1}. {alt.get_selection_string()}"
-        for i, alt in enumerate(alternatives)
+    items = [item.trim() for item in kg_items]
+    if items:
+        formatted = f"Results ({suffix}):\n" + "\n".join(
+            f"{start + i + 1}. {format_kg_item(item)}" for i, item in enumerate(items)
+        )
+    else:
+        formatted = f"No results ({suffix})"
+
+    return SearchResult(
+        formatted=note + formatted,
+        note=note,
+        items=items,
+        start=start,
+        page=page,
+        total_pages=total_pages,
+        more=more,
     )
-    return f"Results ({suffix}):\n{lines}"
 
 
 def search_with_filter(
@@ -1623,7 +1800,7 @@ def search_with_filter(
     read_timeout: float | None = None,
     page: int = 1,
     max_pages: int = 10,
-) -> str:
+) -> SearchResult:
     validate_query(query)
     validate_page(page, max_pages)
     manager, others = find_manager(managers, kg)
@@ -1655,17 +1832,17 @@ search index due to:
 
 """
 
-    alternatives = manager.search_index(
+    kg_items = manager.search_index(
         index,
         query,
         k=k * max_pages + 1,
         identifier_map=identifier_map,
         query_type=query_type,
     )
-    alternatives, total_pages, more = paginate_results(alternatives, k, page, max_pages)
+    kg_items, total_pages, more = paginate_results(kg_items, k, page, max_pages)
 
     # update known items
     normalizer = manager.get_normalizer(index)
-    update_known_from_alts(known, alternatives, normalizer)
+    update_known_from_alts(known, kg_items, normalizer)
 
-    return info + format_index_alternatives(alternatives, k, page, total_pages, more)
+    return format_search_results(kg_items, k, page, total_pages, more, info)

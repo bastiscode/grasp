@@ -2,12 +2,18 @@ import random
 from dataclasses import dataclass
 from enum import StrEnum
 from itertools import groupby
-from typing import Any, Iterator
+from types import ModuleType
+from typing import Any, Iterator, Literal
+
+from pydantic import BaseModel
 
 from grasp.utils import clip, format_list
 
 
-class ObjType(StrEnum):
+TrimMode = Literal["sample", "rank"]
+
+
+class TermKind(StrEnum):
     ENTITY = "entity"
     PROPERTY = "property"
     COMMON = "common"
@@ -23,13 +29,13 @@ class ObjType(StrEnum):
 
     @property
     def index_name(self) -> str:
-        if self == ObjType.ENTITY:
+        if self == TermKind.ENTITY:
             return "entities"
-        elif self == ObjType.PROPERTY:
+        elif self == TermKind.PROPERTY:
             return "properties"
-        elif self == ObjType.LITERAL:
+        elif self == TermKind.LITERAL:
             return "literals"
-        raise ValueError(f"ObjType {self.value} has no associated index")
+        raise ValueError(f"TermKind {self.value} has no associated index")
 
 
 class Position(StrEnum):
@@ -130,6 +136,27 @@ SelectRow = dict[str, Binding]
 
 
 @dataclass
+class TableValue:
+    # a value of a result row, label is the value as shown to the model
+    type: str
+    value: str
+    label: str
+    datatype: str | None = None
+    lang: str | None = None
+
+
+@dataclass
+class TableColumn:
+    # a column of a result table, name is the column name shown to the model
+    variable: str
+    name: str
+
+
+# rows of a result table keep the values of all columns, also the omitted ones
+TableRow = dict[str, TableValue]
+
+
+@dataclass
 class SelectResult:
     variables: list[str]
     data: list[dict | None]
@@ -202,37 +229,30 @@ class Example:
     sparql: str
 
 
-class Alternative:
-    def __init__(
-        self,
-        identifier: str,
-        short_identifier: str | None = None,
-        label: str | None = None,
-        variants: list[str] | None = None,
-        aliases: list[str] | None = None,
-        info: list[str] | None = None,
-        matched_label: str | None = None,
-    ) -> None:
-        self.identifier = identifier
-        self.short_identifier = short_identifier
-        self.label = label
-        self.aliases = aliases
-        self.variants = variants
-        self.info = info
-        self.matched_label = matched_label
+class KgItem(BaseModel):
+    # an entity, property, or other item of a knowledge graph; num_aliases is
+    # the number of aliases before trimming
+    identifier: str
+    short_identifier: str | None = None
+    label: str | None = None
+    variants: list[str] | None = None
+    aliases: list[str] = []
+    num_aliases: int | None = None
+    infos: list[str] = []
+    matched_label: str | None = None
 
     def __hash__(self) -> int:
         # hash identifier
         return hash(self.identifier)
 
     def __eq__(self, other: Any) -> bool:
-        if not isinstance(other, Alternative):
+        if not isinstance(other, KgItem):
             return False
 
         return self.identifier == other.identifier
 
     def __repr__(self) -> str:
-        return f"Alternative({self.label}, {self.get_identifier()}, {self.variants})"
+        return f"KgItem({self.label}, {self.get_identifier()}, {self.variants})"
 
     def get_identifier(self) -> str:
         return self.short_identifier or self.identifier
@@ -246,104 +266,136 @@ class Alternative:
     def has_variants(self) -> bool:
         return bool(self.variants)
 
-    def get_selection_string(
+    def trim(
         self,
         max_aliases: int = 5,
-        max_info: int = 10,
-        show_matched_label: bool = True,
-        add_info: bool = True,
-        include_variants: list[str] | None = None,
-    ) -> str:
-        s = self.get_label() or self.get_identifier()
+        max_infos: int = 10,
+        mode: TrimMode = "sample",
+        seed: int | None = None,
+    ) -> "KgItem":
+        # copy with the aliases and infos shown to the model, rank keeps the
+        # shortest aliases and the longest infos
+        rng = random.Random(seed) if seed is not None else random
+        aliases = trim_values(self.aliases, max_aliases, mode, rng)
+        infos = trim_values(self.infos, max_infos, mode, rng, longest=True)
 
-        variants = self.variants if include_variants is None else include_variants
-        parts = []
-        if self.has_label() and not variants:
-            parts.append(f"{self.get_identifier()}")
-        elif not self.has_label() and variants:
-            parts.append(f"as {'/'.join(variants)}")
-        elif self.has_label() and variants:
-            parts.append(f"{self.get_identifier()} as {'/'.join(variants)}")
+        return self.model_copy(
+            update={
+                "aliases": aliases,
+                "num_aliases": max(self.num_aliases or 0, len(self.aliases)),
+                "infos": infos,
+            }
+        )
 
-        if (
-            show_matched_label
-            and self.matched_label is not None
-            and self.matched_label != self.label
-        ):
-            parts.append(f'matched via "{clip(self.matched_label)}"')
 
-        if parts:
-            s += " ("
-            s += ", ".join(parts)
-            s += ")"
+def trim_values(
+    values: list[str],
+    n: int,
+    mode: TrimMode,
+    rng: random.Random | ModuleType,
+    longest: bool = False,
+) -> list[str]:
+    # rank keeps the top n in rank order, sample draws n from the sorted
+    # values and puts them in rank order; neither depends on the order of
+    # the engine
+    if n <= 0:
+        return []
 
-        if add_info and self.aliases and max_aliases > 0:
-            s += ", "
-            if self.has_label():
-                s += "also "
+    if mode == "sample" and len(values) > n:
+        values = rng.sample(sorted(values), n)
 
-            if len(self.aliases) > max_aliases:
-                aliases = random.sample(self.aliases, max_aliases)
-            else:
-                aliases = self.aliases
+    values = sorted(values, key=lambda v: (-len(v) if longest else len(v), v))
+    return values[:n]
 
-            s += "known as " + ", ".join(f'"{clip(alias)}"' for alias in aliases)
 
-            if len(self.aliases) > max_aliases:
-                s += ", etc."
+def format_kg_item(
+    item: KgItem,
+    show_matched_label: bool = True,
+    add_info: bool = True,
+    variants: list[str] | None = None,
+) -> str:
+    # formats all aliases and infos of the item, trim it first to show
+    # only some; variants replace the ones of the item if given
+    s = item.get_label() or item.get_identifier()
 
-        if add_info and self.info and max_info > 0:
-            if len(self.info) > max_info:
-                infos = random.sample(self.info, max_info)
-            else:
-                infos = self.info
+    variants = item.variants if variants is None else variants
+    parts = []
+    if item.has_label() and not variants:
+        parts.append(f"{item.get_identifier()}")
+    elif not item.has_label() and variants:
+        parts.append(f"as {'/'.join(variants)}")
+    elif item.has_label() and variants:
+        parts.append(f"{item.get_identifier()} as {'/'.join(variants)}")
 
-            s += ":\n" + format_list((clip(info) for info in infos), indent=2)
+    if (
+        show_matched_label
+        and item.matched_label is not None
+        and item.matched_label != item.label
+    ):
+        parts.append(f'matched via "{clip(item.matched_label)}"')
 
-        return s
+    if parts:
+        s += " ("
+        s += ", ".join(parts)
+        s += ")"
+
+    if add_info and item.aliases:
+        s += ", "
+        if item.has_label():
+            s += "also "
+
+        s += "known as " + ", ".join(f'"{clip(alias)}"' for alias in item.aliases)
+
+        if (item.num_aliases or 0) > len(item.aliases):
+            s += ", etc."
+
+    if add_info and item.infos:
+        s += ":\n" + format_list((clip(info) for info in item.infos), indent=2)
+
+    return s
 
 
 class Selection:
-    alternative: Alternative
-    obj_type: ObjType
+    kg_item: KgItem
+    kind: TermKind
     variant: str | None
 
     def __init__(
         self,
-        alternative: Alternative,
-        obj_type: ObjType,
+        kg_item: KgItem,
+        kind: TermKind,
         variant: str | None = None,
     ) -> None:
-        self.alternative = alternative
-        self.obj_type = obj_type
+        self.kg_item = kg_item
+        self.kind = kind
         self.variant = variant
 
     def __repr__(self) -> str:
-        return f"Selection({self.alternative}, {self.obj_type}, {self.variant})"
+        return f"Selection({self.kg_item}, {self.kind}, {self.variant})"
 
     def __hash__(self) -> int:
-        return hash((self.alternative, self.obj_type, self.variant))
+        return hash((self.kg_item, self.kind, self.variant))
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, Selection):
             return False
 
         return (
-            self.alternative == other.alternative
-            and self.obj_type == other.obj_type
+            self.kg_item == other.kg_item
+            and self.kind == other.kind
             and self.variant == other.variant
         )
 
     @property
     def is_entity_or_property(self) -> bool:
-        return self.obj_type == ObjType.ENTITY or self.obj_type == ObjType.PROPERTY
+        return self.kind == TermKind.ENTITY or self.kind == TermKind.PROPERTY
 
     def get_natural_sparql_label(self, full_identifier: bool = False) -> str:
-        identifier = self.alternative.get_identifier()
-        if not self.alternative.has_label():
+        identifier = self.kg_item.get_identifier()
+        if not self.kg_item.has_label():
             return identifier
 
-        label: str = self.alternative.get_label()  # type: ignore
+        label: str = self.kg_item.get_label()  # type: ignore
 
         if full_identifier:
             label += f" ({identifier})"
@@ -358,22 +410,22 @@ class Selection:
 
 def group_selections(
     selections: list[Selection],
-) -> dict[ObjType, list[tuple[Alternative, list[str]]]]:
+) -> dict[TermKind, list[tuple[KgItem, list[str]]]]:
     def key(sel: Selection) -> tuple[str, str]:
-        return sel.alternative.identifier, sel.obj_type.name
+        return sel.kg_item.identifier, sel.kind.name
 
     grouped = {}
     for _, group in groupby(sorted(selections, key=key), key=key):
         selections = list(group)
-        obj_type = selections[0].obj_type
+        kind = selections[0].kind
 
-        if obj_type not in grouped:
-            grouped[obj_type] = []
+        if kind not in grouped:
+            grouped[kind] = []
 
         variants = sorted(
             set(selection.variant for selection in selections if selection.variant)
         )
-        alt = selections[0].alternative
-        grouped[obj_type].append((alt, variants))
+        item = selections[0].kg_item
+        grouped[kind].append((item, variants))
 
     return grouped

@@ -42,14 +42,16 @@ from grasp.shapes import (
     load_shapes,
 )
 from grasp.sparql.types import (
-    Alternative,
+    KgItem,
     AskResult,
-    ObjType,
+    Binding,
     Position,
     Selection,
     SelectResult,
     SelectRow,
-    group_selections,
+    TableColumn,
+    TableRow,
+    TableValue,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -74,7 +76,6 @@ from grasp.sparql.utils import (
 from grasp.utils import (
     clip,
     format_enumerate,
-    format_list,
     format_prefixes,
     get_index_dir,
     ordered_unique,
@@ -198,6 +199,162 @@ class KgManager:
             self.backend,
         )
 
+    def table_value(self, binding: Binding, clip_literals: bool = True) -> TableValue:
+        # a value of a result row together with how it is shown to the model
+        if binding.typ == "bnode":
+            label = binding.identifier()
+
+        elif binding.typ == "literal":
+            # replace to clip only the shown value
+            shown = (
+                replace(binding, value=clip(binding.value))
+                if clip_literals
+                else binding
+            )
+            label = self.format_literal(shown.identifier())
+
+        else:
+            assert binding.typ == "uri"
+            identifier = binding.identifier()
+            label = self.format_iri(identifier)
+
+            name = self.get_label(identifier, "entities") or self.get_label(
+                identifier, "properties"
+            )
+            if name is not None:
+                label = f"{clip(name)} ({label})"
+
+        return TableValue(
+            binding.typ,
+            binding.value,
+            label,
+            binding.datatype,
+            binding.lang,
+        )
+
+    def sparql_result_table(
+        self,
+        result: SelectResult,
+        show_top_rows: int = 5,
+        show_bottom_rows: int = 5,
+        show_left_columns: int = 5,
+        show_right_columns: int = 5,
+        column_names: list[str] | None = None,
+        clip_literals: bool = True,
+    ) -> tuple[list[TableColumn | None], list[TableRow | None]]:
+        # shown columns and rows of a result, with None for omitted ones;
+        # rows keep the values of all columns
+        assert column_names is None or len(column_names) == result.num_columns, (
+            f"Expected {result.num_columns:,} column names"
+        )
+        assert show_top_rows or show_bottom_rows, "At least one row must be shown"
+        assert show_left_columns or show_right_columns, (
+            "At least one column must be shown"
+        )
+
+        column_names = column_names or result.variables
+        columns: list[TableColumn | None] = [
+            TableColumn(var, name) for var, name in zip(result.variables, column_names)
+        ]
+        left_end = min(show_left_columns, result.num_columns)
+        right_start = result.num_columns - show_right_columns
+        if right_start > left_end:
+            columns = columns[:left_end] + [None] + columns[right_start:]
+
+        def table_row(row: SelectRow) -> TableRow:
+            return {
+                var: self.table_value(val, clip_literals) for var, val in row.items()
+            }
+
+        top_end = min(show_top_rows, result.num_rows)
+        bottom_start = max(result.num_rows - show_bottom_rows, top_end)
+
+        rows: list[TableRow | None] = [
+            table_row(row) for row in result.rows(end=top_end)
+        ]
+
+        if bottom_start > top_end:
+            rows.append(None)
+
+        rows.extend(
+            table_row(row) for row in result.rows(bottom_start, result.num_rows)
+        )
+        return columns, rows
+
+    def format_sparql_table(
+        self,
+        columns: list[TableColumn | None],
+        rows: list[TableRow | None],
+    ) -> str:
+        # generate a nicely formatted table, with ... for omitted rows and
+        # columns
+        def format_row(row: TableRow | None) -> list[str]:
+            if row is None:
+                return ["..."] * len(columns)
+
+            formatted = []
+            for col in columns:
+                if col is None:
+                    formatted.append("...")
+                elif col.variable in row:
+                    formatted.append(row[col.variable].label)
+                else:
+                    formatted.append("")
+            return formatted
+
+        return generate_table(
+            [format_row(row) for row in rows],
+            [[col.name if col is not None else "..." for col in columns]],
+            alignments=["left"] * len(columns),
+            max_column_width=sys.maxsize,
+        )
+
+    def format_sparql_result_summary(
+        self,
+        result: SelectResult,
+        show_top_rows: int = 5,
+        show_bottom_rows: int = 5,
+        show_left_columns: int = 5,
+        show_right_columns: int = 5,
+        time: float | None = None,
+    ) -> str:
+        tmf = ""
+        if time is not None:
+            tmf = f" in {time:.2f}s"
+
+        comp = "" if result.complete else "more than "
+        formatted = (
+            f"Got {comp}{result.num_rows:,} row{'s' * (result.num_rows != 1)} and "
+            f"{result.num_columns:,} column{'s' * (result.num_columns != 1)}{tmf}"
+        )
+
+        showing = []
+
+        if result.num_columns - show_right_columns > show_left_columns:
+            # columns restricted
+            show_columns = []
+            if show_left_columns:
+                show_columns.append(f"first {show_left_columns}")
+            if show_right_columns:
+                show_columns.append(f"last {show_right_columns}")
+
+            showing.append(f"the {' and '.join(show_columns)} columns")
+
+        if result.num_rows - show_bottom_rows > show_top_rows:
+            # rows restricted
+            show_rows = []
+            if show_top_rows:
+                show_rows.append(f"first {show_top_rows}")
+            if show_bottom_rows:
+                show_rows.append(f"last {show_bottom_rows}")
+
+            showing.append(f"the {' and '.join(show_rows)} rows")
+
+        if showing:
+            formatted += ", showing " + " and ".join(showing) + " below"
+
+        return formatted
+
     def format_sparql_result(
         self,
         result: SelectResult | AskResult,
@@ -224,122 +381,29 @@ class KgManager:
 
             return f"Got 0 rows and {result.num_columns:,} columns" + tmf
 
-        assert column_names is None or len(column_names) == result.num_columns, (
-            f"Expected {result.num_columns:,} column names"
+        columns, rows = self.sparql_result_table(
+            result,
+            show_top_rows,
+            show_bottom_rows,
+            show_left_columns,
+            show_right_columns,
+            column_names,
+            clip_literals,
         )
-        assert show_top_rows or show_bottom_rows, "At least one row must be shown"
-        assert show_left_columns or show_right_columns, (
-            "At least one column must be shown"
-        )
-
-        left_end = min(show_left_columns, result.num_columns)
-        right_start = result.num_columns - show_right_columns
-        if right_start > left_end:
-            column_indices = list(range(left_end))
-            column_indices.append(-1)
-            column_indices.extend(range(right_start, result.num_columns))
-        else:
-            column_indices = list(range(result.num_columns))
-
-        def format_row(row: SelectRow) -> list[str]:
-            formatted_row = []
-            for c in column_indices:
-                if c < 0:
-                    formatted_row.append("...")
-                    continue
-
-                var = result.variables[c]
-                val = row.get(var, None)
-                if val is None:
-                    formatted_row.append("")
-                    continue
-
-                if val.typ == "bnode":
-                    formatted_row.append(val.identifier())
-
-                elif val.typ == "literal":
-                    if clip_literals:
-                        # replace to modify value
-                        # without messing up original result
-                        val = replace(val, value=clip(val.value))
-
-                    formatted_row.append(self.format_literal(val.identifier()))
-
-                else:
-                    assert val.typ == "uri"
-                    identifier = val.identifier()
-                    formatted = self.format_iri(identifier)
-
-                    label = self.get_label(
-                        identifier,
-                        "entities",
-                    ) or self.get_label(identifier, "properties")
-
-                    if label is not None:
-                        formatted = f"{clip(label)} ({formatted})"
-
-                    formatted_row.append(formatted)
-
-            return formatted_row
-
-        # generate a nicely formatted table
-        column_names = column_names or result.variables
-        header = [column_names[c] if c >= 0 else "..." for c in column_indices]
-        top_end = min(show_top_rows, result.num_rows)
-        bottom_start = max(result.num_rows - show_bottom_rows, top_end)
-
-        data = [format_row(row) for row in result.rows(end=top_end)]
-
-        if bottom_start > top_end:
-            data.append(["..."] * len(header))
-
-        data.extend(
-            format_row(row) for row in result.rows(bottom_start, result.num_rows)
-        )
-
-        table = generate_table(
-            data,
-            [header],
-            alignments=["left"] * len(header),
-            max_column_width=sys.maxsize,
-        )
+        table = self.format_sparql_table(columns, rows)
 
         if table_only:
             return table
 
-        comp = "" if result.complete else "more than "
-        formatted = (
-            f"Got {comp}{result.num_rows:,} row{'s' * (result.num_rows != 1)} and "
-            f"{result.num_columns:,} column{'s' * (result.num_columns != 1)}{tmf}"
+        summary = self.format_sparql_result_summary(
+            result,
+            show_top_rows,
+            show_bottom_rows,
+            show_left_columns,
+            show_right_columns,
+            time,
         )
-
-        showing = []
-
-        if right_start > left_end:
-            # columns restricted
-            show_columns = []
-            if show_left_columns:
-                show_columns.append(f"first {show_left_columns}")
-            if show_right_columns:
-                show_columns.append(f"last {show_right_columns}")
-
-            showing.append(f"the {' and '.join(show_columns)} columns")
-
-        if bottom_start > top_end:
-            # rows restricted
-            show_rows = []
-            if show_top_rows:
-                show_rows.append(f"first {show_top_rows}")
-            if show_bottom_rows:
-                show_rows.append(f"last {show_bottom_rows}")
-
-            showing.append(f"the {' and '.join(show_rows)} rows")
-
-        if showing:
-            formatted += ", showing " + " and ".join(showing) + " below"
-
-        formatted += f":\n{table}"
-        return formatted
+        return f"{summary}:\n{table}"
 
     def find_longest_prefix(self, iri: str) -> tuple[str, str] | None:
         return find_longest_prefix(iri, self.prefixes)
@@ -480,13 +544,13 @@ class KgManager:
 
         return data.main_field(id) or data.field(id, 0)
 
-    def build_alternative_with_info(
+    def build_kg_item_with_info(
         self,
         identifier: str,
         info: dict | None = None,
         variants: list[str] | None = None,
         matched_via: str | None = None,
-    ) -> Alternative:
+    ) -> KgItem:
         if info is None:
             info = {}
 
@@ -495,7 +559,7 @@ class KgManager:
         aliases = info.get("alias", [])
         other = info.get("other", [])
 
-        return self.build_alternative(
+        return self.build_kg_item(
             identifier,
             label,
             aliases,
@@ -504,7 +568,7 @@ class KgManager:
             matched_via,
         )
 
-    def build_alternative(
+    def build_kg_item(
         self,
         identifier: str,
         label: str | None = None,
@@ -512,7 +576,7 @@ class KgManager:
         other: list[str] | None = None,
         variants: list[str] | None = None,
         matched_via: str | None = None,
-    ) -> Alternative:
+    ) -> KgItem:
         # preprocess some fields
         if variants is not None:
             variants = ordered_unique(variants)
@@ -523,13 +587,13 @@ class KgManager:
         if other is not None:
             other = ordered_unique(other)
 
-        return Alternative(
+        return KgItem(
             identifier=identifier,
             short_identifier=self.format_identifier(identifier),
             label=label,
             variants=variants,
-            aliases=aliases,
-            info=other,
+            aliases=aliases or [],
+            infos=other or [],
             matched_label=matched_via,
         )
 
@@ -577,7 +641,7 @@ class KgManager:
         k: int = 10,
         identifier_map: dict[str, list[str]] | None = None,
         query_type: str = "text",
-    ) -> list[Alternative]:
+    ) -> list[KgItem]:
         start = time.monotonic()
         cache_key = None
         if identifier_map is None:
@@ -632,7 +696,7 @@ class KgManager:
         info_sparql = self.get_info_sparql(index_name)
         infos = self.get_info_for_identifiers(identifiers, info_sparql, data)
 
-        alternatives = []
+        kg_items = []
         for identifier in identifiers:
             if identifier_map is not None:
                 variants = identifier_map.get(identifier)
@@ -641,13 +705,13 @@ class KgManager:
 
             matched_via = field_map.get(identifier)
 
-            alternative = self.build_alternative_with_info(
+            kg_item = self.build_kg_item_with_info(
                 identifier,
                 infos.get(identifier, {}),
                 variants,
                 matched_via,
             )
-            alternatives.append(alternative)
+            kg_items.append(kg_item)
 
         end = time.monotonic()
         time_ms = (end - start) * 1000
@@ -655,9 +719,9 @@ class KgManager:
         # threshold to only cache expensive ones
         if cache_key is not None and time_ms >= SEARCH_CACHE_MIN_MS:
             with self.search_lock:
-                self.search_cache[cache_key] = alternatives
+                self.search_cache[cache_key] = kg_items
 
-        return alternatives
+        return kg_items
 
     def get_candidate_ids(
         self,
@@ -843,23 +907,10 @@ class KgManager:
         )
 
     def format_selections(self, selections: list[Selection]) -> str:
-        rename_obj_type = [
-            (ObjType.ENTITY, "entities"),
-            (ObjType.PROPERTY, "properties"),
-            (ObjType.UNINDEXED, "other (non-indexed) items"),
-        ]
+        # import here to avoid a circular import
+        from grasp.functions import format_selection_groups, selection_groups
 
-        grouped = group_selections(selections)
-
-        return "\n\n".join(
-            f"Using {name}:\n"
-            + format_list(
-                alt.get_selection_string(include_variants=variants)
-                for alt, variants in grouped[obj_type]
-            )
-            for obj_type, name in rename_obj_type
-            if obj_type in grouped
-        )
+        return format_selection_groups(selection_groups(selections))
 
 
 DEFAULT_DESCRIPTIONS = {

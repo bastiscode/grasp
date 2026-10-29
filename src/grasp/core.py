@@ -19,7 +19,15 @@ from grasp.manager.utils import (
     describe_index_type,
     get_common_sparql_prefixes,
 )
-from grasp.model import Message, Model, Response, ToolCall, get_model
+from grasp.model import (
+    Limits,
+    Message,
+    Model,
+    Response,
+    ToolCall,
+    ToolCallResult,
+    get_model,
+)
 from grasp.tasks import get_task
 from grasp.tasks import rules as general_rules
 from grasp.tasks.base import GraspTask
@@ -36,11 +44,13 @@ from grasp.utils import (
 )
 
 
-def format_limits(config: GraspConfig, steps: int, elapsed: float) -> str:
-    remaining = [f"{max(0, config.max_steps - steps):,} of {config.max_steps:,} steps"]
-    if config.max_time is not None:
+def format_limits(limits: Limits) -> str:
+    remaining = [
+        f"{max(0, limits.max_steps - limits.steps):,} of {limits.max_steps:,} steps"
+    ]
+    if limits.max_time is not None:
         remaining.append(
-            f"{max(0, config.max_time - elapsed):,.0f} of {config.max_time:,.0f} seconds"
+            f"{max(0, limits.max_time - limits.elapsed):,.0f} of {limits.max_time:,.0f} seconds"
         )
     return f"Remaining: {', '.join(remaining)}."
 
@@ -232,6 +242,7 @@ def generate(
         # dont do it on follow ups
         and not past_messages
     ):
+        known_before = set(task.known)
         result = find_examples(
             managers,
             example_indices,  # type: ignore
@@ -244,6 +255,9 @@ def generate(
             config.result_max_columns,
         )
 
+        if isinstance(result, str):
+            result = ToolCallResult(formatted=result)
+
         name = "get_random_examples"
         args = {"kg": config.force_examples, "page": 1}
         if not config.random_examples:
@@ -255,6 +269,7 @@ def generate(
             name=name,
             args=args,
             result=result,
+            new_known=sorted(task.known - known_before),
         )
         message = Message.assistant(
             Response(
@@ -267,9 +282,10 @@ def generate(
         # yield to user as tool call
         yield {
             "type": "tool",
+            "id": tool_call.id,
             "name": name,
             "args": args,
-            "result": result,
+            "result": tool_call.result.model_dump(),
         }
 
     # log all messages so far
@@ -355,7 +371,7 @@ def generate(
             # the duplicate response's tool calls are not executed; mark
             # their results so the message history stays valid
             for tool_call in response.tool_calls:
-                tool_call.result = "Not executed due to loop"
+                tool_call.result = ToolCallResult(formatted="Not executed due to loop")
 
             # inform the model that a loop was detected and let it recover
             loop_msg = (
@@ -385,6 +401,7 @@ def generate(
         # execute tool calls
         for tool_call in response.tool_calls:
             fn_start = time.monotonic()
+            known_before = set(task.known)
             try:
                 result = call_function(
                     config,
@@ -405,22 +422,34 @@ def generate(
                 # traceback_str = "".join(traceback.format_exc())
                 # logger.error(f"Full traceback:\n{traceback_str}")
 
+            # functions return plain strings unless they have a structured result
+            if isinstance(result, str):
+                result = ToolCallResult(formatted=result)
+
             tool_call.result = result
             tool_call.elapsed = time.monotonic() - fn_start
+            tool_call.new_known = sorted(task.known - known_before)
             if config.show_limits:
-                # only shown to the model
-                tool_call.result += "\n\n" + format_limits(
-                    config,
-                    steps,
-                    time.monotonic() - start,
+                tool_call.limits = Limits(
+                    steps=steps,
+                    max_steps=config.max_steps,
+                    elapsed=time.monotonic() - start,
+                    max_time=config.max_time,
+                )
+                # in the formatted result only for the model
+                limits = format_limits(tool_call.limits)
+                tool_call.result = result.model_copy(
+                    update={"formatted": f"{result.formatted}\n\n{limits}"}
                 )
 
             yield {
                 "type": "tool",
+                "id": tool_call.id,
                 "name": tool_call.name,
                 "args": tool_call.args,
-                "result": result,
+                "result": result.model_dump(),
                 "elapsed": tool_call.elapsed,
+                "limits": tool_call.limits.model_dump() if tool_call.limits else None,
             }
 
             if task.done(tool_call.name):
