@@ -5,6 +5,7 @@
   import InputMessage from './history/InputMessage.svelte';
   import SystemMessage from './history/SystemMessage.svelte';
   import FeedbackMessage from './history/FeedbackMessage.svelte';
+  import LimitMessage from './history/LimitMessage.svelte';
   import ReasoningMessage from './history/ReasoningMessage.svelte';
   import ToolMessage from './history/ToolMessage.svelte';
   import OutputMessage from './history/OutputMessage.svelte';
@@ -390,6 +391,8 @@
                   <SystemMessage {message} />
                 {:else if message?.type === 'feedback'}
                   <FeedbackMessage {message} />
+                {:else if message?.type === 'limit'}
+                  <LimitMessage {message} />
                 {:else if message?.type === 'model'}
                   <ReasoningMessage {message} />
                 {:else if message?.type === 'tool'}
