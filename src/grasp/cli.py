@@ -661,6 +661,19 @@ def parse_args() -> argparse.Namespace:
         help="Number of largest classes to profile ahead of time, others are "
         "profiled on request (shapes only)",
     )
+    index_parser.add_argument(
+        "--unordered-samples",
+        action="store_true",
+        help="Sample large classes without ORDER BY, faster on engines that "
+        "already return results in a stable order like QLever (shapes only)",
+    )
+    index_parser.add_argument(
+        "--profile-windows",
+        type=int,
+        default=None,
+        help="Number of windows to sample large classes from, 1 for the first "
+        "instances only (shapes only)",
+    )
     add_overwrite_arg(index_parser)
 
     # build example index
@@ -1274,11 +1287,19 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
         logger.info(f"Shapes already exist in {shapes_dir}, skipping profiling")
         return
 
+    shape_config = manager.shape_config or ShapeConfig()
+    if args.unordered_samples:
+        shape_config = shape_config.model_copy(update={"ordered_samples": False})
+    if args.profile_windows is not None:
+        shape_config = shape_config.model_copy(
+            update={"profile_windows": args.profile_windows},
+        )
+
     profiles, total_classes = build_shapes(
         manager,
         instance_pattern=instance_pattern,
         schema_pattern=schema_pattern,
-        shape_config=manager.shape_config or ShapeConfig(),
+        shape_config=shape_config,
         max_classes=args.max_classes,
         log_level=args.log_level,
         request_timeout=config.sparql_request_timeout,

@@ -57,6 +57,9 @@ class ShapeConfig(BaseModel):
     # drawn as this many evenly spread windows
     max_profile_instances: int = 100_000
     profile_windows: int = 10
+    # ORDER BY makes the windows well-defined; engines with a stable order like
+    # QLever can skip it (and must for billions of instances)
+    ordered_samples: bool = True
     # shapes computed on request and kept in memory
     cache_size: int = 256
     max_targets_per_property: int = 5

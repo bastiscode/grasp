@@ -76,6 +76,7 @@ class InstanceSample:
     total: int
     limit: int
     windows: int
+    ordered: bool = True
 
     @property
     def per_window(self) -> int:
@@ -91,7 +92,7 @@ class InstanceSample:
 
 # full extension of a class, or a sample of it when profiling all of it would
 # exhaust the endpoint; spread windows because one slice skews the property
-# distribution, ORDER BY because LIMIT/OFFSET is undefined without it
+# distribution, ORDER BY (optional) because LIMIT/OFFSET is undefined without it
 def members_block(
     pattern: str,
     class_iri: str,
@@ -105,10 +106,11 @@ def members_block(
     # stride >= per_window whenever total > limit, so windows never overlap
     stride = sample.total // sample.windows
     inner = "\n".join(f"        {line}" for line in bound.strip().splitlines())
+    order = f"ORDER BY {member_var} " if sample.ordered else ""
     windows = [
         f"    {{\n"
         f"      SELECT DISTINCT {member_var} WHERE {{\n{inner}\n      }}\n"
-        f"      ORDER BY {member_var} LIMIT {sample.per_window} OFFSET {i * stride}\n"
+        f"      {order}LIMIT {sample.per_window} OFFSET {i * stride}\n"
         f"    }}"
         for i in range(sample.windows)
     ]
@@ -878,6 +880,7 @@ def compute_shape(
                 total=total,
                 limit=shape_config.max_profile_instances,
                 windows=shape_config.profile_windows,
+                ordered=shape_config.ordered_samples,
             )
 
         maps = collect_class_maps(
@@ -996,6 +999,7 @@ def build_shapes(
             total=total,
             limit=shape_config.max_profile_instances,
             windows=shape_config.profile_windows,
+            ordered=shape_config.ordered_samples,
         )
         try:
             maps = collect_class_maps(

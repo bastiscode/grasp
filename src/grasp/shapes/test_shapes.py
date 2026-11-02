@@ -9,6 +9,7 @@ from grasp.build.shapes import (
     build_total_entities_query,
     ClassProfile,
     DirectedMaps,
+    InstanceSample,
     PropertyFreq,
     PropertyProfile,
     assemble_profile,
@@ -16,6 +17,7 @@ from grasp.build.shapes import (
     collect_iris,
     compute_shape,
     emit_pseudo_shex,
+    members_block,
     select_shape_view,
 )
 from grasp.configs import ShapeConfig
@@ -1060,3 +1062,32 @@ class TestGetClassShape:
 
         with pytest.raises(FunctionCallException):
             get_class_shape(manager, shapes, "http://ex.org/Human", "both", None, 1, 10)
+
+
+class TestMembersBlock:
+    PATTERN = "?instance a {CLASS} ."
+    CLASS = "http://ex.org/Human"
+
+    def test_small_class_is_not_sampled(self):
+        sample = InstanceSample(total=50, limit=100, windows=10)
+        block = members_block(self.PATTERN, self.CLASS, sample=sample)
+        assert "LIMIT" not in block
+
+    def test_windows_are_ordered_by_default(self):
+        sample = InstanceSample(total=1_000, limit=100, windows=10)
+        block = members_block(self.PATTERN, self.CLASS, sample=sample)
+        assert block.count("SELECT DISTINCT ?instance") == 10
+        assert block.count("ORDER BY ?instance LIMIT 10 OFFSET") == 10
+        assert "OFFSET 900" in block
+
+    def test_unordered_windows(self):
+        sample = InstanceSample(total=1_000, limit=100, windows=10, ordered=False)
+        block = members_block(self.PATTERN, self.CLASS, sample=sample)
+        assert "ORDER BY" not in block
+        assert block.count("SELECT DISTINCT ?instance") == 10
+        assert block.count("LIMIT 10 OFFSET") == 10
+
+    def test_single_window_takes_the_first_instances(self):
+        sample = InstanceSample(total=1_000, limit=100, windows=1, ordered=False)
+        block = members_block(self.PATTERN, self.CLASS, sample=sample)
+        assert block.count("LIMIT 100 OFFSET 0") == 1
