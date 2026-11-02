@@ -51,7 +51,7 @@ from grasp.search_params import (
     EmbeddingSearchParams,
 )
 from grasp.server import serve
-from grasp.shapes import ShapeIndex, ShapeSample
+from grasp.shapes import load_profiles, save_profiles
 from grasp.tasks import Task, get_task
 from grasp.utils import (
     format_trace,
@@ -551,7 +551,7 @@ def parse_args() -> argparse.Namespace:
     )
     data_parser.add_argument(
         "index",
-        choices=["entities", "properties", "literals"],
+        choices=["properties", "classes", "entities", "literals"],
         help="Index to get data for",
     )
     data_parser.add_argument(
@@ -614,7 +614,7 @@ def parse_args() -> argparse.Namespace:
     )
     merge_parser.add_argument(
         "index",
-        choices=["entities", "properties", "literals"],
+        choices=["properties", "classes", "entities", "literals"],
         help="Index to merge data for",
     )
     merge_parser.add_argument(
@@ -637,14 +637,14 @@ def parse_args() -> argparse.Namespace:
     )
     index_parser.add_argument(
         "index",
-        choices=["entities", "properties", "literals", "shapes"],
+        choices=["properties", "classes", "entities", "literals", "shapes"],
         help="Index to build",
     )
     index_parser.add_argument(
         "config",
         nargs="?",
         default=None,
-        help="Path to GRASP configuration file (required when building the shapes index)",
+        help="Path to GRASP configuration file (required when profiling shapes)",
     )
     index_parser.add_argument(
         "--index-type",
@@ -658,7 +658,8 @@ def parse_args() -> argparse.Namespace:
         "--max-classes",
         type=int,
         default=500,
-        help="Maximum number of classes to profile (shapes only)",
+        help="Number of largest classes to profile ahead of time, others are "
+        "profiled on request (shapes only)",
     )
     add_overwrite_arg(index_parser)
 
@@ -701,13 +702,15 @@ def parse_args() -> argparse.Namespace:
         choices=[
             "standard",
             "info",
-            "entities",
             "properties",
+            "classes",
+            "entities",
             "literals",
             "indices",
             "shapes",
         ],
-        help="Setup phase to run: 'standard' runs info+indices (entities+properties+literals); 'indices' runs the three index phases only",
+        help="Setup phase to run: 'standard' runs info+indices "
+        "(properties+classes+entities+literals); 'indices' runs the four index phases only",
     )
     setup_parser.add_argument(
         "config",
@@ -718,7 +721,7 @@ def parse_args() -> argparse.Namespace:
         "--notes",
         type=str,
         default=None,
-        help="Notes passed to the setup agent (single-phase runs only: info, entities, properties, literals, shapes)",
+        help="Notes passed to the setup agent (single-phase runs only: info, properties, classes, entities, literals, shapes)",
     )
 
     # visualize trace from GRASP output
@@ -1057,25 +1060,27 @@ def setup_grasp(args: argparse.Namespace) -> None:
         logger.error(
             f"--notes is not supported for phase '{phase}'; "
             "it is only supported for single-phase runs "
-            "(info, entities, properties, literals, shapes)"
+            "(info, properties, classes, entities, literals, shapes)"
         )
         return
 
     phase_note = args.notes if not multi_phase else None
 
     selected = {
-        "standard": {"info", "entities", "properties", "literals"},
-        "indices": {"entities", "properties", "literals"},
+        "standard": {"info", "properties", "classes", "entities", "literals"},
+        "indices": {"properties", "classes", "entities", "literals"},
         "info": {"info"},
         "entities": {"entities"},
         "properties": {"properties"},
         "literals": {"literals"},
+        "classes": {"classes"},
     }[phase]
 
     all_phases = [
         ("info", {"phase": "info", "notes": phase_note}),
-        ("entities", {"phase": "index", "name": "entities", "notes": phase_note}),
         ("properties", {"phase": "index", "name": "properties", "notes": phase_note}),
+        ("classes", {"phase": "index", "name": "classes", "notes": phase_note}),
+        ("entities", {"phase": "index", "name": "entities", "notes": phase_note}),
         ("literals", {"phase": "index", "name": "literals", "notes": phase_note}),
     ]
     phases = [payload for tag, payload in all_phases if tag in selected]
@@ -1166,7 +1171,7 @@ def shapes_setup_grasp(args: argparse.Namespace) -> None:
     notes, kg_notes = load_notes(config)
     kg_dir = get_index_dir(manager.kg)
 
-    logger.info(f"Starting shape index setup for knowledge graph '{manager.kg}'")
+    logger.info(f"Starting class shapes setup for knowledge graph '{manager.kg}'")
 
     result = consume_generator(
         generate(
@@ -1250,11 +1255,9 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
         return
 
     shapes_dir = os.path.join(kg_dir, "shapes")
-    index_dir = os.path.join(shapes_dir, "index")
-    samples_file = os.path.join(index_dir, "samples.jsonl")
 
-    # persist the patterns as sidecars so the manager can load them (and compute
-    # shapes on the fly) without the embedding index.
+    # persist the patterns as sidecars so the manager can load them and
+    # compute shapes on request
     os.makedirs(shapes_dir, exist_ok=True)
     for name, value in [
         ("instance_pattern.sparql", instance_pattern),
@@ -1266,36 +1269,24 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
         elif os.path.exists(path):
             os.remove(path)
 
-    total_classes: int | None = None
-    if os.path.exists(samples_file) and not args.overwrite:
-        logger.info(f"Shapes already exist at {samples_file}, skipping profiling")
-        samples = [ShapeSample.model_validate(s) for s in load_jsonl(samples_file)]
-        info_path = os.path.join(index_dir, "info.json")
-        if os.path.exists(info_path):
-            total_classes = load_json(info_path).get("total_classes")
-    else:
-        samples, total_classes = build_shapes(
-            manager,
-            instance_pattern=instance_pattern,
-            schema_pattern=schema_pattern,
-            shape_config=manager.shape_config or ShapeConfig(),
-            max_classes=args.max_classes,
-            log_level=args.log_level,
-            request_timeout=config.sparql_request_timeout,
-            read_timeout=config.sparql_read_timeout,
-        )
+    profiles, _ = load_profiles(shapes_dir)
+    if profiles and not args.overwrite:
+        logger.info(f"Shapes already exist in {shapes_dir}, skipping profiling")
+        return
 
-    model = SentenceTransformerModel(args.emb_model)
-    ShapeIndex.build(
-        samples,
-        index_dir,
-        model,
-        args.emb_batch_size,
-        args.overwrite,
-        args.log_level,
-        total_classes=total_classes,
-        build_params=get_embedding_build_params(args),
-        search_params=get_embedding_search_params(args),
+    profiles, total_classes = build_shapes(
+        manager,
+        instance_pattern=instance_pattern,
+        schema_pattern=schema_pattern,
+        shape_config=manager.shape_config or ShapeConfig(),
+        max_classes=args.max_classes,
+        log_level=args.log_level,
+        request_timeout=config.sparql_request_timeout,
+        read_timeout=config.sparql_read_timeout,
+    )
+    save_profiles(profiles, shapes_dir, total_classes)
+    logger.info(
+        f"Saved {len(profiles):,} of {total_classes:,} class shapes to {shapes_dir}"
     )
 
 

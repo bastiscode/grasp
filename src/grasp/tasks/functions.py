@@ -157,11 +157,7 @@ LIMIT {MAX_RESULTS + 1}"""
         formatted = manager.format_identifier(identifier)
 
         if val.typ == "uri":
-            label = manager.get_label(
-                identifier,
-                "entities",
-            ) or manager.get_label(identifier, "properties")
-
+            label = manager.get_iri_label(identifier)
             if label is not None:
                 formatted = f"{label} ({formatted})"
 

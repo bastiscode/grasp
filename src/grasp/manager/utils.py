@@ -63,11 +63,11 @@ def get_auto_index_type(
         return "fuzzy"
     elif index_name == "properties":
         return "embedding"
-    elif index_name == "literals":
+    elif index_name in ("literals", "classes"):
         if data is not None:
             return get_index_type_from_data(data)
         else:
-            # default to embedding for literals if we don't have data to check
+            # default to embedding if we don't have data to check
             return "embedding"
     else:
         raise ValueError(f'Auto index type not supported for index "{index_name}"')

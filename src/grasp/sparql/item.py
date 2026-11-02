@@ -144,13 +144,13 @@ def get_item(
     try:
         position = infer_position_from_prefix(prefix, manager.sparql_parser)
         if position in [Position.SUBJECT, Position.OBJECT]:
-            obj_types = [ObjType.ENTITY]
+            obj_types = [ObjType.ENTITY, ObjType.CLASS]
         else:
             obj_types = [ObjType.PROPERTY]
     except Exception:
-        obj_types = [ObjType.PROPERTY, ObjType.ENTITY]
+        obj_types = [ObjType.PROPERTY, ObjType.ENTITY, ObjType.CLASS]
 
-    # check whether the iri is a valid entity or property
+    # check whether the iri is a valid entity, class, or property
     for obj_type in obj_types:
         norm = manager.normalize(iri, obj_type.index_name)
         if norm is None:
