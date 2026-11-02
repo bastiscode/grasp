@@ -10,6 +10,7 @@ from grasp.utils import clip, format_list
 class ObjType(StrEnum):
     ENTITY = "entity"
     PROPERTY = "property"
+    CLASS = "class"
     COMMON = "common"
     UNINDEXED = "unindexed"
     UNKNOWN = "unknown"
@@ -27,6 +28,8 @@ class ObjType(StrEnum):
             return "entities"
         elif self == ObjType.PROPERTY:
             return "properties"
+        elif self == ObjType.CLASS:
+            return "classes"
         elif self == ObjType.LITERAL:
             return "literals"
         raise ValueError(f"ObjType {self.value} has no associated index")
@@ -350,7 +353,7 @@ class Selection:
         elif self.variant:
             label += f" ({self.variant})"
 
-        if self.is_entity_or_property:
+        if self.is_entity_or_property or self.obj_type == ObjType.CLASS:
             return f"<{label}>"
         else:
             return label
