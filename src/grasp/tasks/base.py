@@ -3,7 +3,7 @@ from typing import Any
 
 from grasp.configs import GraspConfig
 from grasp.manager import KgManager
-from grasp.model import Message
+from grasp.model import Message, ToolCallResult
 from grasp.examples import Sample
 
 
@@ -54,7 +54,7 @@ class GraspTask(ABC):
         fn_args: dict,
         known: set[str],
         example_indices: dict | None,
-    ) -> str: ...
+    ) -> str | ToolCallResult: ...
 
     @abstractmethod
     def done(self, fn_name: str) -> bool: ...
@@ -69,6 +69,17 @@ class GraspTask(ABC):
 
     @property
     def default_input_field(self) -> str | None:
+        return None
+
+    def limit_message(self) -> str:
+        # shown once the step or time limit is reached, before the last step
+        return (
+            "The step or time limit is reached. You have one last step, "
+            "finish now with your best result."
+        )
+
+    def limit_functions(self) -> list[str] | None:
+        # names of the functions offered in the last step, None for all
         return None
 
     @classmethod

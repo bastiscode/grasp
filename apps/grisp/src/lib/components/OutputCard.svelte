@@ -1,6 +1,9 @@
 <script>
   import SparqlBlock from './SparqlBlock.svelte';
   import MarkdownContent from './MarkdownContent.svelte';
+  import ExecutionResult from './ExecutionResult.svelte';
+  import SelectionGroups from './SelectionGroups.svelte';
+  import { highlightQuerySpans } from '../utils/ranges.js';
 
   export let output;
 
@@ -11,27 +14,27 @@
   const error = output?.error ?? null;
 
   const sparql = out?.sparql ?? null;
+  // items of the query per type and the execution result in structured
+  // form, older outputs have them formatted
   const selections = out?.selections ?? null;
   const result = out?.result ?? null;
+  // element containing the query, for highlighting hovered query items
+  let queryEl;
   const formatted = out?.formatted ?? null;
   const endpoint = out?.endpoint ?? null;
-
-  // Helper to convert data to markdown
-  function toMarkdown(value) {
-    if (value === null || value === undefined) return '';
-    if (typeof value === 'string') return value;
-    return '```json\n' + JSON.stringify(value, null, 2) + '\n```';
-  }
 </script>
 
 <div class="output-card">
   <div class="output-header">
     <h2 class="output-title">Output</h2>
     {#if elapsed !== null}
-      <span class="chip">
-        {elapsed.toFixed(2)}s{#if skeletonsTime !== null && resolutionTime !== null}
-          &nbsp;(skeletons {skeletonsTime.toFixed(2)}s · resolution {resolutionTime.toFixed(2)}s){/if}
-      </span>
+      <div class="timings">
+        <span class="chip chip--total">{elapsed.toFixed(2)}s</span>
+        {#if skeletonsTime !== null && resolutionTime !== null}
+          <span class="chip">skeletons {skeletonsTime.toFixed(2)}s</span>
+          <span class="chip">resolution {resolutionTime.toFixed(2)}s</span>
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -45,15 +48,22 @@
   {/if}
 
   {#if result}
-    <MarkdownContent content={toMarkdown(result)} />
+    <ExecutionResult {result} />
   {/if}
 
   {#if sparql}
-    <SparqlBlock code={sparql} {endpoint} />
+    <div bind:this={queryEl}>
+      <SparqlBlock code={sparql} {endpoint} />
+    </div>
   {/if}
 
-  {#if selections}
-    <MarkdownContent content={toMarkdown(selections)} />
+  {#if Array.isArray(selections) && selections.length}
+    <SelectionGroups
+      groups={selections}
+      on:itemhover={(event) => highlightQuerySpans(queryEl, event.detail.spans)}
+    />
+  {:else if typeof selections === 'string' && selections}
+    <MarkdownContent content={selections} />
   {/if}
 
   {#if !sparql && !result && !error}
@@ -73,17 +83,34 @@
     box-shadow: var(--shadow-sm);
   }
 
-  .output-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
   .output-title {
     margin: 0;
     font-size: 1.05rem;
     font-weight: 600;
     color: var(--color-uni-dark-blue);
+  }
+
+  .output-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-xs) var(--spacing-md);
+  }
+
+  .timings {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--spacing-xs);
+  }
+
+  /* on phones the chips go below the title, left aligned */
+  @media (max-width: 600px) {
+    .timings {
+      flex-basis: 100%;
+      justify-content: flex-start;
+    }
   }
 
   .chip {
@@ -95,6 +122,12 @@
     color: var(--color-uni-blue);
     font-size: 0.75rem;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chip--total {
+    background: var(--color-uni-blue);
+    color: #fff;
   }
 
   .error-block {

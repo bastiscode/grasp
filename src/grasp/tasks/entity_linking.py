@@ -10,7 +10,9 @@ from grasp.manager import KgManager
 from grasp.model import Message
 from grasp.tasks.base import FeedbackTask, GraspTask
 from grasp.tasks.entities import (
+    AnnotationsResult,
     Entity,
+    annotated_entities,
     annotation_feedback_instructions,
     annotation_feedback_system_message,
     format_annotated_entities,
@@ -22,6 +24,20 @@ from grasp.utils import FunctionCallException
 class TextAnnotation(Entity):
     start: int
     end: int
+
+
+class TextSpan(BaseModel):
+    start: int
+    end: int
+    entity: str
+    identifier: str
+
+
+class ElAnnotationsResult(AnnotationsResult):
+    type: str = "el_annotations"
+    # the text excerpt to annotate, with spans relative to it
+    text: str
+    spans: list[TextSpan]
 
 
 class Text(BaseModel):
@@ -139,6 +155,20 @@ class AnnotationState:
             ],
         }
 
+    def spans(self) -> list[TextSpan]:
+        # annotations within the annotation window, relative to it
+        window = self.annotation_window
+        return [
+            TextSpan(
+                start=start - window.start,
+                end=end - window.start,
+                entity=annot.entity,
+                identifier=annot.identifier,
+            )
+            for (start, end), annot in sorted(self.annotations.items())
+            if start >= window.start and end <= window.stop
+        ]
+
     def format(
         self,
         only_annotation_window: bool = False,
@@ -196,7 +226,9 @@ class AnnotationState:
             ]
 
         if list_entities:
-            result += format_annotated_entities(self.annotations.values())
+            result += format_annotated_entities(
+                annotated_entities(self.annotations.values())
+            )
 
         return result
 
@@ -374,7 +406,7 @@ def annotate(
     known: set[str],
     know_before_annotate: bool = True,
     show_state_after_annotation: bool = True,
-) -> str:
+) -> str | ElAnnotationsResult:
     # A function for the llm to call to annotate the words_to_be_annotated in the text
     # with the entity and knowledge graph. The occurrence_index helps to distinguish
     # between different occurrences of the words in the text excerpt.
@@ -401,10 +433,7 @@ def annotate(
             f"'{sequence[start_idx:end_idx]}' from '{current.entity}' to '{entity}'."
         )
     if show_state_after_annotation:
-        result += (
-            "\n\nThe current annotation state of the text excerpt is the following:\n"
-            f"{state.format(only_annotation_window=True, list_entities=False)}"
-        )
+        return annotations_result(state, result)
     return result
 
 
@@ -413,7 +442,7 @@ def delete_annotation(
     occurrence_index: int,
     state: AnnotationState,
     show_state_after_annotation: bool = True,
-) -> str:
+) -> str | ElAnnotationsResult:
     # A function for the llm to call to delete the annotation of the
     # words_to_be_annotated in the text. The occurrence_index helps to
     # distinguish between different occurrences of the words in the text.
@@ -437,11 +466,35 @@ def delete_annotation(
         f"[{start_idx}, {end_idx}] '{sequence[start_idx:end_idx]}'."
     )
     if show_state_after_annotation:
-        result += (
-            "\n\nThe current annotation state of the text excerpt is the following:\n"
-            f"{state.format(only_annotation_window=True, list_entities=False)}"
-        )
+        return annotations_result(state, result)
     return result
+
+
+def annotations_result(
+    state: AnnotationState,
+    message: str = "",
+    list_entities: bool = False,
+) -> ElAnnotationsResult:
+    # the text excerpt to annotate, after a message if given
+    formatted = message
+    if message:
+        formatted += (
+            "\n\nThe current annotation state of the text excerpt is the following:\n"
+        )
+    formatted += state.format(only_annotation_window=True, list_entities=False)
+
+    entities = []
+    if list_entities:
+        entities = annotated_entities(state.annotations.values())
+        formatted += format_annotated_entities(entities)
+
+    return ElAnnotationsResult(
+        formatted=formatted,
+        message=message,
+        entities=entities,
+        text=state.text.data[state.annotation_window],
+        spans=state.spans(),
+    )
 
 
 def input_instructions(
@@ -495,7 +548,7 @@ def call_function(
     known: set[str],
     state: AnnotationState | None = None,
     example_indices: dict | None = None,
-) -> str:
+) -> str | ElAnnotationsResult:
     assert isinstance(state, AnnotationState), (
         "Annotations must be provided as state for entity linking task"
     )
@@ -529,7 +582,7 @@ def call_function(
         )
 
     elif fn_name == "show_annotations":
-        return state.format(only_annotation_window=True, list_entities=True)
+        return annotations_result(state, list_entities=True)
 
     elif fn_name == "stop":
         return "Stopping"
@@ -556,7 +609,7 @@ class EntityLinkingTask(GraspTask, FeedbackTask):
         fn_args: dict,
         known: set[str],
         example_indices: dict | None = None,
-    ) -> str:
+    ) -> str | ElAnnotationsResult:
         return call_function(
             self.config,
             self.managers,

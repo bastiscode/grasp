@@ -2,19 +2,60 @@ import json
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializeAsAny, field_validator
 
 from grasp.configs import ModelConfig
+
+
+class ToolCallResult(BaseModel):
+    # type tells apps how to display the result, formatted is what the
+    # model sees; subclasses add structured fields
+    type: str = "text"
+    formatted: str
+
+
+class LimitUsage(BaseModel):
+    # steps and seconds used after a function call, out of the limits
+    steps: int
+    max_steps: int
+    elapsed: float
+    max_time: float | None = None
+
+    def format(self) -> str:
+        remaining = [
+            f"{max(0, self.max_steps - self.steps):,} of {self.max_steps:,} steps"
+        ]
+        if self.max_time is not None:
+            remaining.append(
+                f"{max(0, self.max_time - self.elapsed):,.0f} "
+                f"of {self.max_time:,.0f} seconds"
+            )
+        return f"Remaining: {', '.join(remaining)}."
 
 
 class ToolCall(BaseModel):
     id: str
     name: str
     args: dict[str, Any]
-    result: str | None = None
+    # serialize as any to keep the fields of subclasses
+    result: SerializeAsAny[ToolCallResult] | None = None
     error: str | None = None
     # wall-clock time in seconds spent executing this function call
     elapsed: float | None = None
+    # knowledge graph items this function call added to the known items,
+    # e.g. for tracing where the items of a final query come from
+    new_known: list[str] | None = None
+    # step and time limits after this call, if shown to the model
+    limits: LimitUsage | None = None
+
+    @field_validator("result", mode="before")
+    @classmethod
+    def result_from_str(cls, result: Any) -> Any:
+        # the app sends messages with plain string results from old
+        # conversations back for follow-ups
+        if isinstance(result, str):
+            return ToolCallResult(formatted=result)
+        return result
 
 
 class Reasoning(BaseModel):

@@ -3,6 +3,7 @@ import time
 import traceback
 import uuid
 from copy import deepcopy
+from dataclasses import dataclass, field
 from logging import Logger
 from typing import Any, Generator
 
@@ -19,7 +20,15 @@ from grasp.manager.utils import (
     describe_index_type,
     get_common_sparql_prefixes,
 )
-from grasp.model import Message, Model, Response, ToolCall, get_model
+from grasp.model import (
+    LimitUsage,
+    Message,
+    Model,
+    Response,
+    ToolCall,
+    ToolCallResult,
+    get_model,
+)
 from grasp.tasks import get_task
 from grasp.tasks import rules as general_rules
 from grasp.tasks.base import GraspTask
@@ -36,13 +45,35 @@ from grasp.utils import (
 )
 
 
-def format_limits(config: GraspConfig, steps: int, elapsed: float) -> str:
-    remaining = [f"{max(0, config.max_steps - steps):,} of {config.max_steps:,} steps"]
-    if config.max_time is not None:
-        remaining.append(
-            f"{max(0, config.max_time - elapsed):,.0f} of {config.max_time:,.0f} seconds"
+@dataclass
+class Limits:
+    """Step and time limits of a run; steps count model responses only."""
+
+    max_steps: int
+    max_time: float | None = None
+    start: float = field(default_factory=time.monotonic)
+    steps: int = 0
+
+    @property
+    def elapsed(self) -> float:
+        return time.monotonic() - self.start
+
+    @property
+    def reached(self) -> bool:
+        return self.steps >= self.max_steps or (
+            self.max_time is not None and self.elapsed >= self.max_time
         )
-    return f"Remaining: {', '.join(remaining)}."
+
+    def usage(self) -> LimitUsage:
+        return LimitUsage(
+            steps=self.steps,
+            max_steps=self.max_steps,
+            elapsed=self.elapsed,
+            max_time=self.max_time,
+        )
+
+    def format(self) -> str:
+        return self.usage().format()
 
 
 def system_instructions(
@@ -116,7 +147,7 @@ def setup(config: GraspConfig) -> tuple[list[KgManager], dict[str, EmbeddingMode
     managers: list[KgManager] = []
     for kg in config.knowledge_graphs:
         manager = load_kg_manager(kg)
-        models = manager.load_models(models, embedding_model=config.embedding_model)
+        models = manager.load_models(models)
         managers.append(manager)
 
     return managers, models
@@ -220,7 +251,7 @@ def generate(
     else:
         messages = [Message.system(content=system_instruction)]
 
-    start = time.monotonic()
+    limits = Limits(config.max_steps, config.max_time)
 
     # add user input
     messages.append(Message.user(content=input))
@@ -232,6 +263,7 @@ def generate(
         # dont do it on follow ups
         and not past_messages
     ):
+        known_before = set(task.known)
         result = find_examples(
             managers,
             example_indices,  # type: ignore
@@ -244,6 +276,9 @@ def generate(
             config.result_max_columns,
         )
 
+        if isinstance(result, str):
+            result = ToolCallResult(formatted=result)
+
         name = "get_random_examples"
         args = {"kg": config.force_examples, "page": 1}
         if not config.random_examples:
@@ -255,6 +290,7 @@ def generate(
             name=name,
             args=args,
             result=result,
+            new_known=sorted(task.known - known_before),
         )
         message = Message.assistant(
             Response(
@@ -267,17 +303,16 @@ def generate(
         # yield to user as tool call
         yield {
             "type": "tool",
+            "id": tool_call.id,
             "name": name,
             "args": args,
-            "result": result,
+            "result": tool_call.result.model_dump(),
         }
 
     # log all messages so far
     for msg in messages:
         logger.debug(format_message(msg))
 
-    # model responses, injected user messages do not count
-    steps = 0
     error: dict | None = None
 
     # keep track of last serialized message to detect loops
@@ -290,10 +325,7 @@ def generate(
     # one last step once the step or time limit is reached
     over_limit = False
     while True:
-        elapsed = time.monotonic() - start
-        if steps >= config.max_steps or (
-            config.max_time is not None and elapsed >= config.max_time
-        ):
+        if limits.reached:
             if over_limit:
                 error = {
                     "content": "Step or time limit reached",
@@ -304,13 +336,17 @@ def generate(
 
             over_limit = True
             task.last_step = True
-            limit_msg = (
-                "The step or time limit is reached. You have one last step, "
-                "finish now with your best result."
-            )
+            limit_msg = task.limit_message()
             messages.append(Message.user(limit_msg, name="limit"))
             yield {"type": "limit", "content": limit_msg}
-            logger.warning(f"Limit reached after {steps:,} steps and {elapsed:.1f}s")
+            logger.warning(
+                f"Limit reached after {limits.steps:,} steps and {limits.elapsed:.1f}s"
+            )
+
+            # the last step only offers the task's limit functions, if any
+            limit_fns = task.limit_functions()
+            if limit_fns is not None:
+                fns = [fn for fn in fns if fn["name"] in limit_fns]
 
         try:
             response = model(messages, fns)
@@ -339,7 +375,7 @@ def generate(
             break
 
         messages.append(Message.assistant(response))
-        steps += 1
+        limits.steps += 1
 
         resp_hash = response.hash()
         if last_resp_hash == resp_hash:
@@ -355,7 +391,7 @@ def generate(
             # the duplicate response's tool calls are not executed; mark
             # their results so the message history stays valid
             for tool_call in response.tool_calls:
-                tool_call.result = "Not executed due to loop"
+                tool_call.result = ToolCallResult(formatted="Not executed due to loop")
 
             # inform the model that a loop was detected and let it recover
             loop_msg = (
@@ -385,6 +421,7 @@ def generate(
         # execute tool calls
         for tool_call in response.tool_calls:
             fn_start = time.monotonic()
+            known_before = set(task.known)
             try:
                 result = call_function(
                     config,
@@ -405,22 +442,30 @@ def generate(
                 # traceback_str = "".join(traceback.format_exc())
                 # logger.error(f"Full traceback:\n{traceback_str}")
 
+            # functions return plain strings unless they have a structured result
+            if isinstance(result, str):
+                result = ToolCallResult(formatted=result)
+
             tool_call.result = result
             tool_call.elapsed = time.monotonic() - fn_start
+            tool_call.new_known = sorted(task.known - known_before)
             if config.show_limits:
-                # only shown to the model
-                tool_call.result += "\n\n" + format_limits(
-                    config,
-                    steps,
-                    time.monotonic() - start,
+                # shown in the app, and in the formatted result only for the model
+                tool_call.limits = limits.usage()
+                tool_call.result = result.model_copy(
+                    update={
+                        "formatted": f"{result.formatted}\n\n{tool_call.limits.format()}"
+                    }
                 )
 
             yield {
                 "type": "tool",
+                "id": tool_call.id,
                 "name": tool_call.name,
                 "args": tool_call.args,
-                "result": result,
+                "result": result.model_dump(),
                 "elapsed": tool_call.elapsed,
+                "limits": tool_call.limits.model_dump() if tool_call.limits else None,
             }
 
             if task.done(tool_call.name):
@@ -507,7 +552,7 @@ def generate(
         "type": "output",
         "task": task_name,
         "output": output,
-        "elapsed": end - start,
+        "elapsed": end - limits.start,
         "error": error,
         "messages": [message.model_dump() for message in messages],
         "known": list(task.known),

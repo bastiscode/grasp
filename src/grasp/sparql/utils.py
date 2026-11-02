@@ -92,12 +92,25 @@ def find_longest_prefix(iri: str, prefixes: dict[str, str]) -> tuple[str, str] |
     return longest
 
 
+SHORT_LITERAL_ESCAPES = {'"': '\\"', "\n": "\\n", "\r": "\\r"}
+
+
 def strip_literal(s: str) -> str:
-    if s.startswith('"') and s.endswith('"'):
-        s = s.strip('"')
-    elif s.startswith("'") and s.endswith("'"):
-        s = s.strip("'")
-    return s
+    # strip exactly one (long) quote per side, the value may end with an
+    # escaped quote
+    for quote in ('"""', "'''", '"', "'"):
+        if len(s) >= 2 * len(quote) and s.startswith(quote) and s.endswith(quote):
+            s = s[len(quote) : -len(quote)]
+            break
+
+    # escape what is only allowed in long or single-quoted literals, so the
+    # value can be wrapped in double quotes again, keep existing escapes
+    return re.sub(
+        r'\\.|["\n\r]',
+        lambda m: SHORT_LITERAL_ESCAPES.get(m[0], m[0]),
+        s,
+        flags=re.DOTALL,
+    )
 
 
 def parse_into_binding(
@@ -310,6 +323,20 @@ def find_all(
     else:
         for child in parse.get("children", []):
             yield from find_all(child, name, skip)
+
+
+def parse_prefixes(prologue: dict | None) -> dict[str, str]:
+    prefixes = {}
+    if prologue is None:
+        return prefixes
+
+    for decl in find_all(prologue, "PrefixDecl"):
+        pfx = find(decl, "PNAME_NS")
+        iri = find(decl, "IRIREF")
+        if pfx is None or iri is None:
+            continue
+        prefixes[pfx["value"][:-1]] = iri["value"][1:-1]
+    return prefixes
 
 
 def find_terminals(parse: dict) -> Iterator[dict]:
@@ -1015,8 +1042,9 @@ def execute(
                     **headers,
                 },
                 data={
-                    **backend_params(backend, request_timeout),
                     **params,
+                    # the request timeout wins over a timeout in params
+                    **backend_params(backend, request_timeout),
                     "query": sparql,
                 },
                 timeout=request_timeout,
@@ -1204,11 +1232,32 @@ def format_iri(
         return wrap_iri(iri) if wrap else iri
 
 
+# literal identifier as written by Binding.identifier(), with an unescaped value
+RAW_LITERAL = re.compile(
+    r'"(.*)"(@[a-zA-Z]+(?:-[a-zA-Z0-9]+)*|\^\^<[^<>\s]*>)?',
+    re.DOTALL,
+)
+
+
+def escape_literal(value: str) -> str:
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+
+
 def prepare_identifier_for_sparql(identifier: str, parser: LR1Parser) -> str:
     binding = parse_into_binding(identifier, parser)
 
     if binding is None and has_scheme(identifier):
         binding = parse_into_binding(wrap_iri(identifier), parser)
+
+    if binding is None and (match := RAW_LITERAL.fullmatch(identifier)):
+        # e.g., a raw newline or quote in the value
+        value, suffix = match.groups()
+        return f'"{escape_literal(value)}"{suffix or ""}'
 
     if binding is None:
         return identifier
@@ -1306,6 +1355,10 @@ def load_literal_index_sparql() -> str:
     return read_resource("grasp.sparql.queries", "literal.index.sparql")
 
 
+def load_class_index_sparql() -> str:
+    return read_resource("grasp.sparql.queries", "class.index.sparql")
+
+
 def load_entity_info_sparql() -> str:
     return read_resource("grasp.sparql.queries", "entity.info.sparql")
 
@@ -1316,3 +1369,7 @@ def load_property_info_sparql() -> str:
 
 def load_literal_info_sparql() -> str:
     return read_resource("grasp.sparql.queries", "literal.info.sparql")
+
+
+def load_class_info_sparql() -> str:
+    return read_resource("grasp.sparql.queries", "class.info.sparql")

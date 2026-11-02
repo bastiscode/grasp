@@ -2,9 +2,24 @@
   import MessageCard from './MessageCard.svelte';
   import MarkdownContent from '../common/MarkdownContent.svelte';
   import SparqlBlock from '../common/SparqlBlock.svelte';
-  import { flattenFunctionArgs } from '../../utils/formatters.js';
+  import AnnotationsResult from './AnnotationsResult.svelte';
+  import ExamplesResult from './ExamplesResult.svelte';
+  import SearchResults from './SearchResults.svelte';
+  import ShapesResult from './ShapesResult.svelte';
+  import BooleanResult from './BooleanResult.svelte';
+  import TableResult from './TableResult.svelte';
+  import {
+    flattenFunctionArgs,
+    nestBulletsUnderEnumeration
+  } from '../../utils/formatters.js';
 
   export let message;
+
+  // old outputs and shares have plain string results
+  const result =
+    typeof message?.result === 'string'
+      ? { type: 'text', formatted: message.result }
+      : message?.result ?? null;
 
   const flattened = flattenFunctionArgs(message?.args ?? {});
   const argChips = [];
@@ -24,6 +39,21 @@
   }
 
   const qleverLink = null;
+
+  // step and time limits after this call, only set with show_limits
+  const limits = message?.limits ?? null;
+  const limitParts = limits
+    ? [
+        `Step ${limits.steps} of ${limits.max_steps}`,
+        ...(typeof limits.max_time === 'number'
+          ? [`${Math.round(limits.elapsed)} s of ${Math.round(limits.max_time)} s`]
+          : [])
+      ]
+    : [];
+  const limitReached =
+    limits !== null &&
+    (limits.steps >= limits.max_steps ||
+      (typeof limits.max_time === 'number' && limits.elapsed >= limits.max_time));
 
   function coerceArgValue(value) {
     if (value === null || value === undefined) {
@@ -58,7 +88,7 @@
         </span>
       {/if}
       {#each argChips as chip (chip.key)}
-        <span class="arg-chip" title={`${chip.key}: ${chip.value}`}>
+        <span class="arg-chip" title={`${chip.key}: ${chip.value}`} data-arg={chip.key}>
           <span class="arg-chip__key">{chip.key}</span>
           <span
             class="arg-chip__value"
@@ -73,12 +103,35 @@
 
   </svelte:fragment>
 
+  <!-- data attributes mark where provenance highlights items -->
   {#if sparql}
-    <SparqlBlock code={sparql} qleverLink={qleverLink} label="SPARQL" />
+    <div data-arg="sparql">
+      <SparqlBlock code={sparql} qleverLink={qleverLink} label="SPARQL" />
+    </div>
   {/if}
 
-  {#if message?.result}
-    <MarkdownContent content={message.result} />
+  <div data-part="result">
+  {#if result?.type === 'search'}
+    <SearchResults {result} />
+  {:else if result?.type === 'boolean'}
+    <BooleanResult {result} />
+  {:else if result?.type === 'table'}
+    <TableResult {result} />
+  {:else if result?.type === 'sparql_qa_examples'}
+    <ExamplesResult {result} />
+  {:else if result?.type === 'shapes'}
+    <ShapesResult {result} />
+  {:else if result?.type === 'cea_annotations' || result?.type === 'el_annotations'}
+    <AnnotationsResult {result} />
+  {:else if result?.formatted}
+    <MarkdownContent content={nestBulletsUnderEnumeration(result.formatted)} />
+  {/if}
+  </div>
+
+  {#if limitParts.length}
+    <footer class="limits" class:limits--reached={limitReached}>
+      {limitParts.join(' · ')}{limitReached ? ' · limit reached' : ''}
+    </footer>
   {/if}
 </MessageCard>
 
@@ -147,6 +200,18 @@
 
   .arg-chip__value--truncated::after {
     display: block;
+  }
+
+  .limits {
+    margin-top: var(--spacing-sm);
+    font-size: 0.75rem;
+    color: var(--text-subtle);
+    text-align: right;
+  }
+
+  .limits--reached {
+    color: var(--color-uni-red);
+    font-weight: 600;
   }
 
 </style>
