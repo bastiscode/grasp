@@ -590,7 +590,7 @@ def render_shape(
         share = f"{shape_config.min_property_share:.0%}"
         info.append(
             f"{view.rare:,} more used by less than {share} of the instances "
-            "(search to include them)"
+            "(pass a query to rank all properties including these)"
         )
 
     if view.other:

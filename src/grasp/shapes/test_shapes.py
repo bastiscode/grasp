@@ -192,7 +192,7 @@ class TestAssembleProfile:
             "http://ex.org/C {\n"
             "  http://ex.org/common IRI ;\n"
             "  # page 1 of 1, 1 outgoing property, 1 more used by "
-            "less than 50% of the instances (search to include them)\n"
+            "less than 50% of the instances (pass a query to rank all properties including these)\n"
             "}"
         )
 
