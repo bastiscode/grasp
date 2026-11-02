@@ -3,20 +3,51 @@ Trace provenance: for every knowledge graph item in a final SPARQL query, the
 first tool call that showed it, i.e. added it to the known items, and the
 first tool call that used it in its arguments. Relies on the known items
 recorded per tool call (ToolCall.new_known), so older traces have none.
+Items that no tool call showed may still come from the instruction, e.g.
+from its notes.
 """
 
+import re
 from typing import Any, Iterator
 
 from grasp.manager import KgManager
 from grasp.manager.utils import get_common_sparql_prefixes
 from grasp.model import Message
-from grasp.provenance.witness import char_offset, parse_prefixes
-from grasp.sparql.utils import find_all, parse_into_binding, parse_string
+from grasp.provenance.witness import char_offset
+from grasp.sparql.utils import (
+    find_all,
+    parse_into_binding,
+    parse_prefixes,
+    parse_string,
+)
 
 COMMON_PREFIXES = get_common_sparql_prefixes()
 
 # tool calls that end the trace and do not provide information
 STOPPING = {"answer", "cancel"}
+
+# IRIs and prefixed names in text, following the terminals IRIREF, PNAME_NS
+# and PNAME_LN of the SPARQL grammar
+_BASE = (
+    "A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d"
+    "\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef"
+    "\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\U00010000-\U000effff"
+)
+_CHARS = _BASE + "_\\-0-9\u00b7\u0300-\u036f\u203f-\u2040"
+_PLX = r"%[0-9A-Fa-f]{2}|\\[_~.\-!$&'()*+,;=/?#@%]"
+_PN_PREFIX = f"[{_BASE}](?:[{_CHARS}.]*[{_CHARS}])?"
+_PN_LOCAL = (
+    f"(?:[{_BASE}_:0-9]|{_PLX})(?:(?:[{_CHARS}.:]|{_PLX})*(?:[{_CHARS}:]|{_PLX}))?"
+)
+_IRIREF = r'<[^<>"{}|^`\\\x00-\x20]*>'
+TERM_PATTERN = re.compile(
+    f"{_IRIREF}|(?<![{_CHARS}.:])(?:{_PN_PREFIX})?:(?:{_PN_LOCAL})?"
+)
+PREFIX_PATTERN = re.compile(
+    f"PREFIX\\s+((?:{_PN_PREFIX})?):\\s*<([^<>\\s]*)>",
+    re.IGNORECASE,
+)
+SCHEME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def message_dict(message: Message | dict) -> dict:
@@ -35,6 +66,47 @@ def iter_tool_calls(messages: list[Message | dict]) -> Iterator[dict]:
             if tool_call["name"] in STOPPING:
                 continue
             yield tool_call
+
+
+def instruction_iris(
+    manager: KgManager, messages: list[Message | dict]
+) -> dict[str, str]:
+    # IRIs in the system messages, mapped to the first line containing them;
+    # read like a query: full IRIs, and prefixed names resolved with the
+    # common and knowledge graph prefixes and the PREFIX lines of the text;
+    # common vocabulary is left out
+    iris: dict[str, str] = {}
+    for message in map(message_dict, messages):
+        content = message.get("content")
+        if message.get("role") != "system" or not isinstance(content, str):
+            continue
+
+        prefixes = {**manager.prefixes}
+        for short, long in PREFIX_PATTERN.findall(content):
+            prefixes.setdefault(short, long)
+
+        for line in content.splitlines():
+            for match in TERM_PATTERN.finditer(line):
+                value = match.group()
+                if not value.startswith("<") and value.split(":")[0] not in prefixes:
+                    continue
+
+                binding = parse_into_binding(
+                    value, manager.iri_literal_parser, prefixes
+                )
+                if (
+                    binding is None
+                    or binding.typ != "uri"
+                    or not SCHEME_PATTERN.match(binding.value)
+                ):
+                    continue
+
+                longest = manager.find_longest_prefix(binding.value)
+                if longest is not None and longest[0] in COMMON_PREFIXES:
+                    continue
+
+                iris.setdefault(binding.value, line.strip())
+    return iris
 
 
 def identifiers(manager: KgManager, iri: str) -> set[str]:
@@ -206,7 +278,35 @@ def call_ref(
         shown = shown_part(call["result"], paths[0])
         if shown is not None:
             ref["shown"] = shown
+    elif (example := shown_example(manager, call.get("result") or {}, ids)) is not None:
+        ref["result_paths"], ref["shown"] = example
     return ref
+
+
+def shown_example(
+    manager: KgManager,
+    result: dict,
+    ids: set[str],
+) -> tuple[list[str], dict[str, Any]] | None:
+    # the first example whose query shows the item, with the query line
+    # containing it, for items no selection covers, e.g. in SERVICE clauses
+    for i, example in enumerate(result.get("examples") or []):
+        sparql = example.get("sparql") or ""
+        try:
+            spans = iri_spans(manager, sparql, skip_common=False)
+        except Exception:
+            continue
+
+        start = next((start for iri, _, start, _ in spans if iri in ids), None)
+        if start is None:
+            continue
+
+        begin = sparql.rfind("\n", 0, start) + 1
+        end = sparql.find("\n", start)
+        line = sparql[begin : end if end >= 0 else len(sparql)].strip()
+        shown = {"type": "example", "question": example.get("question"), "line": line}
+        return [f"examples.{i}"], shown
+    return None
 
 
 def trace_provenance(
@@ -230,6 +330,7 @@ def trace_provenance(
         return {"error": f"Failed to find the items of the query: {e}"}
 
     usages = [arg_usage(manager, call.get("args") or {}) for call in calls]
+    instructed = instruction_iris(manager, messages)
 
     items: dict[str, dict[str, Any]] = {}
     for iri, written, start, end in spans:
@@ -268,7 +369,12 @@ def trace_provenance(
                 manager, iri, calls[used_at], used_at + 1, usages[used_at]
             )
 
-        if shown_at is None:
+        instruction = next((instructed[i] for i in ids if i in instructed), None)
+        if shown_at is None and instruction is not None:
+            # no tool result showed it, but the instruction contains it
+            item["status"] = "instructed"
+            item["instruction"] = {"text": instruction}
+        elif shown_at is None:
             item["status"] = "unverified"
         elif used_at is None or shown_at < used_at:
             item["status"] = "retrieved"

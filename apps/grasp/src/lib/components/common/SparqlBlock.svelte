@@ -133,6 +133,11 @@
     border-bottom-color: rgb(230, 200, 40);
   }
 
+  .item--instructed {
+    background: rgba(110, 140, 235, 0.25);
+    border-bottom-color: rgb(110, 140, 235);
+  }
+
   .item--unverified {
     background: rgba(235, 70, 70, 0.25);
     border-bottom-color: rgb(245, 90, 90);
@@ -195,6 +200,11 @@
   .item--verified {
     background: rgba(230, 200, 40, 0.2);
     border-bottom-color: rgb(230, 200, 40);
+  }
+
+  .item--instructed {
+    background: rgba(110, 140, 235, 0.25);
+    border-bottom-color: rgb(110, 140, 235);
   }
 
   .item--unverified {
