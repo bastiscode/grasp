@@ -325,6 +325,20 @@ def find_all(
             yield from find_all(child, name, skip)
 
 
+def parse_prefixes(prologue: dict | None) -> dict[str, str]:
+    prefixes = {}
+    if prologue is None:
+        return prefixes
+
+    for decl in find_all(prologue, "PrefixDecl"):
+        pfx = find(decl, "PNAME_NS")
+        iri = find(decl, "IRIREF")
+        if pfx is None or iri is None:
+            continue
+        prefixes[pfx["value"][:-1]] = iri["value"][1:-1]
+    return prefixes
+
+
 def find_terminals(parse: dict) -> Iterator[dict]:
     if "value" in parse:
         yield parse

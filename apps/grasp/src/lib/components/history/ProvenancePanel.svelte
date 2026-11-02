@@ -20,6 +20,7 @@
   const STATUS = {
     retrieved: { text: 'surfaced before use', title: 'A tool result showed this item before the query used it' },
     verified: { text: 'surfaced after use', title: 'The query used this item before a tool result showed it' },
+    instructed: { text: 'from instruction', title: 'No tool result showed this item, but the instruction or its notes contain it' },
     unverified: { text: 'never surfaced', title: 'No tool result showed this item, it may be made up' }
   };
 
@@ -483,10 +484,16 @@
                   {/if}
                 {/each}
               </div>
+            {:else if shown.type === 'example'}
+              <p class="tip__example">{shown.question}</p>
+              <code>{shown.line}</code>
             {:else}
               <code>{shown.text}</code>
             {/if}
           </div>
+        {:else if tip.item.instruction}
+          <p class="tip__note">{STATUS.instructed.title}:</p>
+          <p class="tip__instruction">{tip.item.instruction.text}</p>
         {:else if !tip.item.shown_by}
           <p class="tip__note">{STATUS.unverified.title}.</p>
         {/if}
@@ -620,6 +627,24 @@
     font-size: 0.82rem;
   }
 
+  /* the instruction line containing the item, like a shown result part */
+  .tip__instruction {
+    margin: 0;
+    max-height: 10rem;
+    overflow-y: auto;
+    padding: 0.35rem 0.5rem;
+    border-left: 3px solid rgba(52, 74, 154, 0.25);
+    background: rgba(52, 74, 154, 0.04);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+
+  .tip__example {
+    margin: 0 0 0.2rem;
+  }
+
   .tip__shown {
     max-height: 10rem;
     overflow-y: auto;
@@ -732,6 +757,11 @@
     color: #6b5d12;
   }
 
+  .badge--instructed {
+    background: color-mix(in srgb, var(--color-uni-blue) 14%, transparent);
+    color: var(--color-uni-blue);
+  }
+
   .badge--unverified {
     background: color-mix(in srgb, var(--color-uni-red) 14%, transparent);
     color: var(--color-uni-red);
@@ -765,6 +795,10 @@
 
   .swatch--verified {
     background: rgb(230, 200, 40);
+  }
+
+  .swatch--instructed {
+    background: rgb(110, 140, 235);
   }
 
   .swatch--unverified {

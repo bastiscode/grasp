@@ -26,6 +26,7 @@ from grasp.sparql.utils import (
     find_all,
     find_terminals,
     parse_into_binding,
+    parse_prefixes,
     parse_string,
     parse_to_string,
     span,
@@ -337,20 +338,6 @@ def verb_term(verb: dict) -> tuple[str, bool, bool]:
         return terminals[1]["value"], False, True
 
     return text, True, False
-
-
-def parse_prefixes(prologue: dict | None) -> dict[str, str]:
-    prefixes = {}
-    if prologue is None:
-        return prefixes
-
-    for decl in find_all(prologue, "PrefixDecl"):
-        pfx = find(decl, "PNAME_NS")
-        iri = find(decl, "IRIREF")
-        if pfx is None or iri is None:
-            continue
-        prefixes[pfx["value"][:-1]] = iri["value"][1:-1]
-    return prefixes
 
 
 def plan_witness(sparql: str, parser: LR1Parser) -> WitnessPlan:
