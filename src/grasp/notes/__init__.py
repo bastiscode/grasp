@@ -40,6 +40,15 @@ from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 from grasp.utils import is_model_error, link
 
 
+def check_model_error(output: dict, what: str) -> None:
+    # a round lost to the model API is not a round without findings, so stop
+    # instead of continuing with fewer rounds
+    if is_model_error(output):
+        raise RuntimeError(
+            f"{what} failed with a model error: {output['error']['content'][:500]}"
+        )
+
+
 def dump_config(config: BaseModel, out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "config.yaml"), "w") as f:
@@ -143,6 +152,7 @@ def take_notes_from_samples(
                         logger=agent_logger,
                     )
                 )
+                check_model_error(output, f"Agent run on a sample in round {r}")
                 outputs.append(output)
 
             state: NotesFromTracesState = NotesFromTracesState(
@@ -194,6 +204,7 @@ def take_notes_from_samples(
         ]
         output["traces"] = outputs
         dump_json(output, os.path.join(out_dir, f"output.{task}.round_{r}.json"))
+        check_model_error(output, f"Note-taking round {r}")
 
         for kg, kg_specific_notes in kg_notes.items():
             out_file = os.path.join(out_dir, f"notes.{task}.{kg}.round_{r}.json")
@@ -273,6 +284,7 @@ def take_notes_from_outputs(
 
         output["traces"] = outputs
         dump_json(output, os.path.join(out_dir, f"output.{task}.round_{r}.json"))
+        check_model_error(output, f"Note-taking round {r}")
 
         for kg, kg_specific_notes in kg_notes.items():
             out_file = os.path.join(out_dir, f"notes.{task}.{kg}.round_{r}.json")
@@ -342,13 +354,7 @@ def take_notes_from_exploration(
 
         dump_json(output, os.path.join(out_dir, f"output.exploration.round_{r}.json"))
 
-        if is_model_error(output):
-            # a round lost to the model API is not a round without findings,
-            # so stop instead of continuing with fewer rounds
-            raise RuntimeError(
-                f"Exploration round {r} failed with a model error: "
-                f"{output['error']['content'][:500]}"
-            )
+        check_model_error(output, f"Exploration round {r}")
 
         if config.mode == "structural":
             for kg, kg_specific_notes in kg_notes.items():
@@ -398,6 +404,7 @@ def generate_questions(
             output,
             os.path.join(out_dir, f"question-generation.trace.round_{r}.json"),
         )
+        check_model_error(output, f"Question generation round {r}")
 
         for kg, kg_questions in state.questions.items():
             samples = [

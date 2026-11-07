@@ -1,9 +1,14 @@
+import json
 import os
 
 import pytest
 
 import grasp.notes as notes_module
-from grasp.configs import NotesFromExplorationConfig
+from grasp.configs import (
+    NotesFromExplorationConfig,
+    NotesFromOutputsConfig,
+    NotesGenerateQuestionsConfig,
+)
 from grasp.utils import is_model_error
 
 
@@ -56,3 +61,31 @@ def test_exploration_continues_after_limit(monkeypatch, tmp_path):
     ok = {"type": "output", "output": {}, "error": None, "messages": []}
     out_dir = run_exploration(monkeypatch, tmp_path, [error_output("limit"), ok])
     assert os.path.exists(os.path.join(out_dir, "notes.exploration.round_1.json"))
+
+
+def patch_rounds(monkeypatch, outputs: list[dict]) -> None:
+    monkeypatch.setattr(notes_module, "setup", lambda config: ([], {}))
+    monkeypatch.setattr(notes_module, "load_notes", lambda config: ([], {}))
+    monkeypatch.setattr(notes_module, "generate", lambda *args, **kwargs: None)
+    rounds = iter(outputs)
+    monkeypatch.setattr(notes_module, "consume_generator", lambda gen: next(rounds))
+
+
+def test_question_generation_stops_on_model_error(monkeypatch, tmp_path):
+    ok = {"type": "output", "output": {}, "error": None, "messages": []}
+    patch_rounds(monkeypatch, [error_output("timeout"), ok])
+    config = NotesGenerateQuestionsConfig(num_rounds=2)
+    with pytest.raises(RuntimeError, match="Question generation round 0 failed"):
+        notes_module.generate_questions(config, str(tmp_path / "questions"))
+
+
+def test_notes_from_outputs_stops_on_model_error(monkeypatch, tmp_path):
+    outputs_file = tmp_path / "outputs.jsonl"
+    outputs_file.write_text(json.dumps({"task": "sparql-qa", "id": "1"}) + "\n")
+    patch_rounds(monkeypatch, [error_output("empty")])
+    config = NotesFromOutputsConfig(outputs=[str(outputs_file)], num_rounds=1, seed=22)
+    out_dir = tmp_path / "notes"
+    with pytest.raises(RuntimeError, match="Note-taking round 0 failed"):
+        notes_module.take_notes_from_outputs("sparql-qa", config, str(out_dir))
+    assert (out_dir / "output.sparql-qa.round_0.json").exists()
+    assert not (out_dir / "notes.sparql-qa.round_0.json").exists()
