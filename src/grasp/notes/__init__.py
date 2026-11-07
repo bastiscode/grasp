@@ -37,7 +37,7 @@ from grasp.tasks.notes_from_traces import NotesFromTracesState
 from grasp.tasks.question_generation import QuestionGenerationState
 from grasp.tasks.sparql_qa.examples import SparqlQaSample
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
-from grasp.utils import link
+from grasp.utils import is_model_error, link
 
 
 def dump_config(config: BaseModel, out_dir: str) -> None:
@@ -341,6 +341,14 @@ def take_notes_from_exploration(
         )
 
         dump_json(output, os.path.join(out_dir, f"output.exploration.round_{r}.json"))
+
+        if is_model_error(output):
+            # a round lost to the model API is not a round without findings,
+            # so stop instead of continuing with fewer rounds
+            raise RuntimeError(
+                f"Exploration round {r} failed with a model error: "
+                f"{output['error']['content'][:500]}"
+            )
 
         if config.mode == "structural":
             for kg, kg_specific_notes in kg_notes.items():

@@ -13,15 +13,18 @@ from grasp.baselines.grisp.data import (
     extract_queries_and_variants_from_nl_iri,
     IGNORE_INDEX,
     extract_values_from_nl_iri,
+    get_candidate_id_maps,
     get_option_token_ids,
     merge_skeletons,
+    ordered_alternatives_with_interleave,
     search_alternatives,
+    selectable_obj_types,
     split_values,
     tokenize_messages,
     tokenize_option_answer,
 )
 from grasp.baselines.grisp.utils import load_sparql_parser
-from grasp.sparql.types import Alternative, ObjType, Selection
+from grasp.sparql.types import Alternative, ObjType, SelectResult, Selection
 
 SPARQL_PARSER = load_sparql_parser()
 
@@ -339,6 +342,105 @@ class TestSearchAlternatives:
             10,
             identifier_map,
         )
+
+
+# entity index holds e1 and the shared c1, class index holds c1 and c2;
+# identifiers are not normalized
+def class_manager() -> Mock:
+    indices = {"entities": {"e1", "c1"}, "classes": {"c1", "c2"}}
+    manager = Mock()
+    manager.index_names = ["classes", "entities", "properties"]
+    manager.normalize.side_effect = lambda identifier, index_name: (identifier, None)
+    manager.denormalize.side_effect = lambda identifier, index_name, *args: identifier
+    manager.check_identifier.side_effect = (
+        lambda identifier, index_name: identifier in indices.get(index_name, set())
+    )
+    return manager
+
+
+class TestClasses:
+    def test_classes_only_with_class_index(self):
+        manager = Mock()
+        manager.index_names = ["entities", "properties"]
+        assert selectable_obj_types(manager) == [ObjType.ENTITY, ObjType.PROPERTY]
+        manager.index_names = ["classes", "entities", "properties"]
+        assert selectable_obj_types(manager) == [
+            ObjType.ENTITY,
+            ObjType.CLASS,
+            ObjType.PROPERTY,
+        ]
+
+    def test_class_alternatives_in_entity_index_dropped(self):
+        manager = class_manager()
+        results = {
+            "entities": ["e1", "c1"],
+            "classes": ["c1", "c2"],
+        }
+        manager.search_index.side_effect = lambda index_name, *args: [
+            Alternative(identifier=identifier) for identifier in results[index_name]
+        ]
+        queries = {
+            ObjType.ENTITY: [("city", None)],
+            ObjType.CLASS: [("city", None)],
+        }
+        groups = search_alternatives(
+            manager,
+            [ObjType.ENTITY, ObjType.CLASS],
+            {ObjType.ENTITY: None, ObjType.CLASS: None},
+            queries,
+            0,
+            10,
+            Mock(),
+        )
+        assert [a.identifier for a in groups[ObjType.ENTITY]] == ["e1", "c1"]
+        assert [a.identifier for a in groups[ObjType.CLASS]] == ["c2"]
+
+    def test_constraint_executed_once_for_entities_and_classes(self):
+        manager = class_manager()
+        result = Mock(spec=SelectResult)
+        result.num_columns = 1
+        result.__len__ = Mock(return_value=3)
+        bindings = []
+        for identifier in ["e1", "c1", "c2"]:
+            binding = Mock()
+            binding.identifier.return_value = identifier
+            bindings.append([binding])
+        result.bindings.return_value = bindings
+        manager.execute_sparql.return_value = result
+
+        maps = get_candidate_id_maps(
+            manager,
+            [ObjType.ENTITY, ObjType.CLASS],
+            "SELECT ?x WHERE { ?x ?p ?o }",
+            None,
+            6.0,
+        )
+        assert manager.execute_sparql.call_count == 1
+        assert maps == {
+            ObjType.ENTITY: {"e1": [], "c1": []},
+            ObjType.CLASS: {"c2": []},
+        }
+
+    def test_interleave_round_robin_over_types(self):
+        groups = {
+            ObjType.PROPERTY: [Alternative(identifier="p1")],
+            ObjType.ENTITY: [Alternative(identifier=i) for i in ["e1", "e2"]],
+            ObjType.CLASS: [Alternative(identifier="c1")],
+        }
+        queries = {obj_type: [("x", None)] for obj_type in groups}
+
+        def order(interleave: bool) -> list[str]:
+            return [
+                alternative.identifier
+                for alternative, _, _ in ordered_alternatives_with_interleave(
+                    groups,
+                    queries,
+                    interleave=interleave,
+                )
+            ]
+
+        assert order(False) == ["e1", "e2", "c1", "p1"]
+        assert order(True) == ["e1", "c1", "p1", "e2"]
 
 
 # stand-in for a chat tokenizer: one token per role and per content word, with

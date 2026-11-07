@@ -344,6 +344,15 @@ def is_error(message: dict) -> bool:
     return message["role"] == "error"
 
 
+# error reasons of a generate() run caused by the model API, not by the agent
+MODEL_ERROR_REASONS = {"api", "timeout", "empty"}
+
+
+def is_model_error(output: dict) -> bool:
+    error = output.get("error")
+    return error is not None and error.get("reason") in MODEL_ERROR_REASONS
+
+
 def is_invalid_output(
     output: dict | None,
     none_output_invalid: bool = False,

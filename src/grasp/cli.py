@@ -58,6 +58,7 @@ from grasp.utils import (
     get_available_knowledge_graphs,
     get_index_dir,
     is_invalid_output,
+    is_model_error,
     link,
     parse_key_value_pairs,
 )
@@ -1045,6 +1046,13 @@ def show_grasp(args: argparse.Namespace) -> None:
         print(format_trace(trace, skip_system=args.skip_system))
 
 
+def dump_failed_trace(path: str, result: dict, timestamp: str) -> str:
+    stem, ext = os.path.splitext(path)
+    stamped = f"{stem}.{timestamp}.failed{ext}"
+    dump_json(result, stamped, indent=2)
+    return stamped
+
+
 def setup_grasp(args: argparse.Namespace) -> None:
     phase = args.phase
 
@@ -1133,6 +1141,15 @@ def setup_grasp(args: argparse.Namespace) -> None:
         )
 
         trace_path = os.path.join(trace_dir, "auto-setup.trace.json")
+        if is_model_error(result):
+            # no outputs and no latest link (which marks the phase as done),
+            # only the timestamped trace for inspection
+            stamped = dump_failed_trace(trace_path, result, timestamp)
+            logger.error(
+                f"Setup {p} phase failed with a model error, trace saved to {stamped}"
+            )
+            sys.exit(1)
+
         stamped = dump_latest(trace_path, result)
         logger.info(f"Saved setup {p} trace to {stamped} (latest: {trace_path})")
 
@@ -1214,6 +1231,13 @@ def shapes_setup_grasp(args: argparse.Namespace) -> None:
     os.makedirs(shapes_dir, exist_ok=True)
 
     trace_path = os.path.join(shapes_dir, "shapes-setup.trace.json")
+    if is_model_error(result):
+        stamped = dump_failed_trace(trace_path, result, timestamp)
+        logger.error(
+            f"Shapes setup failed with a model error, trace saved to {stamped}"
+        )
+        sys.exit(1)
+
     stamped = dump_latest(trace_path, result)
     logger.info(f"Saved setup trace to {stamped} (latest: {trace_path})")
 
