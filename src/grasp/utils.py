@@ -353,16 +353,24 @@ def is_model_error(output: dict) -> bool:
     return error is not None and error.get("reason") in MODEL_ERROR_REASONS
 
 
+# error reasons caused by the agent itself (no answer within the limits, stuck
+# in a loop), final outcomes rather than failures worth retrying
+AGENT_ERROR_REASONS = {"limit", "loop"}
+
+
 def is_invalid_output(
     output: dict | None,
     none_output_invalid: bool = False,
+    agent_error_invalid: bool = True,
 ) -> bool:
     if output is None:
         return True
 
-    has_error = output.get("error") is not None
-    if has_error:
-        return True
+    error = output.get("error")
+    if error is not None:
+        reason = error.get("reason") if isinstance(error, dict) else None
+        if agent_error_invalid or reason not in AGENT_ERROR_REASONS:
+            return True
 
     if none_output_invalid and output.get("output") is None:
         return True

@@ -302,6 +302,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Consider None outputs as invalid when retrying failed inputs",
     )
+    file_parser.add_argument(
+        "--retry-agent-errors",
+        action="store_true",
+        help="Also retry inputs where the agent itself failed (step or time "
+        "limit reached, stuck in a loop) when retrying failed inputs",
+    )
     add_task_arg(file_parser)
     add_overwrite_arg(file_parser)
 
@@ -873,6 +879,7 @@ def run_grasp(args: argparse.Namespace) -> None:
             if not args.retry_failed or not is_invalid_output(
                 output,
                 args.none_output_invalid,
+                args.retry_agent_errors,
             ):
                 continue
 
