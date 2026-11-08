@@ -91,6 +91,16 @@ def add_overwrite_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_start_round_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--start-round",
+        type=int,
+        default=0,
+        help="Resume an earlier run in the same output directory at this round, "
+        "starting from the state its previous round saved",
+    )
+
+
 def add_embedding_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group(
         "embedding index",
@@ -341,6 +351,7 @@ def parse_args() -> argparse.Namespace:
     )
     add_task_arg(note_samples_parser)
     add_overwrite_arg(note_samples_parser)
+    add_start_round_arg(note_samples_parser)
 
     note_interactions_parser = note_subparsers.add_parser(
         "outputs",
@@ -354,6 +365,7 @@ def parse_args() -> argparse.Namespace:
     )
     add_task_arg(note_interactions_parser)
     add_overwrite_arg(note_interactions_parser)
+    add_start_round_arg(note_interactions_parser)
 
     note_explore_parser = note_subparsers.add_parser(
         "explore",
@@ -367,6 +379,7 @@ def parse_args() -> argparse.Namespace:
         help="Save note taking results in this directory",
     )
     add_overwrite_arg(note_explore_parser)
+    add_start_round_arg(note_explore_parser)
 
     note_generate_parser = note_subparsers.add_parser(
         "generate-questions",
@@ -380,6 +393,7 @@ def parse_args() -> argparse.Namespace:
         help="Save generated samples in this directory",
     )
     add_overwrite_arg(note_generate_parser)
+    add_start_round_arg(note_generate_parser)
 
     # evaluate GRASP output
     eval_parser = subparsers.add_parser(
@@ -960,6 +974,7 @@ def take_grasp_notes(args: argparse.Namespace) -> None:
             args.output_dir,
             args.overwrite,
             args.log_level,
+            args.start_round,
         )
     elif note_cmd == "outputs":
         take_notes_from_outputs(
@@ -968,6 +983,7 @@ def take_grasp_notes(args: argparse.Namespace) -> None:
             args.output_dir,
             args.overwrite,
             args.log_level,
+            args.start_round,
         )
     elif note_cmd == "explore":
         take_notes_from_exploration(
@@ -975,6 +991,7 @@ def take_grasp_notes(args: argparse.Namespace) -> None:
             args.output_dir,
             args.overwrite,
             args.log_level,
+            args.start_round,
         )
     elif note_cmd == "generate-questions":
         generate_questions(
@@ -982,6 +999,7 @@ def take_grasp_notes(args: argparse.Namespace) -> None:
             args.output_dir,
             args.overwrite,
             args.log_level,
+            args.start_round,
         )
 
 
