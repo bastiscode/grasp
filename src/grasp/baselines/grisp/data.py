@@ -107,6 +107,26 @@ def display_obj_type(obj_type: ObjType) -> ObjType:
     return ObjType.ENTITY if obj_type == ObjType.CLASS else obj_type
 
 
+# entity and class alternatives are merged by score, so both indices need the
+# same type for their scores to be comparable
+def load_grisp_manager(config: KgConfig) -> KgManager:
+    manager = load_kg_manager(config)
+    types = {
+        name: kg_index.index.index_type
+        for name in ("entities", "classes")
+        if (kg_index := manager.indices.get(name)) is not None
+        and kg_index.index is not None
+    }
+    if len(set(types.values())) > 1:
+        raise ValueError(
+            f"GRISP needs the class index of {manager.kg} to have the same type "
+            f"as its entity index ({types['entities']}), got {types['classes']}; "
+            f"build a {types['entities']} class index and set it in the knowledge "
+            "graph config, or leave out the class index"
+        )
+    return manager
+
+
 # order in which a skeleton's natural-language placeholders are resolved. All
 # orders reduce to a fixed permutation of placeholder indices computed once per
 # skeleton (see Skeleton._compute_order); the resolution loop then fills them in
@@ -727,11 +747,16 @@ def ordered_alternatives_with_interleave(
             for alternative in alternative_groups.get(obj_type, [])
         ]
 
-    # entities and classes as one list, by rank; an identifier in both is a
-    # class, as in item extraction
+    # entities and classes as one list, by score if there are scores (without
+    # a query there are none), ties and the rest by rank; an identifier in both
+    # is a class, as in item extraction
+    merged = round_robin([bucket(ObjType.ENTITY), bucket(ObjType.CLASS)])
+    if all(alternative.score is not None for alternative, _, _ in merged):
+        merged.sort(key=lambda alternative: -(alternative[0].score or 0.0))
+
     entities: OrderedAlternatives = []
     positions: dict[str, int] = {}
-    for alternative in round_robin([bucket(ObjType.ENTITY), bucket(ObjType.CLASS)]):
+    for alternative in merged:
         identifier = alternative[0].identifier
         if identifier not in positions:
             positions[identifier] = len(entities)
@@ -1985,7 +2010,7 @@ def main(args: argparse.Namespace) -> None:
         kg=args.knowledge_graph,
         info=KgInfo(endpoint=args.endpoint) if args.endpoint else None,
     )
-    manager = load_kg_manager(cfg)
+    manager = load_grisp_manager(cfg)
     manager.set_info_retrieval(enable=args.info_retrieval)
 
     if os.path.exists(args.output_file) and not args.overwrite:

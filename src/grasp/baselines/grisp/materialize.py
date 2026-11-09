@@ -8,6 +8,7 @@ from universal_ml_utils.io import dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger, setup_logging
 
 from grasp.baselines.grisp.data import (
+    load_grisp_manager,
     GRISPMaterializedSample,
     GRISPSample,
     SelectionSample,
@@ -16,7 +17,7 @@ from grasp.baselines.grisp.data import (
     prepare_skeleton,
 )
 from grasp.configs import KgConfig, KgInfo
-from grasp.manager import KgManager, load_kg_manager
+from grasp.manager import KgManager
 from grasp.utils import get_available_knowledge_graphs
 
 
@@ -213,7 +214,7 @@ def main(args: argparse.Namespace) -> None:
         kg=args.knowledge_graph,
         info=KgInfo(endpoint=args.endpoint) if args.endpoint else None,
     )
-    manager = load_kg_manager(config)
+    manager = load_grisp_manager(config)
     manager.load_models()
 
     def materialize_train() -> Iterator[dict]:

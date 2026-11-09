@@ -1,5 +1,8 @@
 from unittest.mock import Mock
 
+import pytest
+
+import grasp.baselines.grisp.data as data_module
 from grasp.baselines.grisp.data import (
     BOI,
     BOR,
@@ -15,6 +18,7 @@ from grasp.baselines.grisp.data import (
     extract_values_from_nl_iri,
     format_alternatives,
     get_candidate_id_maps,
+    load_grisp_manager,
     get_option_token_ids,
     merge_skeletons,
     ordered_alternatives_with_interleave,
@@ -442,6 +446,39 @@ class TestClasses:
 
         assert order(False) == ["e1", "c1", "e2", "p1"]
         assert order(True) == ["e1", "p1", "c1", "e2"]
+
+    def test_entities_and_classes_merged_by_score(self):
+        def alternatives(scores: dict[str, float]) -> list[Alternative]:
+            return [Alternative(identifier=i, score=s) for i, s in scores.items()]
+
+        groups = {
+            ObjType.ENTITY: alternatives({"e1": 0.5, "e2": 0.5}),
+            ObjType.CLASS: alternatives({"c1": 1.0, "c2": 0.5}),
+        }
+        queries = {obj_type: [("x", None)] for obj_type in groups}
+        ordered = ordered_alternatives_with_interleave(groups, queries)
+        # ties keep the interleaved rank order
+        assert [a.identifier for a, _, _ in ordered] == ["c1", "e1", "e2", "c2"]
+
+    def test_index_types_must_match(self, monkeypatch):
+        def manager(entity_type: str, class_type: str) -> Mock:
+            manager = Mock()
+            manager.kg = "kg"
+            manager.indices = {
+                "entities": Mock(index=Mock(index_type=entity_type)),
+                "classes": Mock(index=Mock(index_type=class_type)),
+            }
+            return manager
+
+        monkeypatch.setattr(
+            data_module, "load_kg_manager", lambda config: manager("fuzzy", "fuzzy")
+        )
+        load_grisp_manager(Mock())
+        monkeypatch.setattr(
+            data_module, "load_kg_manager", lambda config: manager("fuzzy", "embedding")
+        )
+        with pytest.raises(ValueError, match="same type"):
+            load_grisp_manager(Mock())
 
     def test_identifier_in_both_groups_is_a_class(self):
         groups = {

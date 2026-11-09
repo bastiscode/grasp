@@ -27,6 +27,7 @@ from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import consume_generator, extract_field, map_generator
 
 from grasp.baselines.grisp.data import (
+    load_grisp_manager,
     ALT_LABELS,
     RESULT_UNAVAILABLE,
     RESULT_UNRESOLVED,
@@ -56,7 +57,7 @@ from grasp.baselines.grisp.utils import (
     skeleton_wording_key,
 )
 from grasp.configs import KgConfig
-from grasp.manager import KgManager, load_kg_manager
+from grasp.manager import KgManager
 from grasp.sparql.metrics import f1_score
 from grasp.sparql.types import AskResult, Selection, SelectResult
 from grasp.sparql.utils import (
@@ -1397,7 +1398,7 @@ def main(args: argparse.Namespace) -> None:
         f" (adapter disabled={selection_model.disable})"
     )
 
-    manager = load_kg_manager(run_cfg.knowledge_graph)
+    manager = load_grisp_manager(run_cfg.knowledge_graph)
     manager.load_models()
 
     parser = load_sparql_parser()
