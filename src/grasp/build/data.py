@@ -107,7 +107,7 @@ def get_data(
     if add_id_as_label == "auto":
         if index_name == "entities":
             add_id_as_label = "never"
-        elif index_name == "properties":
+        elif index_name in ("properties", "classes"):
             add_id_as_label = "always"
         elif index_name == "literals":
             add_id_as_label = "empty"
