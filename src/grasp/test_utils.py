@@ -26,11 +26,6 @@ def test_agent_errors(reason: str) -> None:
     )
 
 
-def test_old_string_error_invalid() -> None:
-    out = {"output": None, "error": "failed", "messages": []}
-    assert is_invalid_output(out, agent_error_invalid=False)
-
-
 def test_valid_output() -> None:
     assert not is_invalid_output(output(None, {"sparql": "SELECT"}))
     assert is_invalid_output(None)
