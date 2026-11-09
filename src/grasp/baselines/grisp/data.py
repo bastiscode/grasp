@@ -107,9 +107,8 @@ def supports_variants(manager: KgManager) -> dict[ObjType, bool]:
     }
 
 
-# whether the (normalized) identifier of an alternative from one index is also
-# in the entity index. Item extraction prefers entities over classes, so such
-# class alternatives are dropped to keep training targets and options consistent.
+# whether an alternative is also in the entity index; item extraction prefers
+# entities over classes, so such class alternatives are dropped
 def in_entity_index(manager: KgManager, identifier: str, obj_type: ObjType) -> bool:
     iri = manager.denormalize(identifier, obj_type.index_name)
     if iri is None:
