@@ -337,23 +337,6 @@ class Selection:
             and self.variant == other.variant
         )
 
-    def get_natural_sparql_label(self, full_identifier: bool = False) -> str:
-        identifier = self.alternative.get_identifier()
-        if not self.alternative.has_label():
-            return identifier
-
-        label: str = self.alternative.get_label()  # type: ignore
-
-        if full_identifier:
-            label += f" ({identifier})"
-        elif self.variant:
-            label += f" ({self.variant})"
-
-        if self.obj_type in (ObjType.ENTITY, ObjType.PROPERTY, ObjType.CLASS):
-            return f"<{label}>"
-        else:
-            return label
-
 
 def group_selections(
     selections: list[Selection],
