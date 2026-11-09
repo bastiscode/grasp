@@ -18,7 +18,7 @@ from grasp.manager.utils import (
     load_kg_info,
     merge_prefixes,
 )
-from grasp.sparql.types import STANDARD_INDICES, IRI_INDEX_NAMES, Binding, ObjType
+from grasp.sparql.types import IRI_INDEX_NAMES, Binding
 from grasp.sparql.utils import (
     get_basic_auth,
     get_qlever_endpoint,
@@ -91,13 +91,6 @@ def build_data_and_mapping(
         logger.info(f"Data already exists at {data_dir}, skipping build")
 
 
-# id types of the standard indices, custom indices are not checked
-INDEX_ID_TYPES = {
-    obj_type.index_name: "literal" if obj_type == ObjType.LITERAL else "uri"
-    for obj_type in STANDARD_INDICES
-}
-
-
 def get_data(
     kg: str,
     index_name: str,
@@ -154,6 +147,14 @@ def get_data(
     if index_sparql is None:
         raise ValueError(f'No index SPARQL found or set for "{index_name}" index')
 
+    # ids of the standard indices are checked, custom ones are not
+    if index_name == "literals":
+        id_type = "literal"
+    elif index_name in IRI_INDEX_NAMES:
+        id_type = "uri"
+    else:
+        id_type = None
+
     os.makedirs(index_dir, exist_ok=True)
     download_data(
         index_dir,
@@ -168,7 +169,7 @@ def get_data(
         add_id_as_label,
         data_file,
         overwrite,
-        INDEX_ID_TYPES.get(index_name),
+        id_type,
     )
     dump_text(index_sparql, os.path.join(index_dir, "index.sparql"))
     build_data_and_mapping(index_dir, logger, overwrite)
