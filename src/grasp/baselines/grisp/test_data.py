@@ -20,6 +20,7 @@ from grasp.baselines.grisp.data import (
     get_candidate_id_maps,
     load_grisp_manager,
     get_option_token_ids,
+    is_valid_item,
     merge_skeletons,
     ordered_alternatives_with_interleave,
     search_alternatives,
@@ -689,10 +690,21 @@ class PropertyOnlyManager:
 
 
 def test_properties_only_searched_at_predicate_position():
-    sparql = "SELECT ?s WHERE { ?s <http://ex.org/p> ?o . ?x ?y <http://ex.org/p> }"
+    sparql = (
+        "SELECT ?s WHERE { ?s <http://ex.org/p> ?o . ?x ?y <http://ex.org/p> . "
+        "?x ?y <http://other.org/x> }"
+    )
     _, items = extract_sparql_items(sparql, PropertyOnlyManager())  # type: ignore
     assert [(item.obj_type, item.position) for item in items] == [
         (ObjType.PROPERTY, Position.PROPERTY),
         (ObjType.PROPERTY, Position.OBJECT),
+        (ObjType.UNKNOWN, Position.OBJECT),
     ]
-    assert [searched_at_position(item) for item in items] == [True, False]
+    # unknown items are never searched, they are only valid if allowed
+    assert [searched_at_position(item) for item in items] == [True, False, False]
+    assert [is_valid_item(item) for item in items] == [True, False, False]
+    assert [is_valid_item(item, allow_unknown=True) for item in items] == [
+        True,
+        False,
+        True,
+    ]

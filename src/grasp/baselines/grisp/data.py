@@ -120,9 +120,19 @@ def searched_obj_types(
 
 
 def searched_at_position(item: Item) -> bool:
-    return item.obj_type not in SELECTABLE_OBJ_TYPES or item.obj_type in (
-        searched_obj_types(SELECTABLE_OBJ_TYPES, item.position)
-    )
+    return item.obj_type in searched_obj_types(SELECTABLE_OBJ_TYPES, item.position)
+
+
+# unindexed items need a label, unknown items must be allowed, and index
+# items must be searched at their position
+def is_valid_item(item: Item, allow_unknown: bool = False) -> bool:
+    if item.is_unindexed:
+        return item.has_label
+    elif item.is_unknown:
+        return allow_unknown
+    elif item.obj_type in SELECTABLE_OBJ_TYPES:
+        return searched_at_position(item)
+    return True
 
 
 # entity and class alternatives are merged by score, so both indices need the
@@ -1178,16 +1188,7 @@ def gold_sparql_to_nl_skeleton(
     sparql = manager.prettify(sparql)
     sparql, items = extract_sparql_items(sparql, manager)
 
-    # same validity rules as training data prep (main below): unindexed items
-    # must have a label, unknown items are not allowed, and indexed items
-    # must be searched at their position
-    invalid = [
-        item
-        for item in items
-        if (item.is_unindexed and not item.has_label)
-        or item.is_unknown
-        or not searched_at_position(item)
-    ]
+    invalid = [item for item in items if not is_valid_item(item)]
     if invalid:
         raise OracleSkeletonUnavailable(
             "invalid items: "
@@ -2053,11 +2054,7 @@ def main(args: argparse.Namespace) -> None:
             sparql, items = extract_sparql_items(sparql, manager)
 
             invalid_items = [
-                item
-                for item in items
-                if (item.is_unindexed and not item.has_label)
-                or (item.is_unknown and not args.allow_unknown)
-                or not searched_at_position(item)
+                item for item in items if not is_valid_item(item, args.allow_unknown)
             ]
             if invalid_items:
                 invalid += 1
