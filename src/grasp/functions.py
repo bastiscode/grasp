@@ -22,7 +22,7 @@ from grasp.sparql.types import (
     Selection,
     SelectResult,
     SelectRow,
-    iri_obj_types,
+    iri_indices,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -914,7 +914,7 @@ def update_known_from_index_iris(
     iris: list[str],
     manager: KgManager,
 ) -> None:
-    for obj_type in iri_obj_types():
+    for obj_type in iri_indices():
         update_known_from_iris(
             known,
             iris,
@@ -1150,7 +1150,7 @@ def update_known_from_selections(
     selections: list[Selection],
     manager: KgManager,
 ):
-    for obj_type in iri_obj_types():
+    for obj_type in iri_indices():
         update_known_from_alts(
             known,
             (sel.alternative for sel in selections if sel.obj_type == obj_type),
@@ -1320,91 +1320,7 @@ SELECT ?s ?p ?o WHERE {{
     result.truncate(MAX_RESULTS)
     more = not result.complete
 
-    # functions to get scores for properties and entities
-    prop_index = manager.try_get("properties")
-    ent_index = manager.try_get("entities")
-
-    def prop_rank(prop: Binding) -> int:
-        if not prop_index:
-            return 0
-
-        norm = manager.get_normalizer("properties").normalize(prop.identifier())
-        if norm is None:
-            return len(prop_index.data)
-
-        id = prop_index.data.id_from_identifier(norm[0])
-        if id is None:
-            return len(prop_index.data)
-
-        # lower id means more popular property
-        return id
-
-    def ent_rank(ent: Binding) -> int:
-        if not ent_index or not ent_index.data:
-            return 0
-
-        norm = manager.get_normalizer("entities").normalize(ent.identifier())
-        if norm is None:
-            return len(ent_index.data)
-
-        id = ent_index.data.id_from_identifier(norm[0])
-        if id is None:
-            return len(ent_index.data)
-
-        # lower id means more popular entity
-        return id
-
-    # make sure that rows presented are diverse and that
-    # we show the ones with popular properties or subjects / objects
-    # first
-    def sort_key(row: SelectRow) -> tuple[int, int]:
-        # property score
-        ps = prop_rank(row["p"])
-
-        # entity score
-        es = min(ent_rank(row["s"]), ent_rank(row["o"]))
-
-        # sort first by properties, then by subjects or objects
-        return ps, es
-
-    # rows are now sorted by popularity, lowest rank first
-    sorted_rows = sorted(
-        enumerate(result.rows()),
-        key=lambda item: sort_key(item[1]),
-    )
-
-    prop_norm = manager.get_normalizer("properties")
-    ent_norm = manager.get_normalizer("entities")
-
-    def normalize(bnd: Binding, normalizer: Normalizer) -> str:
-        identifier = bnd.identifier()
-        norm = normalizer.normalize(identifier)
-        return norm[0] if norm is not None else identifier
-
-    # now make sure that we show a diverse set of rows
-    # triples with unseen properties or subjects / objects
-    # should come first
-    probs_seen = set()
-    ents_seen = set()
-    permutation = []
-
-    for i, row in sorted_rows:
-        # normalize
-        s = normalize(row["s"], ent_norm)
-        p = normalize(row["p"], prop_norm)
-        o = normalize(row["o"], ent_norm)
-
-        key = (p in probs_seen, s in ents_seen or o in ents_seen)
-        permutation.append((key, i))
-
-        probs_seen.add(p)
-        ents_seen.add(s)
-        ents_seen.add(o)
-
-    # sort by number of seen columns
-    # since sort is stable, we keep relative popularity order from before
-    permutation = sorted(permutation, key=lambda item: item[0])
-    result.data = [result.data[i] for _, i in permutation]
+    result.data = [result.data[i] for i in order_triples(result.rows(), manager)]
 
     # apply pagination
     total_pages = max(1, math.ceil(len(result.data) / k))
@@ -1431,6 +1347,71 @@ SELECT ?s ?p ?o WHERE {{
         return f"No triples ({suffix})"
 
     return f"Triples ({suffix}):\n{table}"
+
+
+# popular and diverse triples first, by the ids of the indices
+# (lower id means more popular)
+def order_triples(rows: Iterable[SelectRow], manager: KgManager) -> list[int]:
+    def index_rank(bnd: Binding, index_names: list[str]) -> float:
+        for index_name in index_names:
+            norm = manager.normalize(bnd.identifier(), index_name)
+            data = manager.try_get_data(index_name)
+            if norm is None or data is None:
+                continue
+            id = data.id_from_identifier(norm[0])
+            if id is not None:
+                return id
+        return math.inf
+
+    def is_class(bnd: Binding) -> bool:
+        norm = manager.normalize(bnd.identifier(), "classes")
+        return norm is not None and manager.check_identifier(norm[0], "classes")
+
+    # sort by property, then by subject or object, which are ranked as
+    # entities or else as classes
+    def sort_key(row: SelectRow) -> tuple[float, float]:
+        ps = index_rank(row["p"], ["properties"])
+        es = min(
+            index_rank(row["s"], ["entities", "classes"]),
+            index_rank(row["o"], ["entities", "classes"]),
+        )
+        return ps, es
+
+    sorted_rows = sorted(enumerate(rows), key=lambda item: sort_key(item[1]))
+
+    prop_norm = manager.get_normalizer("properties")
+    ent_norm = manager.get_normalizer("entities")
+
+    def normalize(bnd: Binding, normalizer: Normalizer) -> str:
+        identifier = bnd.identifier()
+        norm = normalizer.normalize(identifier)
+        return norm[0] if norm is not None else identifier
+
+    # rows with an unseen property or class come first (e.g., all classes
+    # of an entity), then rows with unseen subjects or objects
+    props_seen = set()
+    ents_seen = set()
+    classes_seen = set()
+    permutation = []
+
+    for i, row in sorted_rows:
+        s = normalize(row["s"], ent_norm)
+        p = normalize(row["p"], prop_norm)
+        o = normalize(row["o"], ent_norm)
+        classes = {ent for ent, var in ((s, "s"), (o, "o")) if is_class(row[var])}
+
+        new = p not in props_seen or not classes <= classes_seen
+        key = (not new, s in ents_seen or o in ents_seen)
+        permutation.append((key, i))
+
+        props_seen.add(p)
+        ents_seen.add(s)
+        ents_seen.add(o)
+        classes_seen.update(classes)
+
+    # stable sort keeps the popularity order within each group
+    permutation.sort(key=lambda item: item[0])
+    return [i for _, i in permutation]
 
 
 def search_with_constraints(

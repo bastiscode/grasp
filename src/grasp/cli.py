@@ -50,7 +50,7 @@ from grasp.search_params import (
     EmbeddingBuildParams,
     EmbeddingSearchParams,
 )
-from grasp.sparql.types import INDEX_NAMES
+from grasp.sparql.types import STANDARD_INDEX_NAMES
 from grasp.server import serve
 from grasp.shapes import load_profiles, save_profiles
 from grasp.tasks import Task, get_task
@@ -573,7 +573,7 @@ def parse_args() -> argparse.Namespace:
     )
     data_parser.add_argument(
         "index",
-        choices=INDEX_NAMES,
+        choices=STANDARD_INDEX_NAMES,
         help="Index to get data for",
     )
     data_parser.add_argument(
@@ -636,7 +636,7 @@ def parse_args() -> argparse.Namespace:
     )
     merge_parser.add_argument(
         "index",
-        choices=INDEX_NAMES,
+        choices=STANDARD_INDEX_NAMES,
         help="Index to merge data for",
     )
     merge_parser.add_argument(
@@ -659,7 +659,7 @@ def parse_args() -> argparse.Namespace:
     )
     index_parser.add_argument(
         "index",
-        choices=INDEX_NAMES + ["shapes"],
+        choices=STANDARD_INDEX_NAMES + ["shapes"],
         help="Index to build",
     )
     index_parser.add_argument(
@@ -734,9 +734,9 @@ def parse_args() -> argparse.Namespace:
     )
     setup_parser.add_argument(
         "phase",
-        choices=["standard", "info", *INDEX_NAMES, "indices", "shapes"],
+        choices=["standard", "info", *STANDARD_INDEX_NAMES, "indices", "shapes"],
         help="Setup phase to run: 'standard' runs info and all index phases "
-        f"({', '.join(INDEX_NAMES)}), 'indices' only the index phases",
+        f"({', '.join(STANDARD_INDEX_NAMES)}), 'indices' only the index phases",
     )
     setup_parser.add_argument(
         "config",
@@ -748,7 +748,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Notes passed to the setup agent (single-phase runs only: "
-        f"info, {', '.join(INDEX_NAMES)}, shapes)",
+        f"info, {', '.join(STANDARD_INDEX_NAMES)}, shapes)",
     )
 
     # visualize trace from GRASP output
@@ -1099,22 +1099,22 @@ def setup_grasp(args: argparse.Namespace) -> None:
         logger.error(
             f"--notes is not supported for phase '{phase}'; "
             "it is only supported for single-phase runs "
-            f"(info, {', '.join(INDEX_NAMES)}, shapes)"
+            f"(info, {', '.join(STANDARD_INDEX_NAMES)}, shapes)"
         )
         return
 
     phase_note = args.notes if not multi_phase else None
 
     selected = {
-        "standard": {"info", *INDEX_NAMES},
-        "indices": set(INDEX_NAMES),
+        "standard": {"info", *STANDARD_INDEX_NAMES},
+        "indices": set(STANDARD_INDEX_NAMES),
         "info": {"info"},
-        **{name: {name} for name in INDEX_NAMES},
+        **{name: {name} for name in STANDARD_INDEX_NAMES},
     }[phase]
 
     all_phases = [("info", {"phase": "info", "notes": phase_note})] + [
         (name, {"phase": "index", "name": name, "notes": phase_note})
-        for name in INDEX_NAMES
+        for name in STANDARD_INDEX_NAMES
     ]
     phases = [payload for tag, payload in all_phases if tag in selected]
 

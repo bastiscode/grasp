@@ -18,7 +18,7 @@ from grasp.manager.utils import (
     load_kg_info,
     merge_prefixes,
 )
-from grasp.sparql.types import INDEX_OBJ_TYPES, IRI_INDEX_NAMES, Binding, ObjType
+from grasp.sparql.types import STANDARD_INDICES, IRI_INDEX_NAMES, Binding, ObjType
 from grasp.sparql.utils import (
     get_basic_auth,
     get_qlever_endpoint,
@@ -94,7 +94,7 @@ def build_data_and_mapping(
 # id types of the standard indices, custom indices are not checked
 INDEX_ID_TYPES = {
     obj_type.index_name: "literal" if obj_type == ObjType.LITERAL else "uri"
-    for obj_type in INDEX_OBJ_TYPES
+    for obj_type in STANDARD_INDICES
 }
 
 

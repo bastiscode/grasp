@@ -4,7 +4,7 @@ from itertools import chain
 
 from grasp.manager import KgManager
 from grasp.manager.utils import find_obj_type_from_prefixes, get_common_sparql_prefixes
-from grasp.sparql.types import Alternative, ObjType, Selection, iri_obj_types
+from grasp.sparql.types import Alternative, ObjType, Selection, iri_indices
 from grasp.sparql.utils import (
     find_all,
     infer_position_from_prefix,
@@ -129,7 +129,7 @@ def get_item(
     except Exception:
         position = None
 
-    obj_types = iri_obj_types(position)
+    obj_types = iri_indices(position)
 
     # check whether the iri is a valid entity, class, or property
     for obj_type in obj_types:

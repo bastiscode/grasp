@@ -5,7 +5,7 @@ from grasp.functions import (
     parse_iri_or_literal,
 )
 from grasp.manager import KgManager
-from grasp.sparql.types import iri_obj_types
+from grasp.sparql.types import iri_indices
 from grasp.tasks.exploration.functions import (
     note_function_definitions as base_note_function_definitions,
 )
@@ -141,7 +141,7 @@ def show_explored(
 
 
 def seed_index_name(iri: str, manager: KgManager) -> str:
-    for obj_type in iri_obj_types():
+    for obj_type in iri_indices():
         norm = manager.normalize(iri, obj_type.index_name)
         if norm is not None and manager.check_identifier(norm[0], obj_type.index_name):
             return obj_type.index_name

@@ -47,21 +47,21 @@ class Position(StrEnum):
         return self.value
 
 
-# standard indices in setup order, add new ones here and to IRI_OBJ_TYPES
-INDEX_OBJ_TYPES = [ObjType.PROPERTY, ObjType.CLASS, ObjType.ENTITY, ObjType.LITERAL]
-INDEX_NAMES = [obj_type.index_name for obj_type in INDEX_OBJ_TYPES]
+# standard indices in setup order, add new ones here and to IRI_INDICES
+STANDARD_INDICES = [ObjType.PROPERTY, ObjType.CLASS, ObjType.ENTITY, ObjType.LITERAL]
+STANDARD_INDEX_NAMES = [obj_type.index_name for obj_type in STANDARD_INDICES]
 
 # standard indices of IRIs in lookup order, classes before entities since
 # entity indices often contain classes too
-IRI_OBJ_TYPES = [ObjType.CLASS, ObjType.ENTITY, ObjType.PROPERTY]
-IRI_INDEX_NAMES = [obj_type.index_name for obj_type in IRI_OBJ_TYPES]
+IRI_INDICES = [ObjType.CLASS, ObjType.ENTITY, ObjType.PROPERTY]
+IRI_INDEX_NAMES = [obj_type.index_name for obj_type in IRI_INDICES]
 
 
 # properties first at the predicate position
-def iri_obj_types(position: Position | None = None) -> list[ObjType]:
+def iri_indices(position: Position | None = None) -> list[ObjType]:
     if position == Position.PROPERTY:
-        return sorted(IRI_OBJ_TYPES, key=lambda obj_type: obj_type != ObjType.PROPERTY)
-    return list(IRI_OBJ_TYPES)
+        return sorted(IRI_INDICES, key=lambda obj_type: obj_type != ObjType.PROPERTY)
+    return list(IRI_INDICES)
 
 
 @dataclass
