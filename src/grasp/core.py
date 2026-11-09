@@ -1,4 +1,5 @@
 import json
+import math
 import time
 import traceback
 import uuid
@@ -37,6 +38,15 @@ from grasp.utils import (
 )
 
 
+def format_duration(seconds: int) -> str:
+    minutes, seconds = divmod(seconds, 60)
+    if minutes == 0:
+        return f"{seconds}s"
+    elif seconds == 0:
+        return f"{minutes:,}m"
+    return f"{minutes:,}m {seconds}s"
+
+
 @dataclass
 class Limits:
     max_steps: int
@@ -56,15 +66,18 @@ class Limits:
         )
 
     def format(self) -> str:
-        remaining = [
-            f"{max(0, self.max_steps - self.steps):,} of {self.max_steps:,} steps"
+        steps = min(self.steps, self.max_steps)
+        parts = [
+            f"{steps:,} of {self.max_steps:,} steps ({self.max_steps - steps:,} left)"
         ]
         if self.max_time is not None:
-            remaining.append(
-                f"{max(0, self.max_time - self.elapsed):,.0f} "
-                f"of {self.max_time:,.0f} seconds"
+            used = min(self.elapsed, self.max_time)
+            parts.append(
+                f"{format_duration(math.floor(used))} of "
+                f"{format_duration(math.ceil(self.max_time))} "
+                f"({format_duration(math.ceil(self.max_time - used))} left)"
             )
-        return f"Remaining: {', '.join(remaining)}."
+        return f"Used {', '.join(parts)}."
 
 
 def system_instructions(

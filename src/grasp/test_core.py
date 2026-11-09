@@ -5,7 +5,7 @@ import pytest
 
 import grasp.core as core
 from grasp.configs import GraspConfig
-from grasp.core import Limits, generate
+from grasp.core import Limits, format_duration, generate
 from grasp.model import Model, Response, ToolCall
 from grasp.tasks.base import GraspTask
 
@@ -100,11 +100,23 @@ def test_limits():
     assert not limits.reached
     limits.steps = 3
     assert limits.reached
-    assert limits.format() == "Remaining: 0 of 3 steps."
+    assert limits.format() == "Used 3 of 3 steps (0 left)."
 
     limits = Limits(10, 5.0, start=time.monotonic() - 10)
     assert limits.reached
-    assert limits.format() == "Remaining: 10 of 10 steps, 0 of 5 seconds."
+    assert limits.format() == "Used 0 of 10 steps (10 left), 5s of 5s (0s left)."
+
+    limits = Limits(10, 600.0, start=time.monotonic() - 125)
+    assert (
+        limits.format() == "Used 0 of 10 steps (10 left), 2m 5s of 10m (7m 55s left)."
+    )
+
+
+def test_format_duration():
+    assert format_duration(0) == "0s"
+    assert format_duration(59) == "59s"
+    assert format_duration(60) == "1m"
+    assert format_duration(580) == "9m 40s"
 
 
 def test_step_limit_restricts_last_step():
@@ -146,7 +158,7 @@ def test_show_limits(show: bool):
         for tool_call in message["content"]["tool_calls"]
     ]
     assert len(results) == 3
-    assert all(("Remaining:" in result) == show for result in results)
+    assert all(("Used " in result) == show for result in results)
     if show:
-        assert results[0].endswith("Remaining: 1 of 2 steps.")
-        assert results[-1].endswith("Remaining: 0 of 2 steps.")
+        assert results[0].endswith("Used 1 of 2 steps (1 left).")
+        assert results[-1].endswith("Used 2 of 2 steps (0 left).")
