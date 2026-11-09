@@ -215,6 +215,7 @@ class Alternative:
         aliases: list[str] | None = None,
         info: list[str] | None = None,
         matched_label: str | None = None,
+        score: float | None = None,
     ) -> None:
         self.identifier = identifier
         self.short_identifier = short_identifier
@@ -223,6 +224,8 @@ class Alternative:
         self.variants = variants
         self.info = info
         self.matched_label = matched_label
+        # search score, only comparable within one index type
+        self.score = score
 
     def __hash__(self) -> int:
         # hash identifier

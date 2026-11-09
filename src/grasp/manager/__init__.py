@@ -574,6 +574,7 @@ class KgManager:
         normalizer = self.get_normalizer(index_name)
 
         field_map = {}
+        score_map = {}
 
         if query is None:
             if identifier_map is None:
@@ -596,11 +597,12 @@ class KgManager:
                         allow_ids.add(id)
 
             identifiers = []
-            for id, field, _ in index.search(k=k, allow_ids=allow_ids, **kwargs):
+            for id, field, score in index.search(k=k, allow_ids=allow_ids, **kwargs):
                 identifier = data.identifier(id)
                 assert identifier is not None, "should not happen"
                 identifiers.append(identifier)
                 field_map[identifier] = data.field(id, field)
+                score_map[identifier] = score
 
         info_sparql = self.get_info_sparql(index_name)
         infos = self.get_info_for_identifiers(identifiers, info_sparql, data)
@@ -620,6 +622,7 @@ class KgManager:
                 variants,
                 matched_via,
             )
+            alternative.score = score_map.get(identifier)
             alternatives.append(alternative)
 
         end = time.monotonic()
