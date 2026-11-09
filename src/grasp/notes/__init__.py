@@ -42,8 +42,7 @@ from grasp.utils import is_model_error, link
 
 
 def check_model_error(output: dict, what: str) -> None:
-    # a round lost to the model API is not a round without findings, so stop
-    # instead of continuing with fewer rounds
+    # a round lost to a model error is not a round without findings
     if is_model_error(output):
         raise RuntimeError(
             f"{what} failed with a model error: {output['error']['content'][:500]}"

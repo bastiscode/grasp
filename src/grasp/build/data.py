@@ -312,9 +312,8 @@ def prepare_items(
     for num, binding in enumerate(bindings, start=1):
         id_binding, value_binding, tags = parse_binding(binding, parser)
 
-        # drop tags the search index does not know (e.g. "alias" from a
-        # setup-written index query); an untagged value is a non-main value,
-        # which is what such tags mean anyway
+        # drop tags unknown to the search index (e.g. "alias"), the value
+        # is then indexed as a non-main value
         new_unknown = {tag for tag in tags if tag and tag not in FIELD_TAGS}
         if logger and new_unknown - unknown_tags:
             logger.warning(
