@@ -126,12 +126,15 @@ def get_item(
 
     try:
         position = infer_position_from_prefix(prefix, manager.sparql_parser)
-        if position in [Position.SUBJECT, Position.OBJECT]:
-            obj_types = [ObjType.ENTITY, ObjType.CLASS]
-        else:
-            obj_types = [ObjType.PROPERTY]
     except Exception:
-        obj_types = [ObjType.PROPERTY, ObjType.ENTITY, ObjType.CLASS]
+        position = None
+
+    # all IRI indices, properties first at the predicate position, otherwise
+    # classes before entities since entity indices often contain classes too
+    if position == Position.PROPERTY:
+        obj_types = [ObjType.PROPERTY, ObjType.CLASS, ObjType.ENTITY]
+    else:
+        obj_types = [ObjType.CLASS, ObjType.ENTITY, ObjType.PROPERTY]
 
     # check whether the iri is a valid entity, class, or property
     for obj_type in obj_types:

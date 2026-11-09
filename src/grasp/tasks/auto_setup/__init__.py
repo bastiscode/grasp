@@ -280,6 +280,9 @@ and repeat, otherwise stop."""
             "returns the expected results across the board.",
             f"Do not use different scores for the same id in the {name} index SPARQL, as the ids are "
             "required to be returned in contiguous blocks for the indexing process.",
+            f"The ids of the {name} index must be "
+            + ("literals" if name == "literals" else "IRIs")
+            + ", rows with other ids (e.g., blank nodes) are skipped when building the index.",
         ]
 
         others = other_index_setups(self.managers[0], name)

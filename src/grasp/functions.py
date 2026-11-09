@@ -362,20 +362,12 @@ search_property_of_entity(kg="wikidata", entity="wd:Q937", query="birth", page=1
                 },
             )
 
-        object_indices = []
-        if has_entity_index:
-            object_indices.append("entities")
-        if has_literal_index:
-            object_indices.append("literals")
-
-        if object_indices:
-            obj_indices = " or ".join(f'"{idx}"' for idx in object_indices)
-
+        if index_names:
             fns.append(
                 {
                     "name": "search_object_of_property",
                     "description": f"""\
-Search for {obj_indices} at the object position for a given \
+Search one of the indices for items at the object position of a given \
 property in the knowledge graph. At most {search_k} results are returned \
 per page (use pagination up to page {search_max_pages} to see more \
 results).
@@ -405,7 +397,7 @@ query="restaurant", index="literals", page=1)""",
                             },
                             "index": {
                                 "type": "string",
-                                "enum": object_indices,
+                                "enum": index_names,
                                 "description": "Which index to search for the property's objects",
                             },
                             "page": page_prop,
@@ -690,33 +682,14 @@ def call_function(
 
     elif fn_name == "search_object_of_property":
         manager, _ = find_manager(managers, fn_args["kg"])
-        has_entities = "entities" in manager.indices
-        has_literals = "literals" in manager.indices
-        requested = fn_args.get("index")
-        if has_entities and has_literals:
-            if requested is None:
-                raise FunctionCallException(
-                    "index must be 'entities' or 'literals' when both indices "
-                    "are available for this knowledge graph"
-                )
-            if requested not in ("entities", "literals"):
-                raise FunctionCallException(
-                    f"index must be 'entities' or 'literals', got {requested!r}"
-                )
-            target_index = requested
-        elif has_entities:
-            target_index = "entities"
-        elif has_literals:
-            target_index = "literals"
-        else:
+        if fn_args["index"] not in manager.indices:
             raise FunctionCallException(
-                f"Knowledge graph {fn_args['kg']} has neither an entity nor a "
-                f"literal index — cannot search objects of a property"
+                f"Knowledge graph {fn_args['kg']} has no {fn_args['index']} index"
             )
         return search_with_constraints(
             managers,
             fn_args["kg"],
-            target_index,
+            fn_args["index"],
             "object",
             fn_args["query"],
             {"property": fn_args["property"]},
