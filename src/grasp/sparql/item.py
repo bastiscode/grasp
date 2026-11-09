@@ -54,10 +54,6 @@ class Item:
         return self.alternative.has_label()
 
     @property
-    def is_entity_or_property(self) -> bool:
-        return self.obj_type == ObjType.ENTITY or self.obj_type == ObjType.PROPERTY
-
-    @property
     def selection(self) -> Selection:
         return Selection(self.alternative, self.obj_type, self.variant)
 
