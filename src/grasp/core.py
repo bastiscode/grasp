@@ -39,11 +39,10 @@ from grasp.utils import (
 
 @dataclass
 class Limits:
-    """Step and time limits of a run; steps count model responses only."""
-
     max_steps: int
     max_time: float | None = None
     start: float = field(default_factory=time.monotonic)
+    # model responses only
     steps: int = 0
 
     @property
