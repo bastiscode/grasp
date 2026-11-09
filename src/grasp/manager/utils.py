@@ -19,7 +19,7 @@ from universal_ml_utils.io import load_json, load_text
 from grasp.configs import KgInfo, NamedIndexConfig
 from grasp.manager.normalizer import Normalizer
 from grasp.search_params import SearchParams, resolve_index_search_params
-from grasp.sparql.types import ObjType
+from grasp.sparql.types import INDEX_NAMES, ObjType
 from grasp.sparql.utils import find_longest_prefix
 from grasp.utils import get_index_dir
 
@@ -63,7 +63,7 @@ def get_auto_index_type(
         return "fuzzy"
     elif index_name == "properties":
         return "embedding"
-    elif index_name in ("literals", "classes"):
+    elif index_name in INDEX_NAMES:
         if data is not None:
             return get_index_type_from_data(data)
         else:

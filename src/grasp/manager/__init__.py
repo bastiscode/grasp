@@ -44,6 +44,7 @@ from grasp.sparql.types import (
     Selection,
     SelectResult,
     SelectRow,
+    INDEX_NAMES,
     group_selections,
     iri_obj_types,
 )
@@ -865,11 +866,8 @@ class KgManager:
 
     def format_selections(self, selections: list[Selection]) -> str:
         rename_obj_type = [
-            (ObjType.ENTITY, "entities"),
-            (ObjType.CLASS, "classes"),
-            (ObjType.PROPERTY, "properties"),
-            (ObjType.UNINDEXED, "other (non-indexed) items"),
-        ]
+            (obj_type, obj_type.index_name) for obj_type in iri_obj_types()
+        ] + [(ObjType.UNINDEXED, "other (non-indexed) items")]
 
         grouped = group_selections(selections)
 
@@ -950,12 +948,8 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
         logger.info("Skipping loading of indices")
         return KgManager(cfg.kg, indices, **info.model_dump())
 
-    for name, index_cfg in [
-        ("entities", cfg.entities),
-        ("properties", cfg.properties),
-        ("literals", cfg.literals),
-        ("classes", cfg.classes),
-    ]:
+    for name in INDEX_NAMES:
+        index_cfg = getattr(cfg, name)
         if index_cfg is None:
             continue
 

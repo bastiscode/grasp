@@ -15,7 +15,7 @@ from grasp.manager.utils import (
 )
 from grasp.model import Message
 from grasp.sparql.item import extract_sparql_items
-from grasp.sparql.types import ObjType
+from grasp.sparql.types import IRI_INDEX_NAMES, iri_obj_types
 from grasp.sparql.utils import (
     get_qlever_endpoint,
     load_class_index_sparql,
@@ -76,7 +76,7 @@ def update_known_from_sparql(sparql: str, known: set[str], manager: KgManager) -
         # temporarily disable info retrieval
         manager.set_info_retrieval(enable=False)
         _, items = extract_sparql_items(sparql, manager)
-        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY, ObjType.CLASS]:
+        for obj_type in iri_obj_types():
             normalizer = manager.get_normalizer(obj_type.index_name)
             update_known_from_alts(
                 known,
@@ -294,7 +294,7 @@ and repeat, otherwise stop."""
                 "also picks up properties and classes."
             )
 
-        if name in ("entities", "properties", "classes"):
+        if name in IRI_INDEX_NAMES:
             rules.append(
                 f"To include {name} in the index and make them searchable even if they do not have "
                 "have any associated literals, use their IRIs as values by binding ?id to ?value directly "

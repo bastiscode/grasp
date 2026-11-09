@@ -50,6 +50,7 @@ from grasp.search_params import (
     EmbeddingBuildParams,
     EmbeddingSearchParams,
 )
+from grasp.sparql.types import INDEX_NAMES
 from grasp.server import serve
 from grasp.shapes import load_profiles, save_profiles
 from grasp.tasks import Task, get_task
@@ -572,7 +573,7 @@ def parse_args() -> argparse.Namespace:
     )
     data_parser.add_argument(
         "index",
-        choices=["properties", "classes", "entities", "literals"],
+        choices=INDEX_NAMES,
         help="Index to get data for",
     )
     data_parser.add_argument(
@@ -635,7 +636,7 @@ def parse_args() -> argparse.Namespace:
     )
     merge_parser.add_argument(
         "index",
-        choices=["properties", "classes", "entities", "literals"],
+        choices=INDEX_NAMES,
         help="Index to merge data for",
     )
     merge_parser.add_argument(
@@ -658,7 +659,7 @@ def parse_args() -> argparse.Namespace:
     )
     index_parser.add_argument(
         "index",
-        choices=["properties", "classes", "entities", "literals", "shapes"],
+        choices=INDEX_NAMES + ["shapes"],
         help="Index to build",
     )
     index_parser.add_argument(
@@ -733,18 +734,9 @@ def parse_args() -> argparse.Namespace:
     )
     setup_parser.add_argument(
         "phase",
-        choices=[
-            "standard",
-            "info",
-            "properties",
-            "classes",
-            "entities",
-            "literals",
-            "indices",
-            "shapes",
-        ],
-        help="Setup phase to run: 'standard' runs info+indices "
-        "(properties+classes+entities+literals); 'indices' runs the four index phases only",
+        choices=["standard", "info", *INDEX_NAMES, "indices", "shapes"],
+        help="Setup phase to run: 'standard' runs info and all index phases "
+        f"({', '.join(INDEX_NAMES)}), 'indices' only the index phases",
     )
     setup_parser.add_argument(
         "config",
@@ -755,7 +747,8 @@ def parse_args() -> argparse.Namespace:
         "--notes",
         type=str,
         default=None,
-        help="Notes passed to the setup agent (single-phase runs only: info, properties, classes, entities, literals, shapes)",
+        help="Notes passed to the setup agent (single-phase runs only: "
+        f"info, {', '.join(INDEX_NAMES)}, shapes)",
     )
 
     # visualize trace from GRASP output
@@ -1106,28 +1099,22 @@ def setup_grasp(args: argparse.Namespace) -> None:
         logger.error(
             f"--notes is not supported for phase '{phase}'; "
             "it is only supported for single-phase runs "
-            "(info, properties, classes, entities, literals, shapes)"
+            f"(info, {', '.join(INDEX_NAMES)}, shapes)"
         )
         return
 
     phase_note = args.notes if not multi_phase else None
 
     selected = {
-        "standard": {"info", "properties", "classes", "entities", "literals"},
-        "indices": {"properties", "classes", "entities", "literals"},
+        "standard": {"info", *INDEX_NAMES},
+        "indices": set(INDEX_NAMES),
         "info": {"info"},
-        "entities": {"entities"},
-        "properties": {"properties"},
-        "literals": {"literals"},
-        "classes": {"classes"},
+        **{name: {name} for name in INDEX_NAMES},
     }[phase]
 
-    all_phases = [
-        ("info", {"phase": "info", "notes": phase_note}),
-        ("properties", {"phase": "index", "name": "properties", "notes": phase_note}),
-        ("classes", {"phase": "index", "name": "classes", "notes": phase_note}),
-        ("entities", {"phase": "index", "name": "entities", "notes": phase_note}),
-        ("literals", {"phase": "index", "name": "literals", "notes": phase_note}),
+    all_phases = [("info", {"phase": "info", "notes": phase_note})] + [
+        (name, {"phase": "index", "name": name, "notes": phase_note})
+        for name in INDEX_NAMES
     ]
     phases = [payload for tag, payload in all_phases if tag in selected]
 

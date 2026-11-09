@@ -904,12 +904,12 @@ def get_class_shape(
         )
 
     if known is not None:
-        update_known_from_shape_iris(known, collect_iris(view, manager), manager)
+        update_known_from_index_iris(known, collect_iris(view, manager), manager)
 
     return render_shape(profile, view, manager, shape_config)
 
 
-def update_known_from_shape_iris(
+def update_known_from_index_iris(
     known: set[str],
     iris: list[str],
     manager: KgManager,
@@ -1136,21 +1136,13 @@ def update_known_from_alts(
             known.add(denorm)
 
 
-def update_known_from_rows(
-    known: set[str],
-    rows: Iterable[SelectRow],
-    normalizer: Normalizer | None = None,
-):
-    update_known_from_iris(
-        known,
-        (
-            binding.identifier()
-            for row in rows
-            for binding in row.values()
-            if binding.typ == "uri"
-        ),
-        normalizer,
-    )
+def row_iris(rows: Iterable[SelectRow]) -> list[str]:
+    return [
+        binding.identifier()
+        for row in rows
+        for binding in row.values()
+        if binding.typ == "uri"
+    ]
 
 
 def update_known_from_selections(
@@ -1223,11 +1215,7 @@ def execute_sparql(
             )
         )
 
-        # entity mapping
-        update_known_from_rows(known, rows, manager.get_normalizer("entities"))
-
-        # property mapping
-        update_known_from_rows(known, rows, manager.get_normalizer("properties"))
+        update_known_from_index_iris(known, row_iris(rows), manager)
 
     formatted = manager.format_sparql_result(
         result,
@@ -1425,8 +1413,7 @@ SELECT ?s ?p ?o WHERE {{
     result.data = result.data[start:end]
 
     # update known
-    update_known_from_rows(known, result.rows(), ent_norm)
-    update_known_from_rows(known, result.rows(), prop_norm)
+    update_known_from_index_iris(known, row_iris(result.rows()), manager)
 
     table = manager.format_sparql_result(
         result,

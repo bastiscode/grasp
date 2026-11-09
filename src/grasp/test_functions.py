@@ -1,6 +1,10 @@
-from grasp.functions import update_known_from_selections
+from grasp.functions import (
+    row_iris,
+    update_known_from_index_iris,
+    update_known_from_selections,
+)
 from grasp.manager.normalizer import Normalizer
-from grasp.sparql.types import Alternative, ObjType, Selection
+from grasp.sparql.types import Alternative, Binding, ObjType, Selection
 
 
 class VariantNormalizer(Normalizer):
@@ -8,9 +12,20 @@ class VariantNormalizer(Normalizer):
         return f"{iri}/{variant}"
 
 
+class PropertyNormalizer(Normalizer):
+    def normalize(self, iri: str) -> tuple[str, str | None] | None:
+        if not iri.startswith("ex:direct/"):
+            return None
+        return "ex:" + iri.removeprefix("ex:direct/"), "direct"
+
+
 class Manager:
     def get_normalizer(self, name: str) -> Normalizer:
-        return VariantNormalizer() if name == "classes" else Normalizer()
+        if name == "classes":
+            return VariantNormalizer()
+        elif name == "properties":
+            return PropertyNormalizer()
+        return Normalizer()
 
 
 def test_known_from_selections():
@@ -22,3 +37,13 @@ def test_known_from_selections():
     known = set()
     update_known_from_selections(known, selections, Manager())  # type: ignore
     assert known == {"ex:e", "ex:c", "ex:c/v", "ex:p"}
+
+
+def test_known_from_rows_uses_all_indices():
+    rows = (
+        {"p": Binding("uri", "ex:direct/p"), "v": Binding("literal", "x")}
+        for _ in range(2)
+    )
+    known = set()
+    update_known_from_index_iris(known, row_iris(rows), Manager())  # type: ignore
+    assert known == {"ex:direct/p", "ex:p"}
