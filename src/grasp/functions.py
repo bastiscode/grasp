@@ -941,8 +941,8 @@ def update_known_from_shape_iris(
     iris: list[str],
     manager: KgManager,
 ) -> None:
-    update_known_from_iris(known, iris, manager.get_normalizer("entities"))
-    update_known_from_iris(known, iris, manager.get_normalizer("properties"))
+    for index_name in ("entities", "classes", "properties"):
+        update_known_from_iris(known, iris, manager.get_normalizer(index_name))
 
 
 def validate_page(page: int, max_pages: int | None = None) -> None:
@@ -1176,50 +1176,17 @@ def update_known_from_rows(
     )
 
 
-def update_known_from_alternatives(
-    known: set[str],
-    alternatives: dict[ObjType, list[Alternative]],
-    manager: KgManager,
-):
-    # entities
-    update_known_from_alts(
-        known,
-        alternatives.get(ObjType.ENTITY, []),
-        manager.get_normalizer(ObjType.ENTITY.index_name),
-    )
-
-    # properties
-    update_known_from_alts(
-        known,
-        alternatives.get(ObjType.PROPERTY, []),
-        manager.get_normalizer(ObjType.PROPERTY.index_name),
-    )
-
-    # other
-    update_known_from_alts(
-        known,
-        alternatives.get(ObjType.UNINDEXED, []),
-    )
-
-
 def update_known_from_selections(
     known: set[str],
     selections: list[Selection],
     manager: KgManager,
 ):
-    # entities
-    update_known_from_alts(
-        known,
-        (sel.alternative for sel in selections if sel.obj_type == ObjType.ENTITY),
-        manager.get_normalizer("entities"),
-    )
-
-    # properties
-    update_known_from_alts(
-        known,
-        (sel.alternative for sel in selections if sel.obj_type == ObjType.PROPERTY),
-        manager.get_normalizer("properties"),
-    )
+    for obj_type in (ObjType.ENTITY, ObjType.CLASS, ObjType.PROPERTY):
+        update_known_from_alts(
+            known,
+            (sel.alternative for sel in selections if sel.obj_type == obj_type),
+            manager.get_normalizer(obj_type.index_name),
+        )
 
 
 @dataclass
