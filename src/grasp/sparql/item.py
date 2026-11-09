@@ -4,7 +4,7 @@ from itertools import chain
 
 from grasp.manager import KgManager
 from grasp.manager.utils import find_obj_type_from_prefixes, get_common_sparql_prefixes
-from grasp.sparql.types import Alternative, ObjType, Position, Selection
+from grasp.sparql.types import Alternative, ObjType, Selection, iri_obj_types
 from grasp.sparql.utils import (
     find_all,
     infer_position_from_prefix,
@@ -129,12 +129,7 @@ def get_item(
     except Exception:
         position = None
 
-    # all IRI indices, properties first at the predicate position, otherwise
-    # classes before entities since entity indices often contain classes too
-    if position == Position.PROPERTY:
-        obj_types = [ObjType.PROPERTY, ObjType.CLASS, ObjType.ENTITY]
-    else:
-        obj_types = [ObjType.CLASS, ObjType.ENTITY, ObjType.PROPERTY]
+    obj_types = iri_obj_types(position)
 
     # check whether the iri is a valid entity, class, or property
     for obj_type in obj_types:

@@ -18,11 +18,11 @@ from grasp.sparql.types import (
     Alternative,
     AskResult,
     Binding,
-    ObjType,
     Position,
     Selection,
     SelectResult,
     SelectRow,
+    iri_obj_types,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -914,8 +914,12 @@ def update_known_from_shape_iris(
     iris: list[str],
     manager: KgManager,
 ) -> None:
-    for index_name in ("entities", "classes", "properties"):
-        update_known_from_iris(known, iris, manager.get_normalizer(index_name))
+    for obj_type in iri_obj_types():
+        update_known_from_iris(
+            known,
+            iris,
+            manager.get_normalizer(obj_type.index_name),
+        )
 
 
 def validate_page(page: int, max_pages: int | None = None) -> None:
@@ -1154,7 +1158,7 @@ def update_known_from_selections(
     selections: list[Selection],
     manager: KgManager,
 ):
-    for obj_type in (ObjType.ENTITY, ObjType.CLASS, ObjType.PROPERTY):
+    for obj_type in iri_obj_types():
         update_known_from_alts(
             known,
             (sel.alternative for sel in selections if sel.obj_type == obj_type),

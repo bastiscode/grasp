@@ -45,6 +45,7 @@ from grasp.sparql.types import (
     SelectResult,
     SelectRow,
     group_selections,
+    iri_obj_types,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -455,8 +456,8 @@ class KgManager:
         return data.main_field(id) or data.field(id, 0)
 
     def get_iri_label(self, identifier: str) -> str | None:
-        for index_name in ["entities", "classes", "properties"]:
-            label = self.get_label(identifier, index_name)
+        for obj_type in iri_obj_types():
+            label = self.get_label(identifier, obj_type.index_name)
             if label is not None:
                 return label
         return None

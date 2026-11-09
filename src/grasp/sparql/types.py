@@ -47,6 +47,14 @@ class Position(StrEnum):
         return self.value
 
 
+# lookup order of IRIs, properties first at the predicate position, otherwise
+# classes before entities since entity indices often contain classes too
+def iri_obj_types(position: Position | None = None) -> list[ObjType]:
+    if position == Position.PROPERTY:
+        return [ObjType.PROPERTY, ObjType.CLASS, ObjType.ENTITY]
+    return [ObjType.CLASS, ObjType.ENTITY, ObjType.PROPERTY]
+
+
 @dataclass
 class AskResult:
     boolean: bool
