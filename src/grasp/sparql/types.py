@@ -337,10 +337,6 @@ class Selection:
             and self.variant == other.variant
         )
 
-    @property
-    def is_entity_or_property(self) -> bool:
-        return self.obj_type == ObjType.ENTITY or self.obj_type == ObjType.PROPERTY
-
     def get_natural_sparql_label(self, full_identifier: bool = False) -> str:
         identifier = self.alternative.get_identifier()
         if not self.alternative.has_label():
@@ -353,7 +349,7 @@ class Selection:
         elif self.variant:
             label += f" ({self.variant})"
 
-        if self.is_entity_or_property or self.obj_type == ObjType.CLASS:
+        if self.obj_type in (ObjType.ENTITY, ObjType.PROPERTY, ObjType.CLASS):
             return f"<{label}>"
         else:
             return label
