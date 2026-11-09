@@ -107,6 +107,14 @@ def display_obj_type(obj_type: ObjType) -> ObjType:
     return ObjType.ENTITY if obj_type == ObjType.CLASS else obj_type
 
 
+# GRISP searches properties at the predicate position, entities and classes
+# elsewhere, and everything if the position is unknown
+def searched_at_position(item: Item) -> bool:
+    if item.position is None or item.obj_type not in SELECTABLE_OBJ_TYPES:
+        return True
+    return (item.obj_type == ObjType.PROPERTY) == (item.position == Position.PROPERTY)
+
+
 # entity and class alternatives are merged by score, so both indices need the
 # same type for their scores to be comparable
 def load_grisp_manager(config: KgConfig) -> KgManager:
@@ -1164,18 +1172,22 @@ def gold_sparql_to_nl_skeleton(
     sparql = manager.prettify(sparql)
     sparql, items = extract_sparql_items(sparql, manager)
 
-    # same validity rules as training data prep (main below):
-    # unindexed items must have a label, and unknown items are not allowed
+    # same validity rules as training data prep (main below): unindexed items
+    # must have a label, unknown items are not allowed, and indexed items
+    # must be searched at their position
     invalid = [
         item
         for item in items
-        if (item.is_unindexed and not item.has_label) or item.is_unknown
+        if (item.is_unindexed and not item.has_label)
+        or item.is_unknown
+        or not searched_at_position(item)
     ]
     if invalid:
         raise OracleSkeletonUnavailable(
             "invalid items: "
             + ", ".join(
-                f"{it.alternative.get_identifier()} ({it.obj_type.name})"
+                f"{it.alternative.get_identifier()} "
+                f"({it.obj_type.name} at {it.position or 'unknown'} position)"
                 for it in invalid
             )
         )
@@ -2039,6 +2051,7 @@ def main(args: argparse.Namespace) -> None:
                 for item in items
                 if (item.is_unindexed and not item.has_label)
                 or (item.is_unknown and not args.allow_unknown)
+                or not searched_at_position(item)
             ]
             if invalid_items:
                 invalid += 1
@@ -2046,6 +2059,7 @@ def main(args: argparse.Namespace) -> None:
                     item.alternative.get_selection_string(
                         include_variants=[item.variant] if item.variant else None
                     )
+                    + f" ({item.obj_type} at {item.position or 'unknown'} position)"
                     for item in invalid_items
                 )
 

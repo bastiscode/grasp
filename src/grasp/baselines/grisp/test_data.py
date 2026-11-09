@@ -23,13 +23,16 @@ from grasp.baselines.grisp.data import (
     merge_skeletons,
     ordered_alternatives_with_interleave,
     search_alternatives,
+    searched_at_position,
     selectable_obj_types,
     split_values,
     tokenize_messages,
     tokenize_option_answer,
 )
 from grasp.baselines.grisp.utils import load_sparql_parser
-from grasp.sparql.types import Alternative, ObjType, SelectResult, Selection
+from grasp.sparql.item import extract_sparql_items
+from grasp.sparql.types import Alternative, ObjType, Position, SelectResult, Selection
+from grasp.sparql.utils import load_iri_and_literal_parser
 
 SPARQL_PARSER = load_sparql_parser()
 
@@ -665,3 +668,31 @@ class TestMessageMasking:
         tokenizer = FakeTokenizer()
         n_labelled, n_tokens = self.labelled(tokenizer, mask_inputs=False)
         assert n_labelled == n_tokens
+
+
+class PropertyOnlyManager:
+    sparql_parser = SPARQL_PARSER
+    iri_literal_parser = load_iri_and_literal_parser()
+    prefixes = {}
+
+    def normalize(self, iri: str, index_name: str):
+        return iri, None
+
+    def check_identifier(self, identifier: str, index_name: str) -> bool:
+        return index_name == "properties" and identifier == "http://ex.org/p"
+
+    def get_info_for_identifiers_from_index(self, identifiers, index_name):
+        return {}
+
+    def build_alternative_with_info(self, identifier, info=None, variants=None):
+        return Alternative(identifier, variants=variants)
+
+
+def test_properties_only_searched_at_predicate_position():
+    sparql = "SELECT ?s WHERE { ?s <http://ex.org/p> ?o . ?x ?y <http://ex.org/p> }"
+    _, items = extract_sparql_items(sparql, PropertyOnlyManager())  # type: ignore
+    assert [(item.obj_type, item.position) for item in items] == [
+        (ObjType.PROPERTY, Position.PROPERTY),
+        (ObjType.PROPERTY, Position.OBJECT),
+    ]
+    assert [searched_at_position(item) for item in items] == [True, False]

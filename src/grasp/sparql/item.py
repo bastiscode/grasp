@@ -4,7 +4,7 @@ from itertools import chain
 
 from grasp.manager import KgManager
 from grasp.manager.utils import find_obj_type_from_prefixes, get_common_sparql_prefixes
-from grasp.sparql.types import Alternative, ObjType, Selection, iri_indices
+from grasp.sparql.types import Alternative, ObjType, Position, Selection, iri_indices
 from grasp.sparql.utils import (
     find_all,
     infer_position_from_prefix,
@@ -29,6 +29,8 @@ class Item:
     alternative: Alternative
     obj_type: ObjType
     variant: str | None
+    # inferred for IRIs, None if unknown
+    position: Position | None = None
 
     def same_as(self, other: "Item") -> bool:
         return self.alternative.identifier == other.alternative.identifier
@@ -150,6 +152,7 @@ def get_item(
             alternative=alternative,
             obj_type=obj_type,
             variant=variant,
+            position=position,
             **kwargs,
         )
 
@@ -190,6 +193,7 @@ def get_item(
         ),
         obj_type=item_obj_type,
         variant=None,
+        position=position,
         **kwargs,
     )
 
