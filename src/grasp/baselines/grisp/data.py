@@ -82,13 +82,9 @@ OrderedAlternatives = list[tuple[Alternative, ObjType, str | None]]
 # wordings of the placeholder being resolved, per object type, with variants
 Queries = dict[ObjType, list[tuple[str, str | None]]]
 
-# order in which a skeleton's natural-language placeholders are resolved. All
-# orders reduce to a fixed permutation of placeholder indices computed once per
-# skeleton (see Skeleton._compute_order); the resolution loop then fills them in
-# that order and backtracks by popping the last-added selection, so the memo and
-# backtracking logic in select_iris stays identical across orders.
-# object types a placeholder can be resolved to, in display order. Classes are
-# only used if the knowledge graph has a class index.
+# object types a placeholder can be resolved to; classes only with a class index.
+# Entities and classes are offered as one group of alternatives, each keeping
+# its own type for denormalization and to match the extracted items.
 SELECTABLE_OBJ_TYPES = [ObjType.ENTITY, ObjType.CLASS, ObjType.PROPERTY]
 
 
@@ -107,20 +103,15 @@ def supports_variants(manager: KgManager) -> dict[ObjType, bool]:
     }
 
 
-# whether an alternative is also in the entity index; item extraction prefers
-# entities over classes, so such class alternatives are dropped
-def in_entity_index(manager: KgManager, identifier: str, obj_type: ObjType) -> bool:
-    iri = manager.denormalize(identifier, obj_type.index_name)
-    if iri is None:
-        return False
-
-    norm = manager.normalize(iri, ObjType.ENTITY.index_name)
-    if norm is None:
-        return False
-
-    return manager.check_identifier(norm[0], ObjType.ENTITY.index_name)
+def display_obj_type(obj_type: ObjType) -> ObjType:
+    return ObjType.ENTITY if obj_type == ObjType.CLASS else obj_type
 
 
+# order in which a skeleton's natural-language placeholders are resolved. All
+# orders reduce to a fixed permutation of placeholder indices computed once per
+# skeleton (see Skeleton._compute_order); the resolution loop then fills them in
+# that order and backtracks by popping the last-added selection, so the memo and
+# backtracking logic in select_iris stays identical across orders.
 FillOrder = Literal[
     "left-to-right",
     "right-to-left",
@@ -730,21 +721,33 @@ def ordered_alternatives_with_interleave(
         for obj_type, pairs in queries.items()
     }
 
-    buckets = [
-        [
+    def bucket(obj_type: ObjType) -> OrderedAlternatives:
+        return [
             (alternative, obj_type, variants.get(obj_type))
             for alternative in alternative_groups.get(obj_type, [])
         ]
-        for obj_type in SELECTABLE_OBJ_TYPES
-    ]
-    buckets = [bucket for bucket in buckets if bucket]
 
-    if not interleave or len(buckets) < 2:
+    # entities and classes as one list, by rank; an identifier in both is a
+    # class, as in item extraction
+    entities: OrderedAlternatives = []
+    positions: dict[str, int] = {}
+    for alternative in round_robin([bucket(ObjType.ENTITY), bucket(ObjType.CLASS)]):
+        identifier = alternative[0].identifier
+        if identifier not in positions:
+            positions[identifier] = len(entities)
+            entities.append(alternative)
+        elif alternative[1] == ObjType.CLASS:
+            entities[positions[identifier]] = alternative
+
+    buckets = [entities, bucket(ObjType.PROPERTY)]
+    if not interleave:
         return [alternative for bucket in buckets for alternative in bucket]
+    return round_robin(buckets)
 
-    # round robin over the object types
+
+def round_robin(buckets: list[OrderedAlternatives]) -> OrderedAlternatives:
     ordered = []
-    max_len = max(len(bucket) for bucket in buckets)
+    max_len = max((len(bucket) for bucket in buckets), default=0)
     for i in range(max_len):
         for bucket in buckets:
             if i < len(bucket):
@@ -771,9 +774,7 @@ def format_alternatives(alternatives: OrderedAlternatives) -> str:
             show_matched_label=False,
             include_variants=[],
         )
-        if obj_type not in grouped:
-            grouped[obj_type] = []
-        grouped[obj_type].append(f"{label}. {alt}")
+        grouped.setdefault(display_obj_type(obj_type), []).append(f"{label}. {alt}")
 
     multiple_types = len(grouped) > 1
     alt_groups = []
@@ -935,14 +936,6 @@ def get_candidate_id_maps(
                 identifier_map.setdefault(identifier, [])
         maps[obj_type] = identifier_map
 
-    if ObjType.ENTITY in maps and ObjType.CLASS in maps:
-        # entities win over classes, see in_entity_index
-        maps[ObjType.CLASS] = {
-            identifier: variants
-            for identifier, variants in maps[ObjType.CLASS].items()
-            if not in_entity_index(manager, identifier, ObjType.CLASS)
-        }
-
     return maps
 
 
@@ -967,13 +960,6 @@ def search_alternatives(
             top_k,
             identifier_maps[obj_type],
         )
-        if obj_type == ObjType.CLASS and ObjType.ENTITY in obj_types:
-            # entities win over classes, see in_entity_index
-            alternatives = [
-                alternative
-                for alternative in alternatives
-                if not in_entity_index(manager, alternative.identifier, obj_type)
-            ]
         if alternatives:
             alternative_groups[obj_type] = alternatives
 
@@ -1739,7 +1725,9 @@ def prepare_selection(
 
     target_option: int | None = None
     for i, (alt, obj_type, _) in enumerate(alternatives):
-        if alt != target_alt or obj_type != item.obj_type:
+        # by group, an IRI in both indices may only be found as an entity
+        same_group = display_obj_type(obj_type) == display_obj_type(item.obj_type)
+        if alt != target_alt or not same_group:
             continue
 
         # drop target alternative 20% of the time during training

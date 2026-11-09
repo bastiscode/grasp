@@ -13,6 +13,7 @@ from grasp.baselines.grisp.data import (
     extract_queries_and_variants_from_nl_iri,
     IGNORE_INDEX,
     extract_values_from_nl_iri,
+    format_alternatives,
     get_candidate_id_maps,
     get_option_token_ids,
     merge_skeletons,
@@ -370,7 +371,7 @@ class TestClasses:
             ObjType.PROPERTY,
         ]
 
-    def test_class_alternatives_in_entity_index_dropped(self):
+    def test_entities_and_classes_searched_separately(self):
         manager = class_manager()
         results = {
             "entities": ["e1", "c1"],
@@ -393,7 +394,7 @@ class TestClasses:
             Mock(),
         )
         assert [a.identifier for a in groups[ObjType.ENTITY]] == ["e1", "c1"]
-        assert [a.identifier for a in groups[ObjType.CLASS]] == ["c2"]
+        assert [a.identifier for a in groups[ObjType.CLASS]] == ["c1", "c2"]
 
     def test_constraint_executed_once_for_entities_and_classes(self):
         manager = class_manager()
@@ -418,10 +419,10 @@ class TestClasses:
         assert manager.execute_sparql.call_count == 1
         assert maps == {
             ObjType.ENTITY: {"e1": [], "c1": []},
-            ObjType.CLASS: {"c2": []},
+            ObjType.CLASS: {"c1": [], "c2": []},
         }
 
-    def test_interleave_round_robin_over_types(self):
+    def test_entities_and_classes_one_group(self):
         groups = {
             ObjType.PROPERTY: [Alternative(identifier="p1")],
             ObjType.ENTITY: [Alternative(identifier=i) for i in ["e1", "e2"]],
@@ -439,8 +440,32 @@ class TestClasses:
                 )
             ]
 
-        assert order(False) == ["e1", "e2", "c1", "p1"]
-        assert order(True) == ["e1", "c1", "p1", "e2"]
+        assert order(False) == ["e1", "c1", "e2", "p1"]
+        assert order(True) == ["e1", "p1", "c1", "e2"]
+
+    def test_identifier_in_both_groups_is_a_class(self):
+        groups = {
+            ObjType.ENTITY: [Alternative(identifier=i) for i in ["x", "e1"]],
+            ObjType.CLASS: [Alternative(identifier=i) for i in ["c1", "x"]],
+        }
+        queries = {obj_type: [("x", None)] for obj_type in groups}
+        ordered = ordered_alternatives_with_interleave(groups, queries)
+        assert [(a.identifier, obj_type) for a, obj_type, _ in ordered] == [
+            ("x", ObjType.CLASS),
+            ("c1", ObjType.CLASS),
+            ("e1", ObjType.ENTITY),
+        ]
+
+    def test_classes_shown_with_entities(self):
+        alternatives = [
+            (Alternative(identifier="e1"), ObjType.ENTITY, None),
+            (Alternative(identifier="c1"), ObjType.CLASS, None),
+            (Alternative(identifier="p1"), ObjType.PROPERTY, None),
+        ]
+        formatted = format_alternatives(alternatives)
+        assert "Entity alternatives" in formatted
+        assert "Property alternatives" in formatted
+        assert "Class alternatives" not in formatted
 
 
 # stand-in for a chat tokenizer: one token per role and per content word, with
