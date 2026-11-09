@@ -46,6 +46,7 @@ from grasp.baselines.grisp.data import (
     merge_skeletons,
     ordered_alternatives_with_interleave,
     search_alternatives,
+    supports_variants,
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
 from grasp.baselines.grisp.utils import (
@@ -57,7 +58,7 @@ from grasp.baselines.grisp.utils import (
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.metrics import f1_score
-from grasp.sparql.types import AskResult, ObjType, Selection, SelectResult
+from grasp.sparql.types import AskResult, Selection, SelectResult
 from grasp.sparql.utils import (
     SPARQLExecuteException,
 )
@@ -659,10 +660,7 @@ def select_iris(
     deepest: list[Selection] = []
     deepest_query: str = skeleton.materialize_partial()
 
-    supports_variants = {
-        obj_type: manager.get_normalizer(obj_type.index_name).supports_variants
-        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY]
-    }
+    variants_support = supports_variants(manager)
 
     while True:
         if time.monotonic() - start > cfg.selection_max_time:
@@ -719,7 +717,7 @@ def select_iris(
             continue
 
         info = skeleton.prepare_for_selection()
-        queries = info.build_queries(supports_variants)
+        queries = info.build_queries(variants_support)
 
         # per-item stage times; memo hits after backtracking cost nothing here
         timings = {"constraint": 0.0, "search": 0.0, "rerank": 0.0}

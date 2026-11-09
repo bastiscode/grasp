@@ -22,8 +22,15 @@ from grasp.baselines.grisp.utils import load_sparql_parser
 from grasp.configs import KgConfig, KgInfo
 from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.item import Item, extract_sparql_items
-from grasp.sparql.types import Alternative, ObjType, Position, Selection
+from grasp.sparql.types import (
+    Alternative,
+    ObjType,
+    Position,
+    Selection,
+    SelectResult,
+)
 from grasp.sparql.utils import (
+    SPARQLException,
     find_all,
     infer_position_from_prefix,
     query_type,
@@ -80,6 +87,41 @@ Queries = dict[ObjType, list[tuple[str, str | None]]]
 # skeleton (see Skeleton._compute_order); the resolution loop then fills them in
 # that order and backtracks by popping the last-added selection, so the memo and
 # backtracking logic in select_iris stays identical across orders.
+# object types a placeholder can be resolved to, in display order. Classes are
+# only used if the knowledge graph has a class index.
+SELECTABLE_OBJ_TYPES = [ObjType.ENTITY, ObjType.CLASS, ObjType.PROPERTY]
+
+
+def selectable_obj_types(manager: KgManager) -> list[ObjType]:
+    return [
+        obj_type
+        for obj_type in SELECTABLE_OBJ_TYPES
+        if obj_type != ObjType.CLASS or obj_type.index_name in manager.index_names
+    ]
+
+
+def supports_variants(manager: KgManager) -> dict[ObjType, bool]:
+    return {
+        obj_type: manager.get_normalizer(obj_type.index_name).supports_variants
+        for obj_type in selectable_obj_types(manager)
+    }
+
+
+# whether the (normalized) identifier of an alternative from one index is also
+# in the entity index. Item extraction prefers entities over classes, so such
+# class alternatives are dropped to keep training targets and options consistent.
+def in_entity_index(manager: KgManager, identifier: str, obj_type: ObjType) -> bool:
+    iri = manager.denormalize(identifier, obj_type.index_name)
+    if iri is None:
+        return False
+
+    norm = manager.normalize(iri, ObjType.ENTITY.index_name)
+    if norm is None:
+        return False
+
+    return manager.check_identifier(norm[0], ObjType.ENTITY.index_name)
+
+
 FillOrder = Literal[
     "left-to-right",
     "right-to-left",
@@ -689,25 +731,25 @@ def ordered_alternatives_with_interleave(
         for obj_type, pairs in queries.items()
     }
 
-    entities = [
-        (alternative, ObjType.ENTITY, variants.get(ObjType.ENTITY))
-        for alternative in alternative_groups.get(ObjType.ENTITY, [])
+    buckets = [
+        [
+            (alternative, obj_type, variants.get(obj_type))
+            for alternative in alternative_groups.get(obj_type, [])
+        ]
+        for obj_type in SELECTABLE_OBJ_TYPES
     ]
-    properties = [
-        (alternative, ObjType.PROPERTY, variants.get(ObjType.PROPERTY))
-        for alternative in alternative_groups.get(ObjType.PROPERTY, [])
-    ]
+    buckets = [bucket for bucket in buckets if bucket]
 
-    if not interleave or not entities or not properties:
-        return entities + properties
+    if not interleave or len(buckets) < 2:
+        return [alternative for bucket in buckets for alternative in bucket]
 
+    # round robin over the object types
     ordered = []
-    max_len = max(len(entities), len(properties))
+    max_len = max(len(bucket) for bucket in buckets)
     for i in range(max_len):
-        if i < len(entities):
-            ordered.append(entities[i])
-        if i < len(properties):
-            ordered.append(properties[i])
+        for bucket in buckets:
+            if i < len(bucket):
+                ordered.append(bucket[i])
     return ordered
 
 
@@ -794,38 +836,35 @@ def find_candidate_ids(
         # full search across both indices as fallback
         position = None
 
-    if position is None:
-        obj_types = [ObjType.ENTITY, ObjType.PROPERTY]
-    elif position == Position.PROPERTY:
+    obj_types = selectable_obj_types(manager)
+    if position == Position.PROPERTY:
         obj_types = [ObjType.PROPERTY]
-    else:
-        obj_types = [ObjType.ENTITY]
+    elif position is not None:
+        obj_types = [t for t in obj_types if t != ObjType.PROPERTY]
 
     identifier_maps: dict[ObjType, dict[str, list[str]] | None] = {
         obj_type: None for obj_type in obj_types
     }
     if not skip_constraint and position is not None and constraint_sparql is not None:
-        # can only be one
-        obj_type = obj_types[0]
         constraint.sparql = constraint_sparql
         try:
             logger.debug(
                 f"Searching for candidate IRIs at position {position.value} "
                 f"with constraint SPARQL:\n{constraint_sparql}"
             )
-            identifier_map = manager.get_candidate_ids(
-                obj_type.index_name,
+            maps = get_candidate_id_maps(
+                manager,
+                obj_types,
                 constraint_sparql,
                 max_candidates,
-                # constraint_timeout to execute query, 3 seconds to read result
-                request_timeout=(3.5, constraint_timeout),
-                read_timeout=3.0,
+                constraint_timeout,
             )
             logger.debug(
-                f"Got {len(identifier_map)} candidate IRIs for position {position.value}"
+                f"Got {sum(len(m) for m in maps.values())} candidate IRIs "
+                f"for position {position.value}"
             )
-            identifier_maps[obj_type] = identifier_map
-            constraint.candidates = len(identifier_map)
+            identifier_maps.update(maps)
+            constraint.candidates = sum(len(m) for m in maps.values())
         except Exception as e:
             logger.warning(f"Error getting candidate IRIs: {e}")
             constraint.reason = str(e)
@@ -835,6 +874,77 @@ def find_candidate_ids(
         )
 
     return obj_types, identifier_maps, constraint
+
+
+# candidate identifiers per object type from a single execution of the
+# constraint query, same mapping as KgManager.get_candidate_ids
+def get_candidate_id_maps(
+    manager: KgManager,
+    obj_types: list[ObjType],
+    constraint_sparql: str,
+    max_candidates: int | None,
+    constraint_timeout: float,
+) -> dict[ObjType, dict[str, list[str]]]:
+    if len(obj_types) == 1:
+        obj_type = obj_types[0]
+        return {
+            obj_type: manager.get_candidate_ids(
+                obj_type.index_name,
+                constraint_sparql,
+                max_candidates,
+                # constraint_timeout to execute query, 3 seconds to read result
+                request_timeout=(3.5, constraint_timeout),
+                read_timeout=3.0,
+            )
+        }
+
+    result = manager.execute_sparql(
+        constraint_sparql,
+        request_timeout=(3.5, constraint_timeout),
+        read_timeout=3.0,
+    )
+    if not isinstance(result, SelectResult) or result.num_columns != 1:
+        raise SPARQLException(
+            "SPARQL query must be a SELECT query with a single column",
+            constraint_sparql,
+        )
+    if max_candidates is not None and len(result) > max_candidates:
+        raise SPARQLException(
+            f"Got more than the maximum supported number of "
+            f"candidates ({max_candidates:,})",
+            constraint_sparql,
+        )
+
+    identifiers = [
+        binding.identifier()
+        for bindings in result.bindings()
+        if (binding := next(iter(bindings), None)) is not None
+    ]
+
+    maps = {}
+    for obj_type in obj_types:
+        identifier_map: dict[str, list[str]] = {}
+        for identifier in identifiers:
+            norm = manager.normalize(identifier, obj_type.index_name)
+            if norm is not None and manager.check_identifier(
+                norm[0], obj_type.index_name
+            ):
+                variants = identifier_map.setdefault(norm[0], [])
+                if norm[1] is not None:
+                    variants.append(norm[1])
+            elif manager.check_identifier(identifier, obj_type.index_name):
+                identifier_map.setdefault(identifier, [])
+        maps[obj_type] = identifier_map
+
+    if ObjType.ENTITY in maps and ObjType.CLASS in maps:
+        # entities win over classes, see in_entity_index
+        maps[ObjType.CLASS] = {
+            identifier: variants
+            for identifier, variants in maps[ObjType.CLASS].items()
+            if not in_entity_index(manager, identifier, ObjType.CLASS)
+        }
+
+    return maps
 
 
 # alternatives for one wording, within what the constraint allows
@@ -858,6 +968,13 @@ def search_alternatives(
             top_k,
             identifier_maps[obj_type],
         )
+        if obj_type == ObjType.CLASS and ObjType.ENTITY in obj_types:
+            # entities win over classes, see in_entity_index
+            alternatives = [
+                alternative
+                for alternative in alternatives
+                if not in_entity_index(manager, alternative.identifier, obj_type)
+            ]
         if alternatives:
             alternative_groups[obj_type] = alternatives
 
@@ -1559,13 +1676,11 @@ def prepare_selection(
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
 
-    supports_variants = {
-        obj_type: manager.get_normalizer(obj_type.index_name).supports_variants
-        for obj_type in [ObjType.ENTITY, ObjType.PROPERTY]
-    }
+    variants_support = supports_variants(manager)
+    obj_types = selectable_obj_types(manager)
 
     _, items = extract_sparql_items(sparql, manager)
-    items = [item for item in items if item.is_entity_or_property]
+    items = [item for item in items if item.obj_type in obj_types]
     assert len(items) > 0, "No valid item to replace found in sample"
 
     parser = load_sparql_parser()
@@ -1586,7 +1701,7 @@ def prepare_selection(
     target_alt = item.selection.alternative
 
     info = skeleton.prepare_for_selection()
-    queries = info.build_queries(supports_variants)
+    queries = info.build_queries(variants_support)
 
     # TODO: fix hardcoded k values
     k = 10 if is_val else random.randint(2, 10)
@@ -1597,18 +1712,15 @@ def prepare_selection(
     # constrains because alternatives are constrained at inference (see run.py).
     constrain = is_val or random.random() < constrain_p
 
-    if item.is_entity_or_property:
-        selection_logger = get_logger("GRISP SELECTION PREP")
-        alternative_groups = find_alternative_groups(
-            manager,
-            info.sparql,
-            queries,
-            k,
-            logger=selection_logger,
-            skip_constraint=not constrain,
-        )
-    else:
-        alternative_groups = {}
+    selection_logger = get_logger("GRISP SELECTION PREP")
+    alternative_groups = find_alternative_groups(
+        manager,
+        info.sparql,
+        queries,
+        k,
+        logger=selection_logger,
+        skip_constraint=not constrain,
+    )
 
     drop_infos = not is_val and random.random() < drop_infos_p
     drop_target = not is_val and random.random() < drop_target_p
