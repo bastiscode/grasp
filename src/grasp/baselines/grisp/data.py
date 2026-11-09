@@ -82,9 +82,8 @@ OrderedAlternatives = list[tuple[Alternative, ObjType, str | None]]
 # wordings of the placeholder being resolved, per object type, with variants
 Queries = dict[ObjType, list[tuple[str, str | None]]]
 
-# object types a placeholder can be resolved to; classes only with a class index.
-# Entities and classes are offered as one group of alternatives, each keeping
-# its own type for denormalization and to match the extracted items.
+# index types a placeholder can be resolved to, classes only with a class index;
+# entities and classes are one group of alternatives, each keeping its own type
 SELECTABLE_OBJ_TYPES = [ObjType.ENTITY, ObjType.CLASS, ObjType.PROPERTY]
 
 
