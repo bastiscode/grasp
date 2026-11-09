@@ -982,7 +982,7 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
 
 def format_shapes(shapes: Shapes) -> str:
     desc = shapes.description or "Class shapes derived from the knowledge graph."
-    return f"Class shapes (via get_class_shape): {desc}"
+    return f"**Class shapes**\n{desc}"
 
 
 def format_kgs(
