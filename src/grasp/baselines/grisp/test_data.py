@@ -10,6 +10,8 @@ from grasp.baselines.grisp.data import (
     EOR,
     MAX_PLACEHOLDER_QUERIES,
     SEP,
+    IRI,
+    GRISPSample,
     Info,
     Skeleton,
     display_nl_iri,
@@ -20,6 +22,7 @@ from grasp.baselines.grisp.data import (
     get_candidate_id_maps,
     load_grisp_manager,
     get_option_token_ids,
+    is_placeholder,
     is_valid_item,
     merge_skeletons,
     ordered_alternatives_with_interleave,
@@ -708,3 +711,33 @@ def test_properties_only_searched_at_predicate_position():
         False,
         True,
     ]
+
+
+class UnindexedManager(PropertyOnlyManager):
+    prefixes = {"ex": "http://ex.org/"}
+
+    def denormalize(self, identifier: str, index_name: str, variant=None):
+        return f"denormalized:{identifier}"
+
+    def format_iri(self, iri: str) -> str:
+        return iri
+
+
+def test_unindexed_iris_are_placeholders_but_not_selectable():
+    manager = UnindexedManager()
+    sparql = "SELECT ?s WHERE { ?s <http://ex.org/p> <http://ex.org/q> }"
+    _, items = extract_sparql_items(sparql, manager)  # type: ignore
+    assert [item.obj_type for item in items] == [ObjType.PROPERTY, ObjType.UNINDEXED]
+    assert all(is_placeholder(item) for item in items)
+
+    iris = [IRI.from_item(item, manager) for item in items]  # type: ignore
+    assert [(iri.identifier, iri.selectable) for iri in iris] == [
+        ("denormalized:http://ex.org/p", True),
+        ("http://ex.org/q", False),
+    ]
+
+    def sample(*parts) -> GRISPSample:
+        return GRISPSample(kg="kg", questions=["q"], sparql=list(parts))
+
+    assert sample("?s ", iris[0], " ", iris[1]).has_selection_targets
+    assert not sample("?s ?p ", iris[1]).has_selection_targets

@@ -142,7 +142,7 @@ def materialize_sample(
 
     skeletons = [prepare_skeleton(sample, is_val, skeleton_p) for _ in range(n)]
 
-    if sample.has_placeholders:
+    if sample.has_selection_targets:
         selections = []
         for _ in range(n):
             messages, options, target = prepare_selection(

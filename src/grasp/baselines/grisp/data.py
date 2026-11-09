@@ -135,6 +135,26 @@ def is_valid_item(item: Item, allow_unknown: bool = False) -> bool:
     return True
 
 
+# literals, common, and unknown items are predicted directly, all others
+# (including unindexed ones) become placeholders
+def is_placeholder(item: Item) -> bool:
+    return not (item.is_literal or item.is_common or item.is_unknown)
+
+
+# index items are denormalized, others (e.g., unindexed) are full IRIs already
+def selection_iri(selection: Selection, manager: KgManager) -> str:
+    identifier = selection.alternative.identifier
+    if selection.obj_type in SELECTABLE_OBJ_TYPES:
+        denormalized = manager.denormalize(
+            identifier,
+            selection.obj_type.index_name,
+            selection.variant,
+        )
+        assert denormalized is not None, f"Failed to denormalize {identifier}"
+        identifier = denormalized
+    return manager.format_iri(identifier)
+
+
 # entity and class alternatives are merged by score, so both indices need the
 # same type for their scores to be comparable
 def load_grisp_manager(config: KgConfig) -> KgManager:
@@ -150,7 +170,9 @@ def load_grisp_manager(config: KgConfig) -> KgManager:
             f"GRISP needs the class index of {manager.kg} to have the same type "
             f"as its entity index ({types['entities']}), got {types['classes']}; "
             f"build a {types['entities']} class index and set it in the knowledge "
-            "graph config, or leave out the class index"
+            "graph config, leave out the class index, or set up the entity index to "
+            "also contain classes (as before the separate class index) and leave out "
+            "the class index"
         )
     return manager
 
@@ -174,6 +196,8 @@ class IRI(BaseModel):
     identifier: str
     label: str
     aliases: list[str]
+    # unindexed IRIs cannot be selection targets
+    selectable: bool = True
 
     @staticmethod
     def from_item(item: Item, manager: KgManager) -> "IRI":
@@ -186,17 +210,12 @@ class IRI(BaseModel):
             label = f"{label} ({item.variant})"
             aliases = [f"{alias} ({item.variant})" for alias in aliases]
 
-        identifier = manager.denormalize(
-            item.alternative.identifier,
-            item.obj_type.index_name,
-            item.variant,
+        return IRI(
+            identifier=selection_iri(item.selection, manager),
+            label=label,
+            aliases=aliases,
+            selectable=item.obj_type in SELECTABLE_OBJ_TYPES,
         )
-        assert identifier is not None, (
-            f"Failed to denormalize identifier {item.alternative.identifier}"
-        )
-        identifier = manager.format_iri(identifier)
-
-        return IRI(identifier=identifier, label=label, aliases=aliases)
 
 
 class GRISPSample(BaseModel):
@@ -205,8 +224,8 @@ class GRISPSample(BaseModel):
     sparql: list[str | IRI]
 
     @property
-    def has_placeholders(self) -> bool:
-        return any(isinstance(part, IRI) for part in self.sparql)
+    def has_selection_targets(self) -> bool:
+        return any(isinstance(part, IRI) and part.selectable for part in self.sparql)
 
 
 class SelectionSample(BaseModel):
@@ -648,13 +667,7 @@ class Skeleton:
 
     def add_selection(self, selection: Selection, manager: KgManager) -> None:
         assert not self.done, "All NL IRIs have already been replaced"
-        identifier = manager.denormalize(
-            selection.alternative.identifier,
-            selection.obj_type.index_name,
-            selection.variant,
-        )
-        assert identifier is not None, "Failed to denormalize identifier"
-        identifier = manager.format_iri(identifier)
+        identifier = selection_iri(selection, manager)
         label = selection.alternative.get_label()
         if label is not None:
             label += f" ({identifier})"
@@ -1203,7 +1216,7 @@ def gold_sparql_to_nl_skeleton(
     cursor = 0
     for item in items:
         # literals/common/unknown are emitted as-is; everything else becomes a placeholder
-        if item.is_literal or item.is_common or item.is_unknown:
+        if not is_placeholder(item):
             continue
 
         start, end = item.item_span
@@ -1708,9 +1721,9 @@ def prepare_selection(
     variants_support = supports_variants(manager)
     obj_types = selectable_obj_types(manager)
 
+    # items line up with the placeholders, but only index items can be targets
     _, items = extract_sparql_items(sparql, manager)
-    items = [item for item in items if item.obj_type in obj_types]
-    assert len(items) > 0, "No valid item to replace found in sample"
+    items = [item for item in items if is_placeholder(item)]
 
     parser = load_sparql_parser()
     # train the model to be fill-order agnostic: resolve a uniformly random
@@ -1722,7 +1735,9 @@ def prepare_selection(
     random.shuffle(order)
     skeleton = Skeleton.parse(skeleton, parser, order=order)
 
-    upper = random.randint(0, len(items) - 1)
+    targets = [j for j, i in enumerate(order) if items[i].obj_type in obj_types]
+    assert len(targets) > 0, "No item to select found in sample"
+    upper = random.choice(targets)
     for j in range(upper):
         skeleton.add_selection(items[order[j]].selection, manager)
 
@@ -1826,10 +1841,10 @@ class GRISPSelectionDataset(Dataset):
 
         self.logger = get_logger(f"GRISP SELECTION DATASET ({is_val=})", log_level)
 
-        self.samples = [sample for sample in samples if sample.has_placeholders]
+        self.samples = [sample for sample in samples if sample.has_selection_targets]
         self.logger.info(
             f"Filtered {len(samples):,} samples to "
-            f"{len(self.samples):,} samples with placeholders"
+            f"{len(self.samples):,} samples with selection targets"
         )
 
     def __len__(self) -> int:
@@ -2075,8 +2090,7 @@ def main(args: argparse.Namespace) -> None:
             parts = []
             start = 0
             for item in items:
-                # literals, common, and unknown (if allowed) should be predicted directly
-                if item.is_literal or item.is_common or item.is_unknown:
+                if not is_placeholder(item):
                     continue
 
                 item_start, item_end = item.item_span
