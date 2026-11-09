@@ -1,6 +1,5 @@
 import os
 import random
-import re
 import uuid
 
 import yaml
@@ -89,30 +88,30 @@ def previous_round_file(out_dir: str, name: str, start_round: int) -> str:
 
 
 def load_previous_kg_notes(
+    config: GraspConfig,
     out_dir: str,
     prefix: str,
     start_round: int,
 ) -> dict[str, list[str]]:
-    # notes.<prefix>.<kg>.round_<r>.json of the round before start_round
-    pattern = re.compile(
-        rf"notes\.{re.escape(prefix)}\.(.+)\.round_{start_round - 1}\.json"
-    )
+    # a round only writes notes of KGs that have some
     kg_notes = {}
-    for name in sorted(os.listdir(out_dir)):
-        match = pattern.fullmatch(name)
-        if match is not None:
-            kg_notes[match.group(1)] = load_json(os.path.join(out_dir, name))
+    for kg in config.knowledge_graphs:
+        name = f"notes.{prefix}.{kg.kg}.round_{start_round - 1}.json"
+        path = os.path.join(out_dir, name)
+        if os.path.exists(path):
+            kg_notes[kg.kg] = load_json(path)
     return kg_notes
 
 
 def load_previous_notes(
+    config: GraspConfig,
     out_dir: str,
     prefix: str,
     start_round: int,
 ) -> tuple[list[str], dict[str, list[str]]]:
     name = f"notes.{prefix}.round_{start_round - 1}.json"
     notes = load_json(previous_round_file(out_dir, name, start_round))
-    return notes, load_previous_kg_notes(out_dir, prefix, start_round)
+    return notes, load_previous_kg_notes(config, out_dir, prefix, start_round)
 
 
 def take_notes_from_samples(
@@ -142,7 +141,7 @@ def take_notes_from_samples(
     )
     notes, kg_notes = load_notes(config)
     if start_round > 0:
-        notes, kg_notes = load_previous_notes(out_dir, task, start_round)
+        notes, kg_notes = load_previous_notes(config, out_dir, task, start_round)
 
     # optional dedicated note-taking model fully replaces the parent config's
     # model for the note-taking step; the agent runs on the parent config above
@@ -293,7 +292,7 @@ def take_notes_from_outputs(
     managers, _ = setup(config)
     notes, kg_notes = load_notes(config)
     if start_round > 0:
-        notes, kg_notes = load_previous_notes(out_dir, task, start_round)
+        notes, kg_notes = load_previous_notes(config, out_dir, task, start_round)
 
     note_taking_model = (
         get_model(config.note_taking_model) if config.note_taking_model else None
@@ -404,7 +403,9 @@ def take_notes_from_exploration(
         if start_round > 0:
             name = f"output.exploration.round_{start_round - 1}.json"
             previous = load_json(previous_round_file(out_dir, name, start_round))
-            kg_notes = load_previous_kg_notes(out_dir, "exploration", start_round)
+            kg_notes = load_previous_kg_notes(
+                config, out_dir, "exploration", start_round
+            )
             if not kg_notes:
                 raise FileNotFoundError(
                     f"Cannot resume at round {start_round}, no KG notes of the "
@@ -476,12 +477,12 @@ def generate_questions(
                 f"Cannot resume at round {start_round}, the previous round "
                 "failed with a model error"
             )
-        pattern = re.compile(rf"samples\.(.+)\.round_{start_round - 1}\.jsonl")
-        for name in sorted(os.listdir(out_dir)):
-            match = pattern.fullmatch(name)
-            if match is not None:
-                samples = load_jsonl(os.path.join(out_dir, name))
-                state.questions[match.group(1)] = [s["question"] for s in samples]
+        for kg in config.knowledge_graphs:
+            name = f"samples.{kg.kg}.round_{start_round - 1}.jsonl"
+            path = os.path.join(out_dir, name)
+            if os.path.exists(path):
+                samples = load_jsonl(path)
+                state.questions[kg.kg] = [s["question"] for s in samples]
 
     for r in trange(start_round, config.num_rounds, desc="Generating questions"):
         output = consume_generator(

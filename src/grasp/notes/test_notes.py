@@ -141,8 +141,8 @@ def test_structural_exploration_resumes_with_explored_seeds(monkeypatch, tmp_pat
     out_dir = str(tmp_path / "structural")
 
     def step(i, state):
-        state.kg_notes.setdefault("kg", []).append(f"note {i}")
-        state.explored.setdefault("kg", []).append(f"seed {i}")
+        state.kg_notes.setdefault("wikidata", []).append(f"note {i}")
+        state.explored.setdefault("wikidata", []).append(f"seed {i}")
         return ok_output(explored=state.explored)
 
     patch_stateful_rounds(monkeypatch, step)
@@ -156,8 +156,8 @@ def test_structural_exploration_resumes_with_explored_seeds(monkeypatch, tmp_pat
         out_dir,
         start_round=2,
     )
-    assert states[0].explored == {"kg": ["seed 0", "seed 1", "seed 0"]}
-    with open(os.path.join(out_dir, "notes.exploration.kg.round_2.json")) as f:
+    assert states[0].explored == {"wikidata": ["seed 0", "seed 1", "seed 0"]}
+    with open(os.path.join(out_dir, "notes.exploration.wikidata.round_2.json")) as f:
         assert json.load(f) == ["note 0", "note 1", "note 0"]
 
 
@@ -165,16 +165,19 @@ def test_question_generation_resumes(monkeypatch, tmp_path):
     out_dir = str(tmp_path / "questions")
 
     def step(i, state):
-        state.questions.setdefault("kg", []).append(f"question {i}")
+        state.questions.setdefault("wikidata", []).append(f"question {i}")
         return ok_output()
 
     patch_stateful_rounds(monkeypatch, step)
     notes_module.generate_questions(NotesGenerateQuestionsConfig(num_rounds=1), out_dir)
+    # samples of a KG that is not configured are ignored
+    with open(os.path.join(out_dir, "samples.other.round_0.jsonl"), "w") as f:
+        f.write(json.dumps({"question": "other"}) + "\n")
     states = patch_stateful_rounds(monkeypatch, step)
     notes_module.generate_questions(
         NotesGenerateQuestionsConfig(num_rounds=2), out_dir, start_round=1
     )
-    assert states[0].questions == {"kg": ["question 0", "question 0"]}
+    assert states[0].questions == {"wikidata": ["question 0", "question 0"]}
 
 
 def test_notes_from_outputs_resumes(monkeypatch, tmp_path):
@@ -184,7 +187,7 @@ def test_notes_from_outputs_resumes(monkeypatch, tmp_path):
 
     def step(i, state):
         state.notes.append(f"note {i}")
-        state.kg_notes.setdefault("kg", []).append(f"kg note {i}")
+        state.kg_notes.setdefault("wikidata", []).append(f"kg note {i}")
         return ok_output()
 
     config = NotesFromOutputsConfig(outputs=[str(outputs_file)], num_rounds=1, seed=22)
@@ -195,7 +198,7 @@ def test_notes_from_outputs_resumes(monkeypatch, tmp_path):
     states = patch_stateful_rounds(monkeypatch, step)
     notes_module.take_notes_from_outputs("sparql-qa", config, out_dir, start_round=1)
     assert states[0].notes[0] == "note 0"
-    assert states[0].kg_notes == {"kg": ["kg note 0", "kg note 0"]}
+    assert states[0].kg_notes == {"wikidata": ["kg note 0", "kg note 0"]}
 
 
 def test_resume_errors(monkeypatch, tmp_path):
