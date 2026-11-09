@@ -106,12 +106,23 @@ def display_obj_type(obj_type: ObjType) -> ObjType:
     return ObjType.ENTITY if obj_type == ObjType.CLASS else obj_type
 
 
-# GRISP searches properties at the predicate position, entities and classes
-# elsewhere, and everything if the position is unknown
+# properties at the predicate position, entities and classes elsewhere,
+# and everything if the position is unknown
+def searched_obj_types(
+    obj_types: list[ObjType],
+    position: Position | None,
+) -> list[ObjType]:
+    if position is None:
+        return obj_types
+    elif position == Position.PROPERTY:
+        return [t for t in obj_types if t == ObjType.PROPERTY]
+    return [t for t in obj_types if t != ObjType.PROPERTY]
+
+
 def searched_at_position(item: Item) -> bool:
-    if item.position is None or item.obj_type not in SELECTABLE_OBJ_TYPES:
-        return True
-    return (item.obj_type == ObjType.PROPERTY) == (item.position == Position.PROPERTY)
+    return item.obj_type not in SELECTABLE_OBJ_TYPES or item.obj_type in (
+        searched_obj_types(SELECTABLE_OBJ_TYPES, item.position)
+    )
 
 
 # entity and class alternatives are merged by score, so both indices need the
@@ -868,11 +879,7 @@ def find_candidate_ids(
         # full search across both indices as fallback
         position = None
 
-    obj_types = selectable_obj_types(manager)
-    if position == Position.PROPERTY:
-        obj_types = [ObjType.PROPERTY]
-    elif position is not None:
-        obj_types = [t for t in obj_types if t != ObjType.PROPERTY]
+    obj_types = searched_obj_types(selectable_obj_types(manager), position)
 
     identifier_maps: dict[ObjType, dict[str, list[str]] | None] = {
         obj_type: None for obj_type in obj_types
