@@ -618,9 +618,8 @@ grasp index imdb literals
 
 # You can also change the type of index that is built via --index-type
 # (not applicable for shapes).
-# By default (auto), we build an embedding index for properties, a fuzzy
-# index for entities, and for classes and literals a fuzzy index if there are
-# more than 1M of them, an embedding index otherwise.
+# By default (auto): embedding for properties, fuzzy for entities, and for
+# classes and literals fuzzy above 1M items, embedding otherwise.
 grasp index imdb properties --index-type <keyword|fuzzy|embedding>
 grasp index imdb entities --index-type <keyword|fuzzy|embedding>
 

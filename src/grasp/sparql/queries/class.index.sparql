@@ -16,10 +16,8 @@ SELECT DISTINCT ?id ?value ?tags WHERE {
     ?id skos:altLabel ?value
     FILTER(LANG(?value) = "en")
   } UNION {
-    # Class IRIs are typically meaningful, so make the IRI itself
-    # searchable by binding it to value directly; the indexer
-    # will extract the local name from the full IRI, so no
-    # need to do it manually here
+    # Class IRIs are often meaningful, so make them searchable too
+    # (the indexer extracts the local name)
     BIND(?id AS ?value)
   }
 } ORDER BY DESC(?score) ?id DESC(?tags)
