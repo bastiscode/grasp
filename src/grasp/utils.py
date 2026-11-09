@@ -368,8 +368,7 @@ def is_invalid_output(
 
     error = output.get("error")
     if error is not None:
-        reason = error.get("reason") if isinstance(error, dict) else None
-        if agent_error_invalid or reason not in AGENT_ERROR_REASONS:
+        if agent_error_invalid or error.get("reason") not in AGENT_ERROR_REASONS:
             return True
 
     if none_output_invalid and output.get("output") is None:
