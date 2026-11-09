@@ -170,9 +170,8 @@ def load_grisp_manager(config: KgConfig) -> KgManager:
             f"GRISP needs the class index of {manager.kg} to have the same type "
             f"as its entity index ({types['entities']}), got {types['classes']}; "
             f"build a {types['entities']} class index and set it in the knowledge "
-            "graph config, leave out the class index, or set up the entity index to "
-            "also contain classes (as before the separate class index) and leave out "
-            "the class index"
+            "graph config, or leave out the class index and optionally set up the "
+            "entity index to also contain classes (as before the separate class index)"
         )
     return manager
 
