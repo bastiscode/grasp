@@ -39,15 +39,16 @@ from grasp.shapes import Shapes, load_shapes
 from grasp.sparql.types import (
     Alternative,
     AskResult,
-    ObjType,
+    Binding,
     Position,
     Selection,
     SelectResult,
     SelectRow,
     STANDARD_INDEX_NAMES,
-    TableCell,
-    group_selections,
     iri_indices,
+    TableColumn,
+    TableRow,
+    TableValue,
 )
 from grasp.sparql.utils import (
     READ_TIMEOUT,
@@ -72,7 +73,6 @@ from grasp.sparql.utils import (
 from grasp.utils import (
     clip,
     format_enumerate,
-    format_list,
     format_prefixes,
     get_index_dir,
     ordered_unique,
@@ -179,6 +179,37 @@ class KgManager:
             self.backend,
         )
 
+    def table_value(self, binding: Binding, clip_literals: bool = True) -> TableValue:
+        # a value of a result row together with how it is shown to the model
+        if binding.typ == "bnode":
+            label = binding.identifier()
+
+        elif binding.typ == "literal":
+            # replace to clip only the shown value
+            shown = (
+                replace(binding, value=clip(binding.value))
+                if clip_literals
+                else binding
+            )
+            label = self.format_literal(shown.identifier())
+
+        else:
+            assert binding.typ == "uri"
+            identifier = binding.identifier()
+            label = self.format_iri(identifier)
+
+            name = self.get_iri_label(identifier)
+            if name is not None:
+                label = f"{clip(name)} ({label})"
+
+        return TableValue(
+            binding.typ,
+            binding.value,
+            label,
+            binding.datatype,
+            binding.lang,
+        )
+
     def sparql_result_table(
         self,
         result: SelectResult,
@@ -188,9 +219,9 @@ class KgManager:
         show_right_columns: int = 5,
         column_names: list[str] | None = None,
         clip_literals: bool = True,
-    ) -> tuple[list[str], list[list[TableCell]]]:
-        # header and rows of the shown part of a result, with ... for
-        # omitted rows and columns
+    ) -> tuple[list[TableColumn | None], list[TableRow | None]]:
+        # shown columns and rows of a result, with None for omitted ones;
+        # rows keep the values of all columns
         assert column_names is None or len(column_names) == result.num_columns, (
             f"Expected {result.num_columns:,} column names"
         )
@@ -199,79 +230,60 @@ class KgManager:
             "At least one column must be shown"
         )
 
+        column_names = column_names or result.variables
+        columns: list[TableColumn | None] = [
+            TableColumn(var, name) for var, name in zip(result.variables, column_names)
+        ]
         left_end = min(show_left_columns, result.num_columns)
         right_start = result.num_columns - show_right_columns
         if right_start > left_end:
-            column_indices = list(range(left_end))
-            column_indices.append(-1)
-            column_indices.extend(range(right_start, result.num_columns))
-        else:
-            column_indices = list(range(result.num_columns))
+            columns = columns[:left_end] + [None] + columns[right_start:]
 
-        def format_row(row: SelectRow) -> list[TableCell]:
-            formatted_row = []
-            for c in column_indices:
-                if c < 0:
-                    formatted_row.append(TableCell("..."))
-                    continue
+        def table_row(row: SelectRow) -> TableRow:
+            return {
+                var: self.table_value(val, clip_literals) for var, val in row.items()
+            }
 
-                var = result.variables[c]
-                val = row.get(var, None)
-                if val is None:
-                    formatted_row.append(TableCell(""))
-                    continue
-
-                if val.typ == "bnode":
-                    formatted_row.append(TableCell(val.identifier()))
-
-                elif val.typ == "literal":
-                    if clip_literals:
-                        # replace to modify value
-                        # without messing up original result
-                        val = replace(val, value=clip(val.value))
-
-                    formatted_row.append(
-                        TableCell(self.format_literal(val.identifier()))
-                    )
-
-                else:
-                    assert val.typ == "uri"
-                    identifier = val.identifier()
-                    formatted = self.format_iri(identifier)
-
-                    label = self.get_iri_label(identifier)
-                    if label is not None:
-                        formatted = f"{clip(label)} ({formatted})"
-
-                    formatted_row.append(TableCell(formatted, identifier))
-
-            return formatted_row
-
-        column_names = column_names or result.variables
-        header = [column_names[c] if c >= 0 else "..." for c in column_indices]
         top_end = min(show_top_rows, result.num_rows)
         bottom_start = max(result.num_rows - show_bottom_rows, top_end)
 
-        data = [format_row(row) for row in result.rows(end=top_end)]
+        rows: list[TableRow | None] = [
+            table_row(row) for row in result.rows(end=top_end)
+        ]
 
         if bottom_start > top_end:
-            data.append([TableCell("...")] * len(header))
+            rows.append(None)
 
-        data.extend(
-            format_row(row) for row in result.rows(bottom_start, result.num_rows)
+        rows.extend(
+            table_row(row) for row in result.rows(bottom_start, result.num_rows)
         )
-        return header, data
+        return columns, rows
 
     def format_sparql_table(
         self,
-        header: list[str],
-        data: list[list[TableCell]],
+        columns: list[TableColumn | None],
+        rows: list[TableRow | None],
     ) -> str:
-        # generate a nicely formatted table
+        # generate a nicely formatted table, with ... for omitted rows and
+        # columns
+        def format_row(row: TableRow | None) -> list[str]:
+            if row is None:
+                return ["..."] * len(columns)
+
+            formatted = []
+            for col in columns:
+                if col is None:
+                    formatted.append("...")
+                elif col.variable in row:
+                    formatted.append(row[col.variable].label)
+                else:
+                    formatted.append("")
+            return formatted
+
         return generate_table(
-            [[cell.value for cell in row] for row in data],
-            [header],
-            alignments=["left"] * len(header),
+            [format_row(row) for row in rows],
+            [[col.name if col is not None else "..." for col in columns]],
+            alignments=["left"] * len(columns),
             max_column_width=sys.maxsize,
         )
 
@@ -347,7 +359,7 @@ class KgManager:
 
             return f"Got 0 rows and {result.num_columns:,} columns" + tmf
 
-        header, data = self.sparql_result_table(
+        columns, rows = self.sparql_result_table(
             result,
             show_top_rows,
             show_bottom_rows,
@@ -356,7 +368,7 @@ class KgManager:
             column_names,
             clip_literals,
         )
-        table = self.format_sparql_table(header, data)
+        table = self.format_sparql_table(columns, rows)
 
         if table_only:
             return table
@@ -942,21 +954,11 @@ class KgManager:
         )
 
     def format_selections(self, selections: list[Selection]) -> str:
-        rename_obj_type = [
-            (obj_type, obj_type.index_name) for obj_type in iri_indices()
-        ] + [(ObjType.UNINDEXED, "other (non-indexed) items")]
+        # import here to avoid a circular import
+        from grasp.functions import format_selection_groups
 
-        grouped = group_selections(selections)
-
-        return "\n\n".join(
-            f"Using {name}:\n"
-            + format_list(
-                alt.get_selection_string(include_variants=variants)
-                for alt, variants in grouped[obj_type]
-            )
-            for obj_type, name in rename_obj_type
-            if obj_type in grouped
-        )
+        formatted, _ = format_selection_groups(selections)
+        return formatted
 
 
 DEFAULT_DESCRIPTIONS = {
