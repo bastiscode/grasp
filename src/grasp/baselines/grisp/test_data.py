@@ -19,7 +19,6 @@ from grasp.baselines.grisp.data import (
     IGNORE_INDEX,
     extract_values_from_nl_iri,
     format_alternatives,
-    get_candidate_id_maps,
     load_grisp_manager,
     get_option_token_ids,
     is_placeholder,
@@ -35,7 +34,7 @@ from grasp.baselines.grisp.data import (
 )
 from grasp.baselines.grisp.utils import load_sparql_parser
 from grasp.sparql.item import extract_sparql_items
-from grasp.sparql.types import Alternative, ObjType, Position, SelectResult, Selection
+from grasp.sparql.types import Alternative, ObjType, Position, Selection
 from grasp.sparql.utils import load_iri_and_literal_parser
 
 SPARQL_PARSER = load_sparql_parser()
@@ -406,32 +405,6 @@ class TestClasses:
         )
         assert [a.identifier for a in groups[ObjType.ENTITY]] == ["e1", "c1"]
         assert [a.identifier for a in groups[ObjType.CLASS]] == ["c1", "c2"]
-
-    def test_constraint_executed_once_for_entities_and_classes(self):
-        manager = class_manager()
-        result = Mock(spec=SelectResult)
-        result.num_columns = 1
-        result.__len__ = Mock(return_value=3)
-        bindings = []
-        for identifier in ["e1", "c1", "c2"]:
-            binding = Mock()
-            binding.identifier.return_value = identifier
-            bindings.append([binding])
-        result.bindings.return_value = bindings
-        manager.execute_sparql.return_value = result
-
-        maps = get_candidate_id_maps(
-            manager,
-            [ObjType.ENTITY, ObjType.CLASS],
-            "SELECT ?x WHERE { ?x ?p ?o }",
-            None,
-            6.0,
-        )
-        assert manager.execute_sparql.call_count == 1
-        assert maps == {
-            ObjType.ENTITY: {"e1": [], "c1": []},
-            ObjType.CLASS: {"c1": [], "c2": []},
-        }
 
     def test_entities_and_classes_one_group(self):
         groups = {

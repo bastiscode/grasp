@@ -5,6 +5,7 @@ import re
 import string
 from dataclasses import dataclass, field
 from functools import lru_cache
+from itertools import zip_longest
 from logging import Logger
 from typing import Literal
 
@@ -27,10 +28,8 @@ from grasp.sparql.types import (
     ObjType,
     Position,
     Selection,
-    SelectResult,
 )
 from grasp.sparql.utils import (
-    SPARQLException,
     find_all,
     infer_position_from_prefix,
     query_type,
@@ -788,15 +787,24 @@ def ordered_alternatives_with_interleave(
         ]
 
     # entities and classes as one list, by score if there are scores (without
-    # a query there are none), ties and the rest by rank; an identifier in both
-    # is a class, as in item extraction
-    merged = round_robin([bucket(ObjType.ENTITY), bucket(ObjType.CLASS)])
-    if all(alternative.score is not None for alternative, _, _ in merged):
-        merged.sort(key=lambda alternative: -(alternative[0].score or 0.0))
+    # a query there are none), ties and the rest by rank, entities first; an
+    # identifier in both is a class, as in item extraction
+    candidates = [
+        (rank, alternative)
+        for obj_type in [ObjType.ENTITY, ObjType.CLASS]
+        for rank, alternative in enumerate(bucket(obj_type))
+    ]
+    scored = all(alternative.score is not None for _, (alternative, _, _) in candidates)
+    candidates.sort(
+        key=lambda candidate: (
+            -(candidate[1][0].score or 0.0) if scored else 0.0,
+            candidate[0],
+        )
+    )
 
     entities: OrderedAlternatives = []
     positions: dict[str, int] = {}
-    for alternative in merged:
+    for _, alternative in candidates:
         identifier = alternative[0].identifier
         if identifier not in positions:
             positions[identifier] = len(entities)
@@ -804,20 +812,16 @@ def ordered_alternatives_with_interleave(
         elif alternative[1] == ObjType.CLASS:
             entities[positions[identifier]] = alternative
 
-    buckets = [entities, bucket(ObjType.PROPERTY)]
+    properties = bucket(ObjType.PROPERTY)
     if not interleave:
-        return [alternative for bucket in buckets for alternative in bucket]
-    return round_robin(buckets)
+        return entities + properties
 
-
-def round_robin(buckets: list[OrderedAlternatives]) -> OrderedAlternatives:
-    ordered = []
-    max_len = max((len(bucket) for bucket in buckets), default=0)
-    for i in range(max_len):
-        for bucket in buckets:
-            if i < len(bucket):
-                ordered.append(bucket[i])
-    return ordered
+    return [
+        alternative
+        for pair in zip_longest(entities, properties)
+        for alternative in pair
+        if alternative is not None
+    ]
 
 
 def count_alternatives(alternatives: OrderedAlternatives) -> int:
@@ -913,13 +917,21 @@ def find_candidate_ids(
                 f"Searching for candidate IRIs at position {position.value} "
                 f"with constraint SPARQL:\n{constraint_sparql}"
             )
-            maps = get_candidate_id_maps(
-                manager,
-                obj_types,
+            # one query for all searched indices
+            identifiers = manager.get_candidate_identifiers(
                 constraint_sparql,
                 max_candidates,
-                constraint_timeout,
+                # constraint_timeout to execute query, 3 seconds to read result
+                request_timeout=(3.5, constraint_timeout),
+                read_timeout=3.0,
             )
+            maps = {
+                obj_type: manager.map_candidate_identifiers(
+                    obj_type.index_name,
+                    identifiers,
+                )
+                for obj_type in obj_types
+            }
             logger.debug(
                 f"Got {sum(len(m) for m in maps.values())} candidate IRIs "
                 f"for position {position.value}"
@@ -935,69 +947,6 @@ def find_candidate_ids(
         )
 
     return obj_types, identifier_maps, constraint
-
-
-# candidate identifiers per object type from a single execution of the
-# constraint query, same mapping as KgManager.get_candidate_ids
-def get_candidate_id_maps(
-    manager: KgManager,
-    obj_types: list[ObjType],
-    constraint_sparql: str,
-    max_candidates: int | None,
-    constraint_timeout: float,
-) -> dict[ObjType, dict[str, list[str]]]:
-    if len(obj_types) == 1:
-        obj_type = obj_types[0]
-        return {
-            obj_type: manager.get_candidate_ids(
-                obj_type.index_name,
-                constraint_sparql,
-                max_candidates,
-                # constraint_timeout to execute query, 3 seconds to read result
-                request_timeout=(3.5, constraint_timeout),
-                read_timeout=3.0,
-            )
-        }
-
-    result = manager.execute_sparql(
-        constraint_sparql,
-        request_timeout=(3.5, constraint_timeout),
-        read_timeout=3.0,
-    )
-    if not isinstance(result, SelectResult) or result.num_columns != 1:
-        raise SPARQLException(
-            "SPARQL query must be a SELECT query with a single column",
-            constraint_sparql,
-        )
-    if max_candidates is not None and len(result) > max_candidates:
-        raise SPARQLException(
-            f"Got more than the maximum supported number of "
-            f"candidates ({max_candidates:,})",
-            constraint_sparql,
-        )
-
-    identifiers = [
-        binding.identifier()
-        for bindings in result.bindings()
-        if (binding := next(iter(bindings), None)) is not None
-    ]
-
-    maps = {}
-    for obj_type in obj_types:
-        identifier_map: dict[str, list[str]] = {}
-        for identifier in identifiers:
-            norm = manager.normalize(identifier, obj_type.index_name)
-            if norm is not None and manager.check_identifier(
-                norm[0], obj_type.index_name
-            ):
-                variants = identifier_map.setdefault(norm[0], [])
-                if norm[1] is not None:
-                    variants.append(norm[1])
-            elif manager.check_identifier(identifier, obj_type.index_name):
-                identifier_map.setdefault(identifier, [])
-        maps[obj_type] = identifier_map
-
-    return maps
 
 
 # alternatives for one wording, within what the constraint allows
