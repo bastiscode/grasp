@@ -51,9 +51,8 @@ const selectionGroups = Array.isArray(output?.selections) && output.selections.l
   : null;
 const selections = typeof output?.selections === 'string' ? output.selections : null;
 const result = output?.result ?? null;
-// where the items of the query come from in the trace
-const trace = output?.provenance?.trace ?? null;
 const endpoint = output?.endpoint ?? null;
+const kg = task === 'sparql-qa' ? output?.kg ?? null : null;
 const ceaFormatted = task === 'cea' ? output?.formatted ?? '' : '';
 const ceaInputTable =
   task === 'cea' && isValidCeaTable(message?.ceaInputTable)
@@ -346,8 +345,14 @@ function deriveQleverLink() {
 
     <!-- contents only, the element finds the query for highlighting items -->
     <div class="query" bind:this={queryEl}>
-    {#if trace && sparql}
-      <ProvenancePanel {sparql} {qleverLink} {result} {trace} />
+    {#if kg && sparql}
+      <ProvenancePanel
+        {kg}
+        {sparql}
+        {qleverLink}
+        {result}
+        trace={output?.provenance?.trace ?? null}
+      />
     {:else}
       {#if result}
         <ExecutionResult {result} />
