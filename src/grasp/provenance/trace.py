@@ -14,6 +14,7 @@ from grasp.manager import KgManager
 from grasp.manager.utils import get_common_sparql_prefixes
 from grasp.model import Message
 from grasp.provenance.witness import char_offset
+from grasp.sparql.types import iri_indices
 from grasp.sparql.utils import (
     find_all,
     parse_into_binding,
@@ -113,9 +114,9 @@ def identifiers(manager: KgManager, iri: str) -> set[str]:
     # the IRI and its normalized forms; search results show items in
     # normalized form, e.g. on Wikidata the property wdt:P19 as wd:P19
     ids = {iri}
-    for index_name in ["entities", "properties"]:
+    for kind in iri_indices():
         try:
-            norm = manager.normalize(iri, index_name)
+            norm = manager.normalize(iri, kind.index_name)
         except Exception:
             norm = None
         if norm is not None:
@@ -341,8 +342,7 @@ def trace_provenance(
         item: dict[str, Any] = {
             "identifier": iri,
             "written": written,
-            "label": manager.get_label(iri, "entities")
-            or manager.get_label(iri, "properties"),
+            "label": manager.get_iri_label(iri),
             "spans": [[start, end]],
         }
 

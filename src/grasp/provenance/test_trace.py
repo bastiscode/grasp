@@ -22,7 +22,7 @@ def manager():
         iri_literal_parser=load_iri_and_literal_parser(),
         find_longest_prefix=lambda iri: find_longest_prefix(iri, prefixes),
         normalize=lambda iri, index: None,
-        get_label=lambda iri, index: None,
+        get_iri_label=lambda iri: None,
         format_iri=lambda iri: iri,
     )
 

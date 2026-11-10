@@ -91,7 +91,7 @@ def compute_types(
 
 
 def label_class(manager: KgManager, iri: str) -> str:
-    return manager.get_label(iri, "entities") or manager.format_iri(iri, wrap=True)
+    return manager.get_iri_label(iri) or manager.format_iri(iri, wrap=True)
 
 
 def entity_variables(plan: WitnessPlan) -> list[str]:
@@ -378,9 +378,7 @@ def label_binding(
     data = binding_to_dict(binding)
     if binding.typ == "uri":
         short = manager.format_iri(binding.value, wrap=True)
-        label = manager.get_label(binding.value, "entities") or manager.get_label(
-            binding.value, "properties"
-        )
+        label = manager.get_iri_label(binding.value)
         data["short"] = short
         data["label"] = f"{label} ({short})" if label else short
         if types:
