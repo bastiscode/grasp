@@ -19,7 +19,7 @@ from grammar_utils.parse import LR1Parser  # type: ignore
 
 from grasp.sparql.types import Binding, SelectRow
 from grasp.sparql.utils import (
-    SPARQLException,
+    SparqlException,
     char_offset,
     find,
     find_all,
@@ -338,13 +338,13 @@ def plan_witness(sparql: str, parser: LR1Parser) -> WitnessPlan:
 
     query = find(parse, "Query")
     if query is None:
-        raise SPARQLException("only queries are supported", sparql)
+        raise SparqlException("only queries are supported", sparql)
 
     query_type = find(query, "QueryType")
     assert query_type is not None
     typed = query_type["children"][0]
     if typed["name"] not in {"SelectQuery", "AskQuery"}:
-        raise SPARQLException("only SELECT and ASK queries are supported", sparql)
+        raise SparqlException("only SELECT and ASK queries are supported", sparql)
 
     prologue = find_child(query, "Prologue")
     where_clause = find_child(typed, "WhereClause")
