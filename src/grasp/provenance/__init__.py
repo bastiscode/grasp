@@ -262,7 +262,10 @@ def summarize_paths(
             if not active.issuperset(pattern.markers):
                 continue
             subject = resolve(
-                pattern.subject, row, manager.iri_literal_parser, prefixes
+                pattern.subject,
+                row,
+                manager.iri_literal_parser,
+                prefixes,
             )
             obj = resolve(pattern.object, row, manager.iri_literal_parser, prefixes)
             if subject is None or obj is None:
