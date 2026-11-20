@@ -1,12 +1,3 @@
-# Expansion of property paths in witnesses.
-#
-# A witness shows a property path only by its two endpoints. To show why the
-# endpoints are connected, find one concrete chain of triples between them:
-# enumerate the fixed-length chains the path allows (sequences, alternatives,
-# inverses, negated property sets, repetitions up to a maximum length), and query
-# for the shortest one that exists, with both endpoints bound (iterative
-# deepening, one query per chain length). Engine-agnostic, see PATHS.md.
-
 import itertools
 from dataclasses import dataclass
 

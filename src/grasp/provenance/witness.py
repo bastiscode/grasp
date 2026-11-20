@@ -1,17 +1,3 @@
-# Why-provenance for SPARQL answers via query rewriting.
-#
-# For one result row of a SELECT query, a witness query keeps the WHERE clause,
-# drops grouping, aggregation, ordering and slicing, binds the row's projected
-# variables with VALUES and returns all variables. Substituting each returned
-# solution into the triple patterns of the WHERE clause yields one witness: a set
-# of concrete triples from the knowledge graph that produce the row.
-#
-# OPTIONAL and UNION branches are instrumented with marker variables, so that
-# only the patterns of branches that actually matched are instantiated. Patterns
-# in MINUS, (NOT) EXISTS and SERVICE are never instantiated; FILTERs are reported
-# as conditions that held. Everything here is pure and works on any knowledge
-# graph; execution and labeling happen in grasp.provenance.
-
 from dataclasses import dataclass, field
 from typing import Any
 
