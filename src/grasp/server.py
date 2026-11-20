@@ -32,6 +32,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from grasp.configs import ServerConfig
 from grasp.core import generate, load_notes, setup
+from grasp.manager import UnknownKgError, find_manager
 from grasp.model import Message
 from grasp.provenance import compute_witnesses
 from grasp.provenance.state import ProvenanceState
@@ -274,8 +275,9 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                     headers={"Retry-After": str(ceil(retry_after))},
                 )
 
-        manager = next((m for m in managers if m.kg == request.kg), None)
-        if manager is None:
+        try:
+            manager = find_manager(managers, request.kg)
+        except UnknownKgError:
             raise HTTPException(status_code=400, detail="Unsupported knowledge graph")
 
         def run_provenance() -> dict:
