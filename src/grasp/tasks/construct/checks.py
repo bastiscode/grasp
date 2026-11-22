@@ -50,7 +50,9 @@ FRACTIONAL = {XSD + name for name in ["decimal", "double", "float"]}
 
 class SourceProperty(BaseModel):
     iri: str
-    # distinct literal values and number of links to other entities
+    # number of triples, distinct literal values and number of links to
+    # other entities
+    triples: int = 0
     values: set[str] = set()
     links: int = 0
 
@@ -67,8 +69,9 @@ class Coverage(BaseModel):
     matched: int
     missing: list[str] = []
     links: int = 0
-    # whether the links have an effect on the output of a query, and the
-    # largest number of triples in the output of a query that depend on them
+    triples: int = 0
+    # whether the property has an effect on the output of a query, and the
+    # largest number of triples in the output of a query that depend on it
     used: bool = False
     dependent: int = 0
     explanation: str | None = None
@@ -81,8 +84,8 @@ class Coverage(BaseModel):
 
     @property
     def partial(self) -> bool:
-        # fewer triples depend on the links than there are links
-        return 0 < self.dependent < self.links
+        # fewer triples depend on the property than it has triples
+        return 0 < self.dependent < self.triples
 
 
 class Finding(BaseModel):
@@ -155,6 +158,7 @@ def source_profile(triples: list[Triple]) -> Source:
             continue
 
         source = properties.setdefault(prop, SourceProperty(iri=prop))
+        source.triples += 1
         if obj.typ == "literal":
             source.values.add(obj.value)
         else:
@@ -208,6 +212,7 @@ def coverage(
                 matched=len(source_prop.values) - len(missing),
                 missing=missing[:MAX_EXAMPLES],
                 links=source_prop.links,
+                triples=source_prop.triples,
                 used=prop in effects,
                 dependent=effects.get(prop, 0),
                 explanation=explanations.get(prop),
@@ -461,8 +466,8 @@ def check_output(
 ) -> Report:
     # facts about the output of the queries on the sample; properties of the
     # sample without any trace in the output are errors unless explained.
-    # effects has the link properties with an effect on the output of a
-    # query and how many triples of its output depend on them at most,
+    # effects has the properties with an effect on the output of a query
+    # and how many triples of its output depend on them at most,
     # empty the UNION branches without matches by query, and vocabulary says
     # which classes and properties are from other knowledge graphs
     findings = []
@@ -499,10 +504,10 @@ def check_output(
             Finding(
                 level="warning",
                 message=f"{len(partial):,} properties of the knowledge graph have "
-                "more links in the sample than triples in the output of a query "
-                "that depend on them, check that no links are dropped",
+                "more triples in the sample than triples in the output of a "
+                "query that depend on them, check that nothing is dropped",
                 examples=[
-                    f"<{cov.iri}> ({cov.dependent:,} triples for {cov.links:,} links)"
+                    f"<{cov.iri}> ({cov.dependent:,} for {cov.triples:,} triples)"
                     for cov in partial
                 ],
             )
@@ -550,11 +555,13 @@ def format_coverage(cov: Coverage) -> str:
             )
         parts.append(part)
     if cov.links:
-        if cov.partial:
-            used = f"{cov.dependent:,} triples of the output depend on them"
-        else:
-            used = "used" if cov.used else "without effect on the output"
+        used = "used" if cov.used else "without effect on the output"
         parts.append(f"{cov.links:,} links, {used}")
+    if cov.partial:
+        parts.append(
+            f"{cov.dependent:,} triples of the output depend on its "
+            f"{cov.triples:,} triples"
+        )
     fmt = f"<{cov.iri}>: {'; '.join(parts)}"
     if cov.explanation is not None:
         fmt += f"; explanation: {cov.explanation}"

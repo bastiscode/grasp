@@ -42,9 +42,10 @@ explanations given for properties without values in the output: a property is \
 only redundant if all of its information is in the output in another way, \
 compare its values in the knowledge graph with what it is said to duplicate. \
 Look into properties with missing values, which can point to values dropped by \
-a filter or a failed conversion, into properties with more links than triples \
-that depend on them, which can point to dropped links, and into UNION \
-branches that match nothing, which point to wrong patterns.
+a filter or a failed conversion, into properties with more triples than \
+triples of the output that depend on them, which can point to dropped \
+information, and into UNION branches that match nothing, which point to wrong \
+patterns.
 - Entities: The classes fit what the entities are, and every entity has one \
 IRI that is built in the same way in all queries. Compare the instances per \
 class in the sample and in the output for lost or merged entities. Things \
@@ -66,9 +67,10 @@ the data says."""
 - Existing vocabulary: The other knowledge graphs ({", ".join(others)}) \
 provide existing classes and properties, and the checks say which ones of the \
 output they define. Verify that these are used according to their \
-definitions, domains and ranges, and search the other knowledge graphs for \
-the classes and properties that the queries define themselves: one that \
-duplicates an existing one is an issue."""
+definitions, domains and ranges, and that no general one stands for relations \
+with different meanings. Search the other knowledge graphs for the classes \
+and properties that the queries define themselves: one that duplicates an \
+existing one is an issue."""
     if agentic:
         info += """
 - Competency questions, if given: Write and execute a query on the output for \

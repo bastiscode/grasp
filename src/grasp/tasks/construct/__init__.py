@@ -133,7 +133,7 @@ existing name replaces the query and its output. A query that fails or \
 produces no triples is not saved.
 
 Returns a summary of the produced triples, the UNION branches that match \
-nothing on the sample, and the link properties of the knowledge graph that the \
+nothing on the sample, and the properties of the knowledge graph that the \
 query mentions without effect on its output. The query has to run on the full \
 knowledge graph later, so it must not have a LIMIT, and it cannot have FROM \
 or GRAPH clauses.""",
@@ -210,7 +210,9 @@ for the new model. Before you define a class or property, search them for one \
 with the same meaning, and use it under its IRI wherever its definition, \
 domain and range fit. Define your own classes and properties only for what \
 they do not cover, and relate these to existing ones where possible, e.g. \
-with rdfs:subClassOf or rdfs:subPropertyOf. The CONSTRUCT queries themselves \
+with rdfs:subClassOf or rdfs:subPropertyOf. Do not use one general existing \
+property for relations with different meanings, their distinction is \
+information as well. The CONSTRUCT queries themselves \
 only read from {kg}."""
     return info
 
@@ -255,8 +257,8 @@ class Draft:
     # prefixes and IRIs of the query
     prefixes: dict[str, str]
     iris: set[str]
-    # link properties of the sample with an effect on the output, with
-    # the number of triples that depend on them
+    # properties of the sample with an effect on the output, with the
+    # number of triples that depend on them
     effects: dict[str, int]
     # UNION branches without matches on the sample
     empty: list[str]
@@ -570,8 +572,7 @@ Classes of the knowledge graph with their number of instances in the sample:
         lines = set(output.split("\n"))
         unused = []
         for prop in sorted(draft.iris):
-            source = self.source.properties.get(prop)
-            if source is None or not source.links:
+            if prop not in self.source.properties:
                 continue
             ablated = self.scratch.construct(
                 without_property(self.manager, draft.sparql, prop),
@@ -584,7 +585,7 @@ Classes of the knowledge graph with their number of instances in the sample:
                 unused.append(f"<{prop}>")
         if unused:
             notes.append(
-                "The output is the same without these link properties of the "
+                "The output is the same without these properties of the "
                 "knowledge graph, the patterns they are in match nothing or do "
                 f"not contribute:\n{format_list(unused)}"
             )

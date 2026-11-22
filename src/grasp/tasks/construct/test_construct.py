@@ -251,7 +251,7 @@ def test_check_output():
     assert [error.examples for error in report.errors][0] == ["http://s/nope"]
 
     # fewer triples depend on the links than there are links
-    source.properties["http://s/country"].links = 5
+    source.properties["http://s/country"].triples = 5
     report = check_output(
         source,
         triples,
@@ -262,12 +262,13 @@ def test_check_output():
     )
     formatted = format_report(report)
     assert (
-        "- 1 properties of the knowledge graph have more links in the sample "
-        "than triples in the output of a query that depend on them, check "
-        "that no links are dropped: <http://s/country> (3 triples for 5 links)"
+        "- 1 properties of the knowledge graph have more triples in the "
+        "sample than triples in the output of a query that depend on them, "
+        "check that nothing is dropped: <http://s/country> (3 for 5 triples)"
     ) in formatted
     assert (
-        "- <http://s/country>: 5 links, 3 triples of the output depend on them"
+        "- <http://s/country>: 1 links, used; 3 triples of the output depend "
+        "on its 5 triples"
     ) in formatted
 
 
@@ -451,7 +452,7 @@ def test_query_without_effect(scratch, monkeypatch):
     result = call(task, "test_construct", name="cities", sparql=sparql)
     assert "2 of 2 UNION branches match nothing on the sample:" in result
     assert "- { ?row a <http://s/Town> }" in result
-    assert "The output is the same without these link properties" in result
+    assert "The output is the same without these properties" in result
     assert result.endswith("- <http://s/country>")
 
     report = call(task, "check_output")
