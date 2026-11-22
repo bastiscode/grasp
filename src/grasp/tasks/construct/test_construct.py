@@ -202,7 +202,7 @@ def test_source_profile():
 def test_check_output():
     source = source_profile(parse_ntriples(SAMPLE))
     triples = parse_ntriples(OUTPUT)
-    report = check_output(source, triples, set(), {}, {}, Vocabulary())
+    report = check_output(source, triples, {}, {}, {}, Vocabulary())
     coverage = {cov.iri: cov for cov in report.coverage}
     # the number in another format, one name as label and one in an IRI
     assert coverage["http://s/population"].matched == 1
@@ -225,7 +225,7 @@ def test_check_output():
     report = check_output(
         source,
         triples,
-        {"http://s/country"},
+        {"http://s/country": 1},
         explanations,
         empty,
         Vocabulary(),
@@ -243,12 +243,32 @@ def test_check_output():
     report = check_output(
         source,
         triples,
-        set(),
+        {},
         {"http://s/nope": "Unknown."},
         {},
         Vocabulary(),
     )
     assert [error.examples for error in report.errors][0] == ["http://s/nope"]
+
+    # fewer triples depend on the links than there are links
+    source.properties["http://s/country"].links = 5
+    report = check_output(
+        source,
+        triples,
+        {"http://s/country": 3},
+        explanations,
+        {},
+        Vocabulary(),
+    )
+    formatted = format_report(report)
+    assert (
+        "- 1 properties of the knowledge graph have more links in the sample "
+        "than triples in the output of a query that depend on them, check "
+        "that no links are dropped: <http://s/country> (3 triples for 5 links)"
+    ) in formatted
+    assert (
+        "- <http://s/country>: 5 links, 3 triples of the output depend on them"
+    ) in formatted
 
 
 def test_output_findings():
@@ -257,7 +277,7 @@ def test_output_findings():
         '<http://o/a> <http://o/p> "1" .\n'
         '<http://o/p> <http://www.w3.org/2000/01/rdf-schema#label> "p" .\n'
     )
-    report = check_output(source_profile([]), triples, set(), {}, {}, Vocabulary())
+    report = check_output(source_profile([]), triples, {}, {}, {}, Vocabulary())
     assert [finding.message for finding in report.findings] == [
         "1 entities without rdf:type",
         "1 entities without rdfs:label",
@@ -282,7 +302,7 @@ def test_value_findings():
     report = check_output(
         source_profile([]),
         parse_ntriples("\n".join(lines)),
-        set(),
+        {},
         {},
         {},
         Vocabulary(),
@@ -336,6 +356,10 @@ def test_vocabulary(scratch, monkeypatch):
     scratch.output = OUTPUT.replace("<http://o/City>", "<http://v/City>").replace(
         "<http://o/population>", "<http://v/population>"
     )
+    scratch.output += (
+        "<http://o/country> <http://www.w3.org/2000/01/rdf-schema#range> "
+        "<http://v/City> .\n"
+    )
     sparql = CITIES.replace("o:City", "<http://v/City>")
     call(task, "test_construct", name="cities", sparql=sparql)
     report = call(task, "check_output")
@@ -344,6 +368,7 @@ def test_vocabulary(scratch, monkeypatch):
         "- 1 classes and properties in a namespace of ontology that it does "
         "not define: http://v/population"
     ) in report
+    assert "linked by <http://www.w3.org/2000/01/rdf-schema#range>" not in report
     # what another knowledge graph defines needs no label
     assert (
         "- 2 classes and properties without rdfs:label: http://o/country, "

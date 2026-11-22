@@ -42,8 +42,9 @@ explanations given for properties without values in the output: a property is \
 only redundant if all of its information is in the output in another way, \
 compare its values in the knowledge graph with what it is said to duplicate. \
 Look into properties with missing values, which can point to values dropped by \
-a filter or a failed conversion, and into UNION branches that match nothing, \
-which point to wrong patterns.
+a filter or a failed conversion, into properties with more links than triples \
+that depend on them, which can point to dropped links, and into UNION \
+branches that match nothing, which point to wrong patterns.
 - Entities: The classes fit what the entities are, and every entity has one \
 IRI that is built in the same way in all queries. Compare the instances per \
 class in the sample and in the output for lost or merged entities. Things \

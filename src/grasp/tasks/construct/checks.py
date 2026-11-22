@@ -67,8 +67,10 @@ class Coverage(BaseModel):
     matched: int
     missing: list[str] = []
     links: int = 0
-    # whether the links have an effect on the output of a query
+    # whether the links have an effect on the output of a query, and the
+    # largest number of triples in the output of a query that depend on them
     used: bool = False
+    dependent: int = 0
     explanation: str | None = None
 
     @property
@@ -76,6 +78,11 @@ class Coverage(BaseModel):
         if self.values:
             return self.matched == 0
         return not self.used
+
+    @property
+    def partial(self) -> bool:
+        # fewer triples depend on the links than there are links
+        return 0 < self.dependent < self.links
 
 
 class Finding(BaseModel):
@@ -120,6 +127,18 @@ def schema_nodes(triples: list[Triple]) -> set[str]:
     nodes = {prop for _, prop, _ in triples}
     nodes.update(obj.value for _, prop, obj in triples if prop == RDF_TYPE)
     return nodes
+
+
+def schema_terms(triples: list[Triple]) -> set[str]:
+    # classes and properties together with what is said to relate to them,
+    # like the classes they are subclasses of
+    schema = schema_nodes(triples)
+    related = {
+        obj.value
+        for subj, prop, obj in triples
+        if subj.value in schema and prop != RDF_TYPE and obj.typ == "uri"
+    }
+    return schema | related
 
 
 def source_profile(triples: list[Triple]) -> Source:
@@ -173,7 +192,7 @@ def output_keys(triples: list[Triple]) -> set[str]:
 def coverage(
     source: Source,
     triples: list[Triple],
-    used: set[str],
+    effects: dict[str, int],
     explanations: dict[str, str],
 ) -> list[Coverage]:
     keys = output_keys(triples)
@@ -189,7 +208,8 @@ def coverage(
                 matched=len(source_prop.values) - len(missing),
                 missing=missing[:MAX_EXAMPLES],
                 links=source_prop.links,
-                used=prop in used,
+                used=prop in effects,
+                dependent=effects.get(prop, 0),
                 explanation=explanations.get(prop),
             )
         )
@@ -404,8 +424,12 @@ def output_findings(triples: list[Triple], vocabulary: Vocabulary) -> list[Findi
         if prop == RDF_TYPE:
             continue
         kinds[prop].add(object_kind(obj))
-        if obj.typ == "uri" and obj.value not in subjects:
-            dangling[prop].add(obj.value)
+        if obj.typ != "uri" or obj.value in subjects:
+            continue
+        elif obj.value.startswith(W3C) or obj.value in vocabulary.defined:
+            # described elsewhere
+            continue
+        dangling[prop].add(obj.value)
 
     for prop, targets in sorted(dangling.items()):
         warn(
@@ -430,14 +454,15 @@ def output_findings(triples: list[Triple], vocabulary: Vocabulary) -> list[Findi
 def check_output(
     source: Source,
     triples: list[Triple],
-    used: set[str],
+    effects: dict[str, int],
     explanations: dict[str, str],
     empty: dict[str, list[str]],
     vocabulary: Vocabulary,
 ) -> Report:
     # facts about the output of the queries on the sample; properties of the
     # sample without any trace in the output are errors unless explained.
-    # used are the link properties with an effect on the output of a query,
+    # effects has the link properties with an effect on the output of a
+    # query and how many triples of its output depend on them at most,
     # empty the UNION branches without matches by query, and vocabulary says
     # which classes and properties are from other knowledge graphs
     findings = []
@@ -452,7 +477,7 @@ def check_output(
             )
         )
 
-    covered = coverage(source, triples, used, explanations)
+    covered = coverage(source, triples, effects, explanations)
     unexplained = [
         cov.iri for cov in covered if cov.unmatched and cov.explanation is None
     ]
@@ -465,6 +490,21 @@ def check_output(
                 "the output of any query; map them, or explain each of them when "
                 "submitting",
                 examples=unexplained,
+            )
+        )
+
+    partial = [cov for cov in covered if cov.partial]
+    if partial:
+        findings.append(
+            Finding(
+                level="warning",
+                message=f"{len(partial):,} properties of the knowledge graph have "
+                "more links in the sample than triples in the output of a query "
+                "that depend on them, check that no links are dropped",
+                examples=[
+                    f"<{cov.iri}> ({cov.dependent:,} triples for {cov.links:,} links)"
+                    for cov in partial
+                ],
             )
         )
 
@@ -510,7 +550,10 @@ def format_coverage(cov: Coverage) -> str:
             )
         parts.append(part)
     if cov.links:
-        used = "used" if cov.used else "without effect on the output"
+        if cov.partial:
+            used = f"{cov.dependent:,} triples of the output depend on them"
+        else:
+            used = "used" if cov.used else "without effect on the output"
         parts.append(f"{cov.links:,} links, {used}")
     fmt = f"<{cov.iri}>: {'; '.join(parts)}"
     if cov.explanation is not None:
@@ -523,7 +566,10 @@ def format_report(report: Report) -> str:
     partial = [
         cov
         for cov in report.coverage
-        if cov.matched < cov.values or cov.unmatched or cov.explanation is not None
+        if cov.matched < cov.values
+        or cov.unmatched
+        or cov.partial
+        or cov.explanation is not None
     ]
     partial.sort(key=lambda cov: (cov.matched / max(cov.values, 1), cov.iri))
     full = len(report.coverage) - len(partial)

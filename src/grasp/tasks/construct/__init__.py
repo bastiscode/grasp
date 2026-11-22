@@ -27,7 +27,7 @@ from grasp.tasks.construct.checks import (
     Vocabulary,
     check_output,
     format_report,
-    schema_nodes,
+    schema_terms,
     source_profile,
 )
 from grasp.tasks.construct.sample import SampleConfig
@@ -48,12 +48,13 @@ NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 MAX_EXAMPLES = 3
 
-# namespaces of rdf, rdfs and owl, their terms are not looked up in the
-# other knowledge graphs
+# namespaces of rdf, rdfs, owl and xsd, their terms are not looked up in
+# the other knowledge graphs
 CORE = {
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "http://www.w3.org/2000/01/rdf-schema#",
     "http://www.w3.org/2002/07/owl#",
+    "http://www.w3.org/2001/XMLSchema#",
 }
 
 # stands in for a property to test its effect on the output of a query
@@ -254,8 +255,9 @@ class Draft:
     # prefixes and IRIs of the query
     prefixes: dict[str, str]
     iris: set[str]
-    # link properties of the sample with an effect on the output
-    used: set[str]
+    # link properties of the sample with an effect on the output, with
+    # the number of triples that depend on them
+    effects: dict[str, int]
     # UNION branches without matches on the sample
     empty: list[str]
 
@@ -293,7 +295,7 @@ def prepare_query(manager: KgManager, sparql: str) -> Draft:
         [],
         parse_prefixes(find(parse, "Prologue")),
         query_iris(manager, sparql),
-        set(),
+        {},
         [],
     )
 
@@ -495,26 +497,29 @@ Classes of the knowledge graph with their number of instances in the sample:
                 triple for draft in self.drafts.values() for triple in draft.triples
             )
         )
-        used = set().union(*(draft.used for draft in self.drafts.values()))
+        effects: dict[str, int] = {}
+        for draft in self.drafts.values():
+            for prop, dependent in draft.effects.items():
+                effects[prop] = max(effects.get(prop, 0), dependent)
         empty = {
             name: draft.empty for name, draft in self.drafts.items() if draft.empty
         }
         return check_output(
             self.source,
             triples,
-            used,
+            effects,
             explanations,
             empty,
             self.vocabulary(triples),
         )
 
     def vocabulary(self, triples: list[Triple]) -> Vocabulary:
-        # which classes and properties of the output the other knowledge
-        # graphs define
+        # which classes and properties of the output, and of those they
+        # are related to, the other knowledge graphs define
         timeout = self.construct_config.timeout
         terms = sorted(
             term
-            for term in schema_nodes(triples)
+            for term in schema_terms(triples)
             if INVALID_IRI.search(term) is None and namespace(term) not in CORE
         )
         vocabulary = Vocabulary()
@@ -572,8 +577,9 @@ Classes of the knowledge graph with their number of instances in the sample:
                 without_property(self.manager, draft.sparql, prop),
                 [SAMPLE_GRAPH],
             )
-            if set(ablated.split("\n")) != lines:
-                draft.used.add(prop)
+            without = set(ablated.split("\n"))
+            if without != lines:
+                draft.effects[prop] = len(lines - without)
             else:
                 unused.append(f"<{prop}>")
         if unused:
