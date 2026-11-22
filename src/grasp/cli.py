@@ -54,6 +54,9 @@ from grasp.sparql.types import STANDARD_INDEX_NAMES
 from grasp.server import serve
 from grasp.shapes import load_profiles, save_profiles
 from grasp.tasks import Task, get_task
+from grasp.tasks.construct import construct_config, materialize
+from grasp.tasks.construct.sample import build_sample
+from grasp.tasks.construct.scratch import SAMPLE_GRAPH, Scratch
 from grasp.utils import (
     format_trace,
     get_available_knowledge_graphs,
@@ -751,6 +754,30 @@ def parse_args() -> argparse.Namespace:
         f"info, {', '.join(STANDARD_INDEX_NAMES)}, shapes)",
     )
 
+    # remodel a knowledge graph with CONSTRUCT queries
+    construct_parser = subparsers.add_parser(
+        "construct",
+        help="Remodel a knowledge graph with SPARQL CONSTRUCT queries "
+        "written by an AI agent",
+    )
+    add_config_arg(construct_parser)
+    construct_parser.add_argument(
+        "output_dir",
+        type=str,
+        help="Directory for the queries, their output and the trace",
+    )
+    construct_parser.add_argument(
+        "--rebuild-sample",
+        action="store_true",
+        help="Build the sample of the knowledge graph again",
+    )
+    construct_parser.add_argument(
+        "--no-output",
+        action="store_true",
+        help="Do not run the queries on the full knowledge graph",
+    )
+    add_overwrite_arg(construct_parser)
+
     # visualize trace from GRASP output
     show_parser = subparsers.add_parser(
         "show",
@@ -1347,6 +1374,64 @@ def shapes_build_grasp(args: argparse.Namespace) -> None:
     )
 
 
+def construct_grasp(args: argparse.Namespace) -> None:
+    logger = get_logger("GRASP CONSTRUCT", args.log_level)
+    config = GraspConfig(**load_config(args.config))
+    construct = construct_config(config)
+
+    if os.path.exists(args.output_dir) and not args.overwrite:
+        logger.error(f"{args.output_dir} already exists, use --overwrite")
+        return
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    managers, _ = setup(config)
+    manager = find_manager(managers, construct.kg)
+    notes, kg_notes = load_notes(config)
+
+    scratch = Scratch(construct.scratch_endpoint, construct.timeout)
+    if args.rebuild_sample or SAMPLE_GRAPH not in scratch.graphs():
+        stats = build_sample(manager, scratch, construct.sample, logger)
+        logger.info(
+            f"Built a sample with {stats.triples:,} triples for "
+            f"{stats.subjects:,} subjects of {stats.classes:,} classes"
+        )
+
+    *_, result = generate(
+        "construct",
+        f'Remodel the knowledge graph "{manager.kg}" with SPARQL CONSTRUCT queries.',
+        config,
+        managers,
+        kg_notes,
+        notes,
+        logger=logger,
+        yield_output=True,
+    )
+    dump_json(result, os.path.join(args.output_dir, "trace.json"), indent=2)
+
+    output = result["output"]
+    if output is None:
+        logger.error("No queries were saved")
+        return
+    elif not output["submitted"]:
+        logger.warning("The saved queries were not submitted")
+
+    query_dir = os.path.join(args.output_dir, "queries")
+    os.makedirs(query_dir, exist_ok=True)
+    for query in output["queries"]:
+        dump_text(query["sparql"], os.path.join(query_dir, f"{query['name']}.sparql"))
+
+    if args.no_output:
+        return
+
+    materialize(
+        manager,
+        output["queries"],
+        os.path.join(args.output_dir, "output.nt"),
+        construct.full_timeout,
+        logger,
+    )
+
+
 def main():
     args = parse_args()
     if args.all_loggers:
@@ -1396,6 +1481,9 @@ def main():
 
     elif args.command == "setup":
         setup_grasp(args)
+
+    elif args.command == "construct":
+        construct_grasp(args)
 
     elif args.command == "show":
         show_grasp(args)

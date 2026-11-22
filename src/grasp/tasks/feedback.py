@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from grasp.model import FunctionDefinition, Message, Response
+from grasp.model import FunctionDefinition, Message, Response, ToolCallResult
 from grasp.tasks.base import GraspTask
 
 
@@ -56,7 +56,7 @@ class FeedbackTask(GraspTask):
         fn_args: dict,
         known: set[str],
         example_indices: dict | None,
-    ) -> str:
+    ) -> str | ToolCallResult:
         if fn_name != "give_feedback":
             raise ValueError(f"Unknown function {fn_name}")
 
