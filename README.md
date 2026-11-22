@@ -795,6 +795,12 @@ full knowledge graph in `output.nt`, and the trace of the run in `trace.json`.
 An existing sample on the scratch server is reused, pass `--rebuild-sample` to
 build it again, e.g. for another knowledge graph.
 
+Further knowledge graphs under `knowledge_graphs` in the config provide existing
+vocabulary for the new model, e.g. ontologies like schema.org that are served
+by a SPARQL endpoint and set up with class and property indices. The agent
+searches them for fitting classes and properties before it defines its own, and
+the checks report which classes and properties of the output they define.
+
 With `feedback: true` and more than one step in `feedback_max_steps`, a
 second agent reviews each submission. It gets the queries, the results of
 automatic checks of their output on the sample, and the competency questions

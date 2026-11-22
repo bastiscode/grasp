@@ -15,14 +15,19 @@ from grasp.tasks.feedback import FeedbackTask
 from grasp.utils import format_enumerate, format_section
 
 
-def system_information(kg: str, agentic: bool) -> str:
+def system_information(kg: str, others: list[str], agentic: bool) -> str:
     info = f"""\
 You are an independent reviewer of SPARQL CONSTRUCT queries that remodel the \
 knowledge graph "{kg}" as a well-formed and semantically meaningful knowledge \
 graph. The knowledge graph is typically a direct mapping of structured data to \
-RDF. The queries were run on a sample of it, which has some instances of every \
-class together with what they link to. You are given the queries and the \
-results of automatic checks of their output on the sample."""
+RDF. The new knowledge graph should have all of its information, but not the \
+form it has there: datatypes, names, keys and references given as strings \
+often stem from the format of the original data and not from what the data \
+means, so that the knowledge graph has something in a certain way does not \
+justify keeping it that way. The queries were run on a sample of the knowledge \
+graph, which has some instances of every class together with what they link \
+to. You are given the queries and the results of automatic checks of their \
+output on the sample."""
     if agentic:
         info += """ \
 Query the output on the sample with execute_output, and the knowledge graph \
@@ -32,7 +37,7 @@ output only covers the sample."""
     info += """
 
 Review the following aspects:
-- Coverage: All data of the knowledge graph is carried over. Verify the \
+- Coverage: All information of the knowledge graph is carried over. Verify the \
 explanations given for properties without values in the output: a property is \
 only redundant if all of its information is in the output in another way, \
 compare its values in the knowledge graph with what it is said to duplicate. \
@@ -41,15 +46,28 @@ a filter or a failed conversion, and into UNION branches that match nothing, \
 which point to wrong patterns.
 - Entities: The classes fit what the entities are, and every entity has one \
 IRI that is built in the same way in all queries. Compare the instances per \
-class in the sample and in the output for lost or merged entities.
+class in the sample and in the output for lost or merged entities. Things \
+that several entities share or that can have properties of their own are \
+entities, also if the knowledge graph only has them as strings.
 - Links: References to other entities are links to their IRIs and not \
 literals, the links resolve to entities in the output, and they point in the \
 right direction.
-- Values: Literals have fitting datatypes, markers for missing values are not \
-in the output, and information from property names like units is kept.
-- Vocabulary: Classes and properties have clear names in one namespace that \
-fits the domain, are described at least by a label, and the same concept is \
-not modeled in two ways."""
+- Values: Literals have the datatypes that fit what they mean, markers for \
+missing values are not in the output, and information from property names \
+like units is kept.
+- Vocabulary: Classes and properties are named after what they mean, are \
+described at least by a label, and the same concept is not modeled in two \
+ways. For each property, look at some of its triples in the output with the \
+labels of subject and object, and verify that its name and direction say what \
+the data says."""
+    if others:
+        info += f"""
+- Existing vocabulary: The other knowledge graphs ({", ".join(others)}) \
+provide existing classes and properties, and the checks say which ones of the \
+output they define. Verify that these are used according to their \
+definitions, domains and ranges, and search the other knowledge graphs for \
+the classes and properties that the queries define themselves: one that \
+duplicates an existing one is an issue."""
     if agentic:
         info += """
 - Competency questions, if given: Write and execute a query on the output for \
@@ -78,7 +96,8 @@ class ConstructFeedbackTask(FeedbackTask):
         self.output_manager: KgManager | None = None
 
     def system_information(self) -> str:
-        return system_information(self.manager.kg, self.kg_functions)
+        others = [manager.kg for manager in self.managers if manager != self.manager]
+        return system_information(self.manager.kg, others, self.kg_functions)
 
     def rules(self) -> list[str]:
         return [

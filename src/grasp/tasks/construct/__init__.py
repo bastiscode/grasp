@@ -10,6 +10,7 @@ from grasp.configs import GraspConfig
 from grasp.functions import execute_sparql, query_iris
 from grasp.manager import KgManager, find_manager
 from grasp.model import FunctionDefinition, Message, ToolCallResult
+from grasp.sparql.types import AskResult, SelectResult
 from grasp.sparql.utils import (
     find,
     find_all,
@@ -23,13 +24,16 @@ from grasp.tasks.base import GraspTask
 from grasp.tasks.construct.checks import (
     Report,
     Source,
+    Vocabulary,
     check_output,
     format_report,
+    schema_nodes,
     source_profile,
 )
 from grasp.tasks.construct.sample import SampleConfig
 from grasp.tasks.construct.scratch import (
     GRAPHS,
+    INVALID_IRI,
     SAMPLE_GRAPH,
     Scratch,
     Triple,
@@ -43,6 +47,14 @@ from grasp.utils import FunctionCallException, clip, format_list
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 MAX_EXAMPLES = 3
+
+# namespaces of rdf, rdfs and owl, their terms are not looked up in the
+# other knowledge graphs
+CORE = {
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "http://www.w3.org/2000/01/rdf-schema#",
+    "http://www.w3.org/2002/07/owl#",
+}
 
 # stands in for a property to test its effect on the output of a query
 ABLATED = f"<{GRAPHS}ablated>"
@@ -171,7 +183,9 @@ one or more SPARQL CONSTRUCT queries that produce the new graph from it. The \
 knowledge graph is typically a direct mapping of structured data to RDF, e.g. \
 with one class per table, one entity per row and one property per column. \
 Where it already models something well, keep or refine that. Together, the \
-queries should carry over all of its data.
+queries should carry over all of its information. The form it has there is \
+not to be kept: datatypes, names, keys and references given as strings often \
+stem from the format of the original data and not from what the data means.
 
 You should follow a step-by-step approach:
 1. Explore the knowledge graph with the available functions. Find out which \
@@ -179,8 +193,8 @@ classes and properties exist, what the values look like, how missing values \
 are marked, and how entities refer to each other.
 2. Design the new model: which entities exist and what their classes are, \
 how their IRIs are built from stable identifiers in a namespace that fits \
-the domain, which properties they have, and which values are links to other \
-entities.
+the domain, which properties they have, which values are links to other \
+entities, and which values are entities of their own.
 3. Write the queries and test each one with test_construct. Tests run on a \
 sample of the knowledge graph, which has some instances of every class \
 together with what they link to. Inspect the output of all saved queries with \
@@ -190,9 +204,13 @@ They are then run on the full knowledge graph."""
     if others:
         info += f"""
 
-The other knowledge graphs ({", ".join(others)}) are references for existing \
-vocabulary. Use their classes and properties in the new model where they fit, \
-but do not write queries over them."""
+The other knowledge graphs ({", ".join(others)}) provide existing vocabulary \
+for the new model. Before you define a class or property, search them for one \
+with the same meaning, and use it under its IRI wherever its definition, \
+domain and range fit. Define your own classes and properties only for what \
+they do not cover, and relate these to existing ones where possible, e.g. \
+with rdfs:subClassOf or rdfs:subPropertyOf. The CONSTRUCT queries themselves \
+only read from {kg}."""
     return info
 
 
@@ -204,14 +222,22 @@ def rules() -> list[str]:
         "e.g. with OPTIONAL, so that it does not suppress the other triples of "
         "the entity. Never output a marker for a missing value as a value.",
         "Model references to other entities as links to their IRIs, not as "
-        "literals, and check the direction of each link.",
+        "literals. A value that names a thing which several entities share or "
+        "which can have properties of its own is such an entity, also if the "
+        "knowledge graph only has it as a string.",
+        "Name classes and properties after what they mean, so that a triple "
+        "reads correctly from subject to object. Verify the name and direction "
+        "of each property on some of its triples in the output.",
         "Build the IRIs of an entity type in exactly the same way in every "
         "query, and use the same properties and namespace for the same concept "
         "across queries, so that the outputs combine into one graph. Encode "
         "values within IRIs, e.g. with ENCODE_FOR_URI.",
-        "Give literals fitting datatypes, and keep information that only the "
-        "name of a property carries, like a unit, currency or scale.",
-        "Describe the classes and properties of the new model themselves, at "
+        "Give literals the datatype that fits what they mean, which can "
+        "differ from the one in the knowledge graph, e.g. xsd:integer for a "
+        "count, xsd:gYear for a year or xsd:date for a date. Keep information "
+        "that only the name of a property carries, like a unit, currency or "
+        "scale.",
+        "Describe the classes and properties that you define yourself, at "
         "least with an rdfs:label each. A query with an empty WHERE clause "
         "can produce such triples.",
         "Do not rely on specific instances being part of the sample, queries "
@@ -313,6 +339,33 @@ def union_branches(manager: KgManager, sparql: str) -> list[str]:
     return branches
 
 
+def namespace(iri: str) -> str:
+    return iri[: max(iri.rfind("#"), iri.rfind("/")) + 1]
+
+
+def defines(manager: KgManager, iris: list[str], timeout: float) -> set[str]:
+    # the IRIs the knowledge graph says something about
+    result = manager.execute_sparql(
+        "SELECT DISTINCT ?s WHERE { VALUES ?s { "
+        + " ".join(f"<{iri}>" for iri in iris)
+        + " } ?s ?p ?o }",
+        request_timeout=(6.0, timeout),
+        read_timeout=timeout,
+    )
+    assert isinstance(result, SelectResult)
+    return {row["s"].value for row in result.rows()}
+
+
+def has_namespace(manager: KgManager, prefix: str, timeout: float) -> bool:
+    result = manager.execute_sparql(
+        f'ASK {{ ?s ?p ?o FILTER(STRSTARTS(STR(?s), "{prefix}")) }}',
+        request_timeout=(6.0, timeout),
+        read_timeout=timeout,
+    )
+    assert isinstance(result, AskResult)
+    return result.boolean
+
+
 def output_manager(
     scratch: Scratch,
     manager: KgManager,
@@ -385,6 +438,11 @@ class ConstructTask(GraspTask):
             self.construct_config.scratch_endpoint,
             self.construct_config.timeout,
         )
+        self.others = [manager for manager in self.managers if manager != self.manager]
+        # classes and properties of the output that the other knowledge
+        # graphs define, and which namespaces they have, as looked up so far
+        self.defined: dict[str, str] = {}
+        self.namespaces: dict[tuple[str, str], bool] = {}
         self.source: Source | None = None
         self.drafts: dict[str, Draft] = {}
         self.output_manager: KgManager | None = None
@@ -394,7 +452,7 @@ class ConstructTask(GraspTask):
         self.report: Report | None = None
 
     def system_information(self) -> str:
-        others = [manager.kg for manager in self.managers if manager != self.manager]
+        others = [manager.kg for manager in self.others]
         return system_information(self.manager.kg, others)
 
     def rules(self) -> list[str]:
@@ -441,7 +499,53 @@ Classes of the knowledge graph with their number of instances in the sample:
         empty = {
             name: draft.empty for name, draft in self.drafts.items() if draft.empty
         }
-        return check_output(self.source, triples, used, explanations, empty)
+        return check_output(
+            self.source,
+            triples,
+            used,
+            explanations,
+            empty,
+            self.vocabulary(triples),
+        )
+
+    def vocabulary(self, triples: list[Triple]) -> Vocabulary:
+        # which classes and properties of the output the other knowledge
+        # graphs define
+        timeout = self.construct_config.timeout
+        terms = sorted(
+            term
+            for term in schema_nodes(triples)
+            if INVALID_IRI.search(term) is None and namespace(term) not in CORE
+        )
+        vocabulary = Vocabulary()
+        new = [term for term in terms if term not in self.defined]
+        for manager in self.others if new else []:
+            try:
+                found = defines(manager, new, timeout)
+            except Exception:
+                vocabulary.failed.append(manager.kg)
+                continue
+            for term in found:
+                self.defined.setdefault(term, manager.kg)
+
+        for term in terms:
+            if term in self.defined:
+                vocabulary.defined[term] = self.defined[term]
+                continue
+
+            prefix = namespace(term)
+            for manager in self.others:
+                key = (manager.kg, prefix)
+                if key not in self.namespaces:
+                    try:
+                        self.namespaces[key] = has_namespace(manager, prefix, timeout)
+                    except Exception:
+                        vocabulary.failed.append(manager.kg)
+                        continue
+                if self.namespaces[key]:
+                    vocabulary.undefined[term] = manager.kg
+                    break
+        return vocabulary
 
     def analyze(self, draft: Draft, output: str) -> list[str]:
         # finds parts of the query without effect on the sample, which a

@@ -1,4 +1,5 @@
 import math
+import re
 from collections import Counter, defaultdict
 from typing import Literal
 from urllib.parse import unquote
@@ -14,8 +15,37 @@ RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 # namespace of rdf, rdfs, owl and xsd
 W3C = "http://www.w3.org/"
 
+XSD = "http://www.w3.org/2001/XMLSchema#"
+
 MAX_EXAMPLES = 3
 MAX_LINES = 50
+# values a property needs for findings about all of its values
+MIN_VALUES = 5
+# strings of a property that repeat are reported up to this mean length
+MAX_NAME_LENGTH = 80
+
+INTEGER = re.compile(r"[+-]?\d+")
+DECIMAL = re.compile(r"[+-]?(\d+\.?\d*|\.\d+)")
+DOUBLE = re.compile(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?|[+-]?INF|NaN")
+ZONE = r"(Z|[+-]\d\d:\d\d)?"
+DATE = re.compile(rf"-?\d{{4,}}-\d\d-\d\d{ZONE}")
+DATE_TIME = re.compile(rf"-?\d{{4,}}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?{ZONE}")
+BOOLEAN = re.compile(r"true|false|yes|no", re.IGNORECASE)
+# lexical forms of common datatypes
+LEXICAL = {
+    "integer": INTEGER,
+    "int": INTEGER,
+    "long": INTEGER,
+    "nonNegativeInteger": re.compile(r"\+?\d+"),
+    "decimal": DECIMAL,
+    "double": DOUBLE,
+    "float": DOUBLE,
+    "boolean": re.compile(r"true|false|1|0"),
+    "date": DATE,
+    "dateTime": DATE_TIME,
+    "gYear": re.compile(rf"-?\d{{4,}}{ZONE}"),
+}
+FRACTIONAL = {XSD + name for name in ["decimal", "double", "float"]}
 
 
 class SourceProperty(BaseModel):
@@ -61,12 +91,24 @@ class OutputProperty(BaseModel):
     objects: list[str]
 
 
+class Vocabulary(BaseModel):
+    # classes and properties of the output by the other knowledge graph
+    # that defines them
+    defined: dict[str, str] = {}
+    # and those in a namespace of another knowledge graph without being
+    # defined by it
+    undefined: dict[str, str] = {}
+    # other knowledge graphs with failed lookups
+    failed: list[str] = []
+
+
 class Report(BaseModel):
     source_classes: dict[str, int]
     output_classes: dict[str, int]
     output_properties: list[OutputProperty]
     coverage: list[Coverage]
     findings: list[Finding]
+    vocabulary: Vocabulary = Vocabulary()
 
     @property
     def errors(self) -> list[Finding]:
@@ -194,7 +236,119 @@ def examples(items: set[str]) -> list[str]:
     return sorted(items)[:MAX_EXAMPLES]
 
 
-def output_findings(triples: list[Triple]) -> list[Finding]:
+def short(datatype: str) -> str:
+    return "xsd:" + datatype[len(XSD) :] if datatype.startswith(XSD) else datatype
+
+
+def value_findings(triples: list[Triple]) -> list[Finding]:
+    # literals whose datatype or use as a string does not fit their values
+    labels: dict[str, set[str]] = defaultdict(set)
+    literals: dict[str, list[tuple[str, Binding]]] = defaultdict(list)
+    for subj, prop, obj in triples:
+        if obj.typ != "literal":
+            continue
+        elif prop == RDFS_LABEL:
+            labels[obj.value].add(subj.value)
+        else:
+            literals[prop].append((subj.value, obj))
+
+    findings = []
+
+    def warn(message: str, values: list[str]) -> None:
+        distinct = sorted(set(values))[:MAX_EXAMPLES]
+        findings.append(
+            Finding(
+                level="warning",
+                message=message,
+                examples=[f'"{clip(value, 40)}"' for value in distinct],
+            )
+        )
+
+    for prop, objects in sorted(literals.items()):
+        by_type: dict[str, list[str]] = defaultdict(list)
+        for _, obj in objects:
+            by_type[obj.datatype or ""].append(obj.value)
+
+        for datatype, values in sorted(by_type.items()):
+            if not datatype.startswith(XSD):
+                continue
+            pattern = LEXICAL.get(datatype[len(XSD) :])
+            if pattern is None:
+                continue
+
+            invalid = [value for value in values if not pattern.fullmatch(value)]
+            if invalid:
+                warn(
+                    f"{len(invalid):,} values of <{prop}> are not valid for "
+                    f"their datatype {short(datatype)}",
+                    invalid,
+                )
+            elif (
+                datatype in FRACTIONAL
+                and len(values) >= MIN_VALUES
+                and all(float(value).is_integer() for value in values)
+            ):
+                warn(
+                    f"All {len(values):,} values of <{prop}> are whole numbers "
+                    f"with the datatype {short(datatype)}, check whether they "
+                    "are fractional by nature or need another datatype",
+                    values,
+                )
+
+        strings = [
+            (subj, obj.value)
+            for subj, obj in objects
+            if obj.datatype in (None, XSD + "string")
+        ]
+        values = [value.strip() for _, value in strings]
+        if len(values) < MIN_VALUES:
+            continue
+
+        kinds = [("numbers", DOUBLE), ("dates", DATE), ("booleans", BOOLEAN)]
+        kind = next(
+            (
+                kind
+                for kind, pattern in kinds
+                if all(pattern.fullmatch(value) for value in values)
+            ),
+            None,
+        )
+        if kind is not None:
+            warn(
+                f"All {len(values):,} values of <{prop}> are strings that look "
+                f"like {kind}",
+                values,
+            )
+            continue
+
+        # labels of other entities than the subject
+        references = [
+            value for subj, value in strings if labels.get(value, set()) - {subj}
+        ]
+        distinct = len(set(values))
+        if 2 * len(references) >= len(values):
+            warn(
+                f"{len(references):,} of {len(values):,} strings of <{prop}> are "
+                "labels of other entities in the output, check whether they "
+                "refer to them and should be links",
+                references,
+            )
+        elif (
+            len(values) >= 2 * MIN_VALUES
+            and 2 * distinct <= len(values)
+            and sum(map(len, values)) <= MAX_NAME_LENGTH * len(values)
+        ):
+            warn(
+                f"<{prop}> has only {distinct:,} distinct strings in "
+                f"{len(values):,} triples, check whether they name things that "
+                "should be entities of their own",
+                values,
+            )
+
+    return findings
+
+
+def output_findings(triples: list[Triple], vocabulary: Vocabulary) -> list[Finding]:
     schema = schema_nodes(triples)
     subjects = {subj.value for subj, _, _ in triples}
     typed = {subj.value for subj, prop, _ in triples if prop == RDF_TYPE}
@@ -215,7 +369,11 @@ def output_findings(triples: list[Triple]) -> list[Finding]:
 
     warn("entities without rdf:type", entities - typed)
     warn("entities without rdfs:label", entities - labeled)
-    custom = {iri for iri in schema if not iri.startswith(W3C)}
+    custom = {
+        iri
+        for iri in schema
+        if not iri.startswith(W3C) and iri not in vocabulary.defined
+    }
     warn("classes and properties without rdfs:label", custom - labeled)
 
     blank = {
@@ -225,6 +383,20 @@ def output_findings(triples: list[Triple]) -> list[Finding]:
         if term.typ == "bnode"
     }
     warn("blank nodes, they have no stable identity across queries", blank)
+
+    for kg in sorted(set(vocabulary.failed)):
+        findings.append(
+            Finding(
+                level="warning",
+                message=f"Failed to look up the classes and properties in {kg}",
+            )
+        )
+    for kg in sorted(set(vocabulary.undefined.values())):
+        undefined = {iri for iri, other in vocabulary.undefined.items() if other == kg}
+        warn(
+            f"classes and properties in a namespace of {kg} that it does not define",
+            undefined,
+        )
 
     dangling: dict[str, set[str]] = defaultdict(set)
     kinds: dict[str, set[str]] = defaultdict(set)
@@ -252,7 +424,7 @@ def output_findings(triples: list[Triple]) -> list[Finding]:
                 )
             )
 
-    return findings
+    return findings + value_findings(triples)
 
 
 def check_output(
@@ -261,11 +433,13 @@ def check_output(
     used: set[str],
     explanations: dict[str, str],
     empty: dict[str, list[str]],
+    vocabulary: Vocabulary,
 ) -> Report:
     # facts about the output of the queries on the sample; properties of the
     # sample without any trace in the output are errors unless explained.
     # used are the link properties with an effect on the output of a query,
-    # empty the UNION branches without matches by query
+    # empty the UNION branches without matches by query, and vocabulary says
+    # which classes and properties are from other knowledge graphs
     findings = []
     unknown = sorted(set(explanations) - set(source.properties))
     if unknown:
@@ -312,7 +486,8 @@ def check_output(
         output_classes=dict(sorted(classes.items())),
         output_properties=output_properties(triples),
         coverage=covered,
-        findings=findings + output_findings(triples),
+        findings=findings + output_findings(triples, vocabulary),
+        vocabulary=vocabulary,
     )
 
 
@@ -363,14 +538,20 @@ def format_report(report: Report) -> str:
             ]
         )
 
+    def origin(iri: str) -> str:
+        kg = report.vocabulary.defined.get(iri)
+        return "" if kg is None else f", defined in {kg}"
+
     def counts(classes: dict[str, int]) -> str:
-        return capped([f"<{cls}>: {count:,}" for cls, count in classes.items()])
+        return capped(
+            [f"<{cls}>: {count:,}{origin(cls)}" for cls, count in classes.items()]
+        )
 
     properties = capped(
         [
             f"<{prop.iri}>: {prop.triples:,} triples, "
             f"from {', '.join(prop.subjects[:MAX_EXAMPLES])} "
-            f"to {', '.join(prop.objects[:MAX_EXAMPLES])}"
+            f"to {', '.join(prop.objects[:MAX_EXAMPLES])}{origin(prop.iri)}"
             for prop in report.output_properties
         ]
     )

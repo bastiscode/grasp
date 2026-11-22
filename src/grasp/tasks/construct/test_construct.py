@@ -8,7 +8,7 @@ from grasp.configs import GraspConfig, KgConfig, KgInfo
 from grasp.core import generate
 from grasp.manager import KgManager
 from grasp.model import Model, Response, ToolCall
-from grasp.sparql.types import Binding
+from grasp.sparql.types import AskResult, Binding, SelectResult
 from grasp.tasks import get_task
 from grasp.tasks.construct import (
     ABLATED,
@@ -18,6 +18,7 @@ from grasp.tasks.construct import (
     without_property,
 )
 from grasp.tasks.construct.checks import (
+    Vocabulary,
     check_output,
     format_report,
     source_profile,
@@ -201,7 +202,7 @@ def test_source_profile():
 def test_check_output():
     source = source_profile(parse_ntriples(SAMPLE))
     triples = parse_ntriples(OUTPUT)
-    report = check_output(source, triples, set(), {}, {})
+    report = check_output(source, triples, set(), {}, {}, Vocabulary())
     coverage = {cov.iri: cov for cov in report.coverage}
     # the number in another format, one name as label and one in an IRI
     assert coverage["http://s/population"].matched == 1
@@ -221,7 +222,14 @@ def test_check_output():
 
     explanations = {"http://s/founded": "Converted to xsd:date."}
     empty = {"cities": ["{ ?row a <http://s/Town> }"]}
-    report = check_output(source, triples, {"http://s/country"}, explanations, empty)
+    report = check_output(
+        source,
+        triples,
+        {"http://s/country"},
+        explanations,
+        empty,
+        Vocabulary(),
+    )
     assert not report.errors
     formatted = format_report(report)
     assert "explanation: Converted to xsd:date." in formatted
@@ -232,7 +240,14 @@ def test_check_output():
     ) in formatted
     assert "(3 other properties have all values in the output" in formatted
 
-    report = check_output(source, triples, set(), {"http://s/nope": "Unknown."}, {})
+    report = check_output(
+        source,
+        triples,
+        set(),
+        {"http://s/nope": "Unknown."},
+        {},
+        Vocabulary(),
+    )
     assert [error.examples for error in report.errors][0] == ["http://s/nope"]
 
 
@@ -242,13 +257,104 @@ def test_output_findings():
         '<http://o/a> <http://o/p> "1" .\n'
         '<http://o/p> <http://www.w3.org/2000/01/rdf-schema#label> "p" .\n'
     )
-    report = check_output(source_profile([]), triples, set(), {}, {})
+    report = check_output(source_profile([]), triples, set(), {}, {}, Vocabulary())
     assert [finding.message for finding in report.findings] == [
         "1 entities without rdf:type",
         "1 entities without rdfs:label",
         "1 blank nodes, they have no stable identity across queries",
         "<http://o/p> has objects of different kinds",
     ]
+
+
+def test_value_findings():
+    xsd = "http://www.w3.org/2001/XMLSchema#"
+    lines = ['<http://o/c/DE> <http://www.w3.org/2000/01/rdf-schema#label> "Germany" .']
+    for i in range(10):
+        lines += [
+            f'<http://o/{i}> <http://o/year> "{1980 + i}.0"^^<{xsd}decimal> .',
+            f'<http://o/{i}> <http://o/area> "{i}.5"^^<{xsd}decimal> .',
+            f'<http://o/{i}> <http://o/founded> "{1980 + i}.0"^^<{xsd}gYear> .',
+            f'<http://o/{i}> <http://o/code> "{i}" .',
+            f'<http://o/{i}> <http://o/country> "Germany" .',
+            f'<http://o/{i}> <http://o/range> "Range {i % 3}" .',
+            f'<http://o/{i}> <http://o/name> "Name {i}" .',
+        ]
+    report = check_output(
+        source_profile([]),
+        parse_ntriples("\n".join(lines)),
+        set(),
+        {},
+        {},
+        Vocabulary(),
+    )
+    messages = [
+        f"{finding.message}: {', '.join(finding.examples)}"
+        for finding in report.findings
+        if "<http://o/" in finding.message and "linked by" not in finding.message
+    ]
+    assert messages == [
+        "All 10 values of <http://o/code> are strings that look like numbers: "
+        '"0", "1", "2"',
+        "10 of 10 strings of <http://o/country> are labels of other entities in "
+        "the output, check whether they refer to them and should be links: "
+        '"Germany"',
+        "10 values of <http://o/founded> are not valid for their datatype "
+        'xsd:gYear: "1980.0", "1981.0", "1982.0"',
+        "<http://o/range> has only 3 distinct strings in 10 triples, check "
+        "whether they name things that should be entities of their own: "
+        '"Range 0", "Range 1", "Range 2"',
+        "All 10 values of <http://o/year> are whole numbers with the datatype "
+        "xsd:decimal, check whether they are fractional by nature or need "
+        'another datatype: "1980.0", "1981.0", "1982.0"',
+    ]
+
+
+def ontology() -> KgManager:
+    # another knowledge graph that defines one class
+    other = KgManager("ontology", endpoint="http://localhost:3")
+
+    def execute_sparql(sparql: str, **kwargs):
+        if sparql.startswith("ASK"):
+            return AskResult(boolean="http://v/" in sparql)
+        assert "<http://o/country>" in sparql and "rdf-schema#label" not in sparql
+        iris = ["http://v/City"] if "<http://v/City>" in sparql else []
+        bindings: list[dict | None] = [
+            {"s": {"type": "uri", "value": iri}} for iri in iris
+        ]
+        return SelectResult(["s"], bindings)
+
+    other.execute_sparql = execute_sparql  # type: ignore
+    return other
+
+
+def test_vocabulary(scratch, monkeypatch):
+    monkeypatch.setenv("GRASP_SCRATCH_ACCESS_TOKEN", "token")
+    task = get_task("construct", [manager(), ontology()], config())
+    assert isinstance(task, ConstructTask)
+    assert "knowledge graphs (ontology) provide" in task.system_information()
+    task.setup("Remodel.")
+    scratch.output = OUTPUT.replace("<http://o/City>", "<http://v/City>").replace(
+        "<http://o/population>", "<http://v/population>"
+    )
+    sparql = CITIES.replace("o:City", "<http://v/City>")
+    call(task, "test_construct", name="cities", sparql=sparql)
+    report = call(task, "check_output")
+    assert "- <http://v/City>: 1, defined in ontology" in report
+    assert (
+        "- 1 classes and properties in a namespace of ontology that it does "
+        "not define: http://v/population"
+    ) in report
+    # what another knowledge graph defines needs no label
+    assert (
+        "- 2 classes and properties without rdfs:label: http://o/country, "
+        "http://v/population"
+    ) in report
+
+    cfg = config()
+    feedback = get_task("construct-feedback", [manager(), ontology()], cfg)
+    assert "- Existing vocabulary: The other knowledge graphs (ontology)" in (
+        feedback.system_information()
+    )
 
 
 @pytest.mark.parametrize(

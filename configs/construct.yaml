@@ -17,6 +17,9 @@ sparql_read_timeout: env(SPARQL_READ_TIMEOUT:30.0)
 knowledge_graphs:
   - kg: env(KG)
     notes_file: env(KG_NOTES_FILE:null)
+  # further knowledge graphs provide vocabulary for the new model, e.g.
+  # ontologies set up with class and property indices
+  # - kg: schemaorg
 
 task_kwargs:
   construct:
