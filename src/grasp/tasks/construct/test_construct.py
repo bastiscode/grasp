@@ -10,7 +10,13 @@ from grasp.manager import KgManager
 from grasp.model import Model, Response, ToolCall
 from grasp.sparql.types import Binding
 from grasp.tasks import get_task
-from grasp.tasks.construct import ConstructTask, prepare_query
+from grasp.tasks.construct import (
+    ABLATED,
+    ConstructTask,
+    prepare_query,
+    union_branches,
+    without_property,
+)
 from grasp.tasks.construct.checks import (
     check_output,
     format_report,
@@ -54,6 +60,8 @@ class FakeScratch:
     # keeps the graphs in memory, queries on the sample give a fixed output
     graphs_loaded: dict[str, str] = {}
     output = OUTPUT
+    # whether UNION branches match and links have an effect on the output
+    matches = True
 
     def __init__(self, endpoint: str, timeout: float = 60.0) -> None:
         self.endpoint = endpoint
@@ -65,7 +73,17 @@ class FakeScratch:
         assert graphs == [SAMPLE_GRAPH]
         if sparql == "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }":
             return SAMPLE
+        elif ABLATED in sparql and self.matches:
+            return "".join(
+                line
+                for line in self.output.splitlines(keepends=True)
+                if "<http://o/country>" not in line
+            )
         return self.output
+
+    def ask(self, sparql: str, graphs: list[str]) -> bool:
+        assert graphs == [SAMPLE_GRAPH]
+        return self.matches
 
     def load(self, graph: str, ntriples: str, replace: bool = True) -> None:
         self.graphs_loaded[graph] = ntriples
@@ -86,6 +104,7 @@ class FakeScratch:
 def scratch(monkeypatch):
     FakeScratch.graphs_loaded = {SAMPLE_GRAPH: SAMPLE, draft_graph("old"): OUTPUT}
     FakeScratch.output = OUTPUT
+    FakeScratch.matches = True
     monkeypatch.setattr(construct, "Scratch", FakeScratch)
     monkeypatch.setattr(construct_feedback, "Scratch", FakeScratch)
     return FakeScratch
@@ -182,13 +201,13 @@ def test_source_profile():
 def test_check_output():
     source = source_profile(parse_ntriples(SAMPLE))
     triples = parse_ntriples(OUTPUT)
-    report = check_output(source, triples, set(), {})
+    report = check_output(source, triples, set(), {}, {})
     coverage = {cov.iri: cov for cov in report.coverage}
     # the number in another format, one name as label and one in an IRI
     assert coverage["http://s/population"].matched == 1
     assert coverage["http://s/name"].matched == 2
     assert coverage["http://s/founded"].missing == ["1120-01-01 00:00:00"]
-    # no value of the date and no mention of the link
+    # no value of the date and no use of the link
     [error] = report.errors
     assert error.examples == ["http://s/country", "http://s/founded"]
     assert report.output_classes == {"http://o/City": 1}
@@ -201,14 +220,19 @@ def test_check_output():
     ]
 
     explanations = {"http://s/founded": "Converted to xsd:date."}
-    report = check_output(source, triples, {"http://s/country"}, explanations)
+    empty = {"cities": ["{ ?row a <http://s/Town> }"]}
+    report = check_output(source, triples, {"http://s/country"}, explanations, empty)
     assert not report.errors
     formatted = format_report(report)
     assert "explanation: Converted to xsd:date." in formatted
-    assert "1 links, mentioned by a query" not in formatted
+    assert "1 links, used" not in formatted
+    assert (
+        "- 1 UNION branches of query cities match nothing on the sample: "
+        "{ ?row a <http://s/Town> }"
+    ) in formatted
     assert "(3 other properties have all values in the output" in formatted
 
-    report = check_output(source, triples, set(), {"http://s/nope": "Unknown."})
+    report = check_output(source, triples, set(), {"http://s/nope": "Unknown."}, {})
     assert [error.examples for error in report.errors][0] == ["http://s/nope"]
 
 
@@ -218,7 +242,7 @@ def test_output_findings():
         '<http://o/a> <http://o/p> "1" .\n'
         '<http://o/p> <http://www.w3.org/2000/01/rdf-schema#label> "p" .\n'
     )
-    report = check_output(source_profile([]), triples, set(), {})
+    report = check_output(source_profile([]), triples, set(), {}, {})
     assert [finding.message for finding in report.findings] == [
         "1 entities without rdf:type",
         "1 entities without rdfs:label",
@@ -252,6 +276,58 @@ def test_prepare_query():
     )
     assert draft.prefixes["o"] == "http://o/"
     assert draft.iris == {"http://o/p", "http://s/name"}
+
+
+def test_without_property():
+    sparql = """\
+PREFIX s: <http://s/>
+CONSTRUCT { ?row s:country ?other }
+WHERE { ?row <http://s/country> ?other ; s:name ?name . ?other s:country ?x }"""
+    assert without_property(manager(), sparql, "http://s/country") == (
+        f"PREFIX s: <http://s/> CONSTRUCT {{ ?row {ABLATED} ?other }} "
+        f"WHERE {{ ?row {ABLATED} ?other ; s:name ?name . ?other {ABLATED} ?x }}"
+    )
+
+
+def test_union_branches():
+    sparql = """\
+PREFIX s: <http://s/>
+CONSTRUCT { ?s s:p ?o }
+WHERE {
+  { ?s s:a ?o } UNION { ?s s:b ?o { ?o s:c ?x } UNION { ?o s:d ?x } } UNION { ?s s:e ?o }
+  OPTIONAL { { ?s s:f ?y } }
+}"""
+    assert union_branches(manager(), sparql) == [
+        "PREFIX s: <http://s/> ASK { ?s s:a ?o }",
+        "PREFIX s: <http://s/> ASK { ?s s:b ?o { ?o s:c ?x } UNION { ?o s:d ?x } }",
+        "PREFIX s: <http://s/> ASK { ?o s:c ?x }",
+        "PREFIX s: <http://s/> ASK { ?o s:d ?x }",
+        "PREFIX s: <http://s/> ASK { ?s s:e ?o }",
+    ]
+    assert union_branches(manager(), CITIES) == []
+
+
+def test_query_without_effect(scratch, monkeypatch):
+    # the link has no effect on the output and the branches match nothing
+    monkeypatch.setenv("GRASP_SCRATCH_ACCESS_TOKEN", "token")
+    task = get_task("construct", [manager()], config())
+    task.setup("Remodel.")
+    scratch.matches = False
+    sparql = CITIES.replace(
+        "?row a <http://s/City> ;",
+        "{ ?row a <http://s/City> } UNION { ?row a <http://s/Town> } ?row",
+    )
+    result = call(task, "test_construct", name="cities", sparql=sparql)
+    assert "2 of 2 UNION branches match nothing on the sample:" in result
+    assert "- { ?row a <http://s/Town> }" in result
+    assert "The output is the same without these link properties" in result
+    assert result.endswith("- <http://s/country>")
+
+    report = call(task, "check_output")
+    assert "2 UNION branches of query cities match nothing" in report
+    assert "<http://s/country>: 1 links, without effect on the output" in report
+    with pytest.raises(FunctionCallException, match="http://s/country"):
+        call(task, "submit_construct", explanations=[])
 
 
 def test_construct_task(scratch, monkeypatch):
@@ -291,7 +367,7 @@ def test_construct_task(scratch, monkeypatch):
         call(task, "test_construct", name="cities", sparql=CITIES)
     assert len(task.drafts["cities"].triples) == 4
 
-    # the link is mentioned by the query, the date is not in the output
+    # the link is used by the query, the date is not in the output
     with pytest.raises(FunctionCallException, match="http://s/founded") as error:
         call(task, "submit_construct", explanations=[])
     assert "http://s/country" not in str(error.value)

@@ -37,15 +37,15 @@ class Coverage(BaseModel):
     matched: int
     missing: list[str] = []
     links: int = 0
-    # whether a query mentions the property
-    mentioned: bool = False
+    # whether the links have an effect on the output of a query
+    used: bool = False
     explanation: str | None = None
 
     @property
     def unmatched(self) -> bool:
         if self.values:
             return self.matched == 0
-        return not self.mentioned
+        return not self.used
 
 
 class Finding(BaseModel):
@@ -131,7 +131,7 @@ def output_keys(triples: list[Triple]) -> set[str]:
 def coverage(
     source: Source,
     triples: list[Triple],
-    mentioned: set[str],
+    used: set[str],
     explanations: dict[str, str],
 ) -> list[Coverage]:
     keys = output_keys(triples)
@@ -147,7 +147,7 @@ def coverage(
                 matched=len(source_prop.values) - len(missing),
                 missing=missing[:MAX_EXAMPLES],
                 links=source_prop.links,
-                mentioned=prop in mentioned,
+                used=prop in used,
                 explanation=explanations.get(prop),
             )
         )
@@ -258,11 +258,14 @@ def output_findings(triples: list[Triple]) -> list[Finding]:
 def check_output(
     source: Source,
     triples: list[Triple],
-    mentioned: set[str],
+    used: set[str],
     explanations: dict[str, str],
+    empty: dict[str, list[str]],
 ) -> Report:
     # facts about the output of the queries on the sample; properties of the
-    # sample without any trace in the output are errors unless explained
+    # sample without any trace in the output are errors unless explained.
+    # used are the link properties with an effect on the output of a query,
+    # empty the UNION branches without matches by query
     findings = []
     unknown = sorted(set(explanations) - set(source.properties))
     if unknown:
@@ -275,7 +278,7 @@ def check_output(
             )
         )
 
-    covered = coverage(source, triples, mentioned, explanations)
+    covered = coverage(source, triples, used, explanations)
     unexplained = [
         cov.iri for cov in covered if cov.unmatched and cov.explanation is None
     ]
@@ -284,9 +287,20 @@ def check_output(
             Finding(
                 level="error",
                 message=f"{len(unexplained):,} properties of the knowledge graph "
-                "have no value in the output and no query mentions their links; "
-                "map them, or explain each of them when submitting",
+                "have no value in the output and their links have no effect on "
+                "the output of any query; map them, or explain each of them when "
+                "submitting",
                 examples=unexplained,
+            )
+        )
+
+    for name, branches in empty.items():
+        findings.append(
+            Finding(
+                level="warning",
+                message=f"{len(branches):,} UNION branches of query {name} match "
+                "nothing on the sample",
+                examples=branches,
             )
         )
 
@@ -321,8 +335,8 @@ def format_coverage(cov: Coverage) -> str:
             )
         parts.append(part)
     if cov.links:
-        mentioned = "mentioned" if cov.mentioned else "not mentioned"
-        parts.append(f"{cov.links:,} links, {mentioned} by a query")
+        used = "used" if cov.used else "without effect on the output"
+        parts.append(f"{cov.links:,} links, {used}")
     fmt = f"<{cov.iri}>: {'; '.join(parts)}"
     if cov.explanation is not None:
         fmt += f"; explanation: {cov.explanation}"
@@ -368,8 +382,8 @@ Warnings:
 {findings("warning")}
 
 Properties of the sample whose values are not all in the output \
-({full:,} other properties have all values in the output or their links \
-mentioned by a query):
+({full:,} other properties have all values in the output or links that \
+are used by a query):
 {capped([format_coverage(cov) for cov in partial])}
 
 Instances per class in the sample:

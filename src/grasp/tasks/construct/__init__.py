@@ -10,7 +10,15 @@ from grasp.configs import GraspConfig
 from grasp.functions import execute_sparql, query_iris
 from grasp.manager import KgManager, find_manager
 from grasp.model import FunctionDefinition, Message, ToolCallResult
-from grasp.sparql.utils import find, parse_prefixes, parse_string, query_type
+from grasp.sparql.utils import (
+    find,
+    find_all,
+    parse_into_binding,
+    parse_prefixes,
+    parse_string,
+    parse_to_string,
+    query_type,
+)
 from grasp.tasks.base import GraspTask
 from grasp.tasks.construct.checks import (
     Report,
@@ -21,6 +29,7 @@ from grasp.tasks.construct.checks import (
 )
 from grasp.tasks.construct.sample import SampleConfig
 from grasp.tasks.construct.scratch import (
+    GRAPHS,
     SAMPLE_GRAPH,
     Scratch,
     Triple,
@@ -29,11 +38,14 @@ from grasp.tasks.construct.scratch import (
     invalid_iris,
     parse_ntriples,
 )
-from grasp.utils import FunctionCallException, format_list
+from grasp.utils import FunctionCallException, clip, format_list
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 MAX_EXAMPLES = 3
+
+# stands in for a property to test its effect on the output of a query
+ABLATED = f"<{GRAPHS}ablated>"
 
 
 class ConstructConfig(BaseModel):
@@ -107,7 +119,9 @@ under the given name together with its output. Testing a query under an \
 existing name replaces the query and its output. A query that fails or \
 produces no triples is not saved.
 
-Returns a summary of the produced triples. The query has to run on the full \
+Returns a summary of the produced triples, the UNION branches that match \
+nothing on the sample, and the link properties of the knowledge graph that the \
+query mentions without effect on its output. The query has to run on the full \
 knowledge graph later, so it must not have a LIMIT, and it cannot have FROM \
 or GRAPH clauses.""",
             TestConstructArgs,
@@ -140,8 +154,10 @@ properties of the output.""",
             """\
 Submit all saved queries as the final result. This is only possible if \
 check_output reports no errors. A property of the knowledge graph without \
-any value in the output is an error, unless you explain it here, for example \
-because it is redundant or because its values are converted to another format.""",
+any value in the output, or with links that no query uses, is an error, unless \
+you explain it here, for example because its values are converted to another \
+format. A property is only redundant if all of its information is in the \
+output in another way, verify that before you explain it as such.""",
             SubmitConstructArgs,
         ),
     ]
@@ -212,6 +228,10 @@ class Draft:
     # prefixes and IRIs of the query
     prefixes: dict[str, str]
     iris: set[str]
+    # link properties of the sample with an effect on the output
+    used: set[str]
+    # UNION branches without matches on the sample
+    empty: list[str]
 
 
 def prepare_query(manager: KgManager, sparql: str) -> Draft:
@@ -247,7 +267,50 @@ def prepare_query(manager: KgManager, sparql: str) -> Draft:
         [],
         parse_prefixes(find(parse, "Prologue")),
         query_iris(manager, sparql),
+        set(),
+        [],
     )
+
+
+def without_property(manager: KgManager, sparql: str, prop: str) -> str:
+    # the query with the property replaced by one that matches nothing
+    parse, _ = parse_string(sparql, manager.sparql_parser)
+    prefixes = {**manager.prefixes, **parse_prefixes(find(parse, "Prologue"))}
+    for node in find_all(parse, {"IRIREF", "PNAME_LN"}, skip={"Prologue"}):
+        binding = parse_into_binding(
+            node["value"],
+            manager.iri_literal_parser,
+            prefixes,
+        )
+        if binding is not None and binding.identifier() == prop:
+            node["value"] = ABLATED
+    return parse_to_string(parse)
+
+
+def union_branches(manager: KgManager, sparql: str) -> list[str]:
+    # each branch as an ASK query
+    parse, _ = parse_string(sparql, manager.sparql_parser)
+    prologue = find(parse, "Prologue")
+    prefix = "" if prologue is None else parse_to_string(prologue)
+    branches = []
+
+    def collect(node: dict, in_union: bool) -> None:
+        children = node.get("children", [])
+        if node["name"] != "GroupOrUnionGraphPattern":
+            for child in children:
+                collect(child, False)
+            return
+
+        # the rest of a union is the last child
+        is_union = len(children) > 1
+        if is_union or in_union:
+            branches.append(f"{prefix} ASK {parse_to_string(children[0])}")
+        collect(children[0], False)
+        if is_union:
+            collect(children[-1], True)
+
+    collect(parse, False)
+    return branches
 
 
 def output_manager(
@@ -374,8 +437,48 @@ Classes of the knowledge graph with their number of instances in the sample:
                 triple for draft in self.drafts.values() for triple in draft.triples
             )
         )
-        mentioned = set().union(*(draft.iris for draft in self.drafts.values()))
-        return check_output(self.source, triples, mentioned, explanations)
+        used = set().union(*(draft.used for draft in self.drafts.values()))
+        empty = {
+            name: draft.empty for name, draft in self.drafts.items() if draft.empty
+        }
+        return check_output(self.source, triples, used, explanations, empty)
+
+    def analyze(self, draft: Draft, output: str) -> list[str]:
+        # finds parts of the query without effect on the sample, which a
+        # query that only mentions a property does not show
+        assert self.source is not None
+        notes = []
+        branches = union_branches(self.manager, draft.sparql)
+        for branch in branches:
+            if not self.scratch.ask(branch, [SAMPLE_GRAPH]):
+                draft.empty.append(clip(branch[branch.index(" ASK ") + 5 :], 200))
+        if draft.empty:
+            notes.append(
+                f"{len(draft.empty):,} of {len(branches):,} UNION branches match "
+                f"nothing on the sample:\n{format_list(draft.empty)}"
+            )
+
+        lines = set(output.split("\n"))
+        unused = []
+        for prop in sorted(draft.iris):
+            source = self.source.properties.get(prop)
+            if source is None or not source.links:
+                continue
+            ablated = self.scratch.construct(
+                without_property(self.manager, draft.sparql, prop),
+                [SAMPLE_GRAPH],
+            )
+            if set(ablated.split("\n")) != lines:
+                draft.used.add(prop)
+            else:
+                unused.append(f"<{prop}>")
+        if unused:
+            notes.append(
+                "The output is the same without these link properties of the "
+                "knowledge graph, the patterns they are in match nothing or do "
+                f"not contribute:\n{format_list(unused)}"
+            )
+        return notes
 
     def get_draft(self, fn_args: dict) -> tuple[str, Draft]:
         name = NameArgs.model_validate(fn_args).name
@@ -409,11 +512,18 @@ The query produces {len(invalid):,} invalid IRIs, encode the values they are \
 built from, e.g. with ENCODE_FOR_URI:
 {format_list(f"<{iri}>" for iri in invalid[:MAX_EXAMPLES])}""")
 
+        try:
+            notes = self.analyze(draft, text)
+        except Exception as e:
+            raise FunctionCallException(
+                f"Failed to analyze the query on the sample:\n{e}"
+            ) from e
+
         self.scratch.load(draft_graph(args.name), text)
         self.drafts[args.name] = draft
         self.output_manager = None
         self.submitted = False
-        return format_triples(args.name, draft.triples)
+        return "\n\n".join([format_triples(args.name, draft.triples), *notes])
 
     def submit_construct(self, fn_args: dict) -> str:
         self.submitted = False

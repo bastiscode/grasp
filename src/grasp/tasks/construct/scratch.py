@@ -5,7 +5,7 @@ from typing import Any
 import requests
 
 from grasp.manager import KgManager
-from grasp.sparql.types import Binding
+from grasp.sparql.types import AskResult, Binding
 
 # graphs on the scratch server, the sample of the knowledge graph and one
 # graph with the output of each query
@@ -151,6 +151,15 @@ class Scratch:
 
     def construct(self, sparql: str, graphs: list[str]) -> str:
         return construct(self.manager("scratch", graphs), sparql, self.timeout).text
+
+    def ask(self, sparql: str, graphs: list[str]) -> bool:
+        result = self.manager("scratch", graphs).execute_sparql(
+            sparql,
+            request_timeout=(6.0, self.timeout),
+            read_timeout=self.timeout,
+        )
+        assert isinstance(result, AskResult)
+        return result.boolean
 
     def load(self, graph: str, ntriples: str, replace: bool = True) -> None:
         # with the graph store protocol, blank nodes in the template of an
