@@ -505,7 +505,9 @@ def check_output(
                 level="warning",
                 message=f"{len(partial):,} properties of the knowledge graph have "
                 "more triples in the sample than triples in the output of a "
-                "query that depend on them, check that nothing is dropped",
+                "query that depend on them, check that nothing is dropped "
+                "(several of their triples leading to the same triple of the "
+                "output is a harmless reason)",
                 examples=[
                     f"<{cov.iri}> ({cov.dependent:,} for {cov.triples:,} triples)"
                     for cov in partial

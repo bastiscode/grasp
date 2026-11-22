@@ -264,7 +264,9 @@ def test_check_output():
     assert (
         "- 1 properties of the knowledge graph have more triples in the "
         "sample than triples in the output of a query that depend on them, "
-        "check that nothing is dropped: <http://s/country> (3 for 5 triples)"
+        "check that nothing is dropped (several of their triples leading to "
+        "the same triple of the output is a harmless reason): "
+        "<http://s/country> (3 for 5 triples)"
     ) in formatted
     assert (
         "- <http://s/country>: 1 links, used; 3 triples of the output depend "
