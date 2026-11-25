@@ -4,15 +4,17 @@ import pytest
 
 from grasp.functions import (
     check_known,
+    execute_sparql,
     order_triples,
     query_iris,
     row_iris,
     update_known_from_index_iris,
     update_known_from_selections,
 )
+from grasp.manager import KgManager
 from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import find_longest_prefix, get_common_sparql_prefixes
-from grasp.sparql.types import KgItem, Binding, TermKind, Selection
+from grasp.sparql.types import Binding, KgItem, Selection, SelectResult, TermKind
 from grasp.sparql.utils import load_iri_and_literal_parser, load_sparql_parser
 from grasp.utils import FunctionCallException
 
@@ -166,3 +168,22 @@ def test_check_known_undefined_prefix(manager):
     message = str(exc.value)
     assert "foo: (e.g. foo:bar)" in message
     assert "neither declared in the query nor common or example prefixes" in message
+
+
+def test_execute_unclipped(monkeypatch):
+    manager = KgManager("example", endpoint="http://example.org/sparql")
+    value = " ".join(f"word{i}" for i in range(100))
+    result = SelectResult.from_json(
+        {
+            "head": {"vars": ["o"]},
+            "results": {"bindings": [{"o": {"type": "literal", "value": value}}]},
+        }
+    )
+    monkeypatch.setattr(manager, "execute_sparql", lambda *args, **kwargs: result)
+    sparql = "SELECT ?o WHERE { ?s ?p ?o }"
+
+    clipped = execute_sparql([manager], "example", sparql, 10, 10)
+    assert value not in clipped.formatted and "word0" in clipped.formatted
+
+    unclipped = execute_sparql([manager], "example", sparql, 10, 10, unclipped=True)
+    assert value in unclipped.formatted

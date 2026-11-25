@@ -67,6 +67,11 @@ Page = Annotated[
 class ExecuteArgs(BaseModel):
     kg: str = Field(description="The knowledge graph to query")
     sparql: Sparql = Field(description="The SPARQL query to execute")
+    unclipped: bool = Field(
+        default=False,
+        description="Whether to show full unclipped literal values "
+        "(default should be false, typically only needed to inspect very long string literals)",
+    )
 
 
 class ListArgs(BaseModel):
@@ -238,7 +243,10 @@ and an error message otherwise.
 
 For example, to execute a SPARQL query over Wikidata to find the jobs of \
 Albert Einstein, do the following:
-execute(kg="wikidata", sparql="SELECT ?job WHERE { wd:Q937 wdt:P106 ?job }")""",
+execute(kg="wikidata", sparql="SELECT ?job WHERE { wd:Q937 wdt:P106 ?job }")
+
+Long literal values are clipped in the table, set unclipped to true to see \
+them in full.""",
             ExecuteArgs,
             {"kg": kgs},
         ),
@@ -469,6 +477,7 @@ def call_function(
             config.sparql_request_timeout,
             config.sparql_read_timeout,
             config.sparql_result_max_rows,
+            execute_args.unclipped,
         )
         return result.tool_result()
 
@@ -1154,6 +1163,7 @@ def execute_sparql(
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
     read_timeout: float | None = READ_TIMEOUT,
     sparql_result_max_rows: int | None = None,
+    unclipped: bool = False,
 ) -> ExecutionResult:
     manager, others = split_managers(managers, kg)
 
@@ -1202,6 +1212,7 @@ def execute_sparql(
         half_rows,
         half_columns,
         half_columns,
+        clip_literals=not unclipped,
         time=diff,
     )
     structured = view if isinstance(view, (TableResult, BooleanResult)) else None
