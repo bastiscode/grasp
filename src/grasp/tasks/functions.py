@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from grasp.function_args import Iri, Term
 from grasp.functions import (
-    MAX_RESULTS,
+    MAX_RESULT_ROWS,
     Page,
     format_iri_or_literal_error,
     format_page_suffix,
@@ -108,7 +108,7 @@ SELECT {target_var} ?freq WHERE {{
     {{ SELECT {target_var} (COUNT({target_var}) AS ?freq) {{ {triple_pattern} . }} GROUP BY {target_var} }}
 }}
 ORDER BY DESC(?freq) {target_var}
-LIMIT {MAX_RESULTS + 1}"""
+LIMIT {MAX_RESULT_ROWS + 1}"""
 
     try:
         result = manager.execute_sparql(sparql, request_timeout, read_timeout)
@@ -116,7 +116,7 @@ LIMIT {MAX_RESULTS + 1}"""
         raise FunctionCallException(f"Failed to list common {position} values:\n{e}")
 
     assert isinstance(result, SelectResult)
-    result.truncate(MAX_RESULTS)
+    result.truncate(MAX_RESULT_ROWS)
     more = not result.complete
 
     # apply pagination

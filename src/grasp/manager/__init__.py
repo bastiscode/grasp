@@ -159,6 +159,7 @@ class KgManager:
         max_retries: int = 0,
         force_select_result: bool = False,
         sparql_result_max_rows: int | None = None,
+        truncate: bool = False,
     ) -> SelectResult | AskResult:
         if force_select_result:
             # ask_to_select returns None if sparql is not an ask query
@@ -178,6 +179,7 @@ class KgManager:
             sparql_result_max_rows,
             self.auth,
             self.backend,
+            truncate,
         )
 
     def table_value(self, binding: Binding) -> TableValue:

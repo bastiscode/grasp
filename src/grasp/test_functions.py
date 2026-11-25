@@ -187,3 +187,23 @@ def test_execute_unclipped(monkeypatch):
 
     unclipped = execute_sparql([manager], "example", sparql, 10, 10, unclipped=True)
     assert value in unclipped.formatted
+
+
+def test_execute_incomplete_result(monkeypatch):
+    manager = KgManager("example", endpoint="http://example.org/sparql")
+    result = SelectResult(
+        variables=["o"],
+        data=[{"o": {"type": "literal", "value": f"value{i}"}} for i in range(20)],
+        complete=False,
+    )
+    monkeypatch.setattr(manager, "execute_sparql", lambda *args, **kwargs: result)
+
+    formatted = execute_sparql(
+        [manager],
+        "example",
+        "SELECT ?o WHERE { ?s ?p ?o }",
+        10,
+        10,
+    ).formatted
+    assert "more than 20 rows" in formatted and "the first 10 rows" in formatted
+    assert "value9" in formatted and "value19" not in formatted

@@ -80,7 +80,7 @@ class TestStreamWithTimeout:
 
         result = stream_with_timeout("SELECT ?x WHERE { ?x ?p ?o }", response)  # type: ignore
 
-        assert result == data
+        assert result == {**data, "complete": True}
         assert response.closed
 
     def test_errors_when_select_result_exceeds_max_rows(self):
@@ -101,6 +101,28 @@ class TestStreamWithTimeout:
                 response,  # type: ignore
                 sparql_result_max_rows=1,
             )
+        assert response.closed
+
+    def test_truncates_select_result_at_max_rows(self):
+        data = {
+            "head": {"vars": ["x"]},
+            "results": {
+                "bindings": [
+                    {"x": {"type": "uri", "value": "http://example.org/entity/e1"}},
+                    {"x": {"type": "uri", "value": "http://example.org/entity/e2"}},
+                ]
+            },
+        }
+        response = _FakeResponse(data)
+
+        result = stream_with_timeout(
+            "SELECT ?x WHERE { ?x ?p ?o }",
+            response,  # type: ignore
+            sparql_result_max_rows=1,
+            truncate=True,
+        )
+        assert len(result["results"]["bindings"]) == 1
+        assert not result["complete"]
         assert response.closed
 
     def test_streams_ask_result(self):

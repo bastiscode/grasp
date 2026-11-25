@@ -935,6 +935,7 @@ def stream_with_timeout(
     response: requests.Response,
     seconds: float | None = None,
     sparql_result_max_rows: int | None = None,
+    truncate: bool = False,
 ) -> Any:
     start = time.monotonic()
 
@@ -956,6 +957,7 @@ def stream_with_timeout(
 
     variables: list[str] = []
     bindings: list[dict] = []
+    complete = True
     row_count = 0
     row_builder: ObjectBuilder | None = None
     row_depth = 0
@@ -975,6 +977,11 @@ def stream_with_timeout(
                     sparql_result_max_rows is not None
                     and row_count > sparql_result_max_rows
                 ):
+                    if truncate:
+                        # the rest of the result is not read
+                        complete = False
+                        break
+
                     raise SparqlExecuteException(
                         f"SPARQL result exceeded {sparql_result_max_rows:,} rows",
                         sparql,
@@ -998,7 +1005,11 @@ def stream_with_timeout(
                 bindings.append(row_builder.value)  # type: ignore
                 row_builder = None
 
-        return {"head": {"vars": variables}, "results": {"bindings": bindings}}
+        return {
+            "head": {"vars": variables},
+            "results": {"bindings": bindings},
+            "complete": complete,
+        }
 
     finally:
         response.close()
@@ -1030,6 +1041,7 @@ def execute(
     sparql_result_max_rows: int | None = None,
     auth: tuple[str, str] | None = None,
     backend: str = "other",
+    truncate: bool = False,
     **kwargs: Any,
 ) -> SelectResult | AskResult:
     if headers is None:
@@ -1067,11 +1079,14 @@ def execute(
                 response,
                 read_timeout,
                 sparql_result_max_rows,
+                truncate,
             )
             if "boolean" in res:
                 return AskResult(res["boolean"])
-            else:
-                return SelectResult.from_json(res)
+
+            result = SelectResult.from_json(res)
+            result.complete = res["complete"]
+            return result
 
         except SparqlExecuteException as e:
             # retry if not last retry
