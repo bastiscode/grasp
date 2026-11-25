@@ -46,8 +46,9 @@ from grasp.utils import FunctionCallException, format_enumerate, format_list
 if TYPE_CHECKING:
     from grasp.tasks.base import GraspTask
 
-# maximum number of results for constraining with sub indices
-MAX_RESULTS = 131072
+# maximum number of rows read from the result of a query, further rows
+# are not used for constraining with sub indices and not shown
+MAX_RESULT_ROWS = 131072
 
 MODALITY_QUERY_TYPES = {
     "text": [("text", "textual search query")],
@@ -476,8 +477,7 @@ def call_function(
             config.know_before_use,
             config.sparql_request_timeout,
             config.sparql_read_timeout,
-            config.sparql_result_max_rows,
-            execute_args.unclipped,
+            unclipped=execute_args.unclipped,
         )
         return result.tool_result()
 
@@ -1162,7 +1162,7 @@ def execute_sparql(
     know_before_use: bool = False,
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
     read_timeout: float | None = READ_TIMEOUT,
-    sparql_result_max_rows: int | None = None,
+    sparql_result_max_rows: int | None = MAX_RESULT_ROWS,
     unclipped: bool = False,
 ) -> ExecutionResult:
     manager, others = split_managers(managers, kg)
@@ -1182,6 +1182,7 @@ def execute_sparql(
             request_timeout,
             read_timeout,
             sparql_result_max_rows=sparql_result_max_rows,
+            truncate=True,
         )
     except Exception as e:
         diff = time.monotonic() - start
@@ -1189,8 +1190,11 @@ def execute_sparql(
         return ExecutionResult(sparql, error)
 
     diff = time.monotonic() - start
-    half_rows = math.ceil(max_rows / 2)
+    top_rows = bottom_rows = math.ceil(max_rows / 2)
     half_columns = math.ceil(max_columns / 2)
+    if isinstance(result, SelectResult) and not result.complete:
+        # the last rows read are not the last rows of the result
+        top_rows, bottom_rows = max_rows, 0
 
     if isinstance(result, SelectResult) and known is not None:
         # only update with the bindings shown to the model
@@ -1198,8 +1202,8 @@ def execute_sparql(
         rows = (
             {var: row[var] for var in shown_vars if var in row}
             for row in chain(
-                result.rows(end=half_rows),
-                result.rows(start=max(0, len(result) - half_rows)),
+                result.rows(end=top_rows),
+                result.rows(start=max(0, len(result) - bottom_rows)),
             )
         )
 
@@ -1208,8 +1212,8 @@ def execute_sparql(
     view = sparql_result_view(
         manager,
         result,
-        half_rows,
-        half_rows,
+        top_rows,
+        bottom_rows,
         half_columns,
         half_columns,
         clip_literals=not unclipped,
@@ -1300,7 +1304,7 @@ def list_triples(
 SELECT ?s ?p ?o WHERE {{
     {triple}
     {bindings}
-}} LIMIT {MAX_RESULTS + 1}"""
+}} LIMIT {MAX_RESULT_ROWS + 1}"""
 
     try:
         result = manager.execute_sparql(sparql, request_timeout, read_timeout)
@@ -1308,7 +1312,7 @@ SELECT ?s ?p ?o WHERE {{
         raise FunctionCallException(f"Failed to list triples with error:\n{e}") from e
 
     assert isinstance(result, SelectResult)
-    result.truncate(MAX_RESULTS)
+    result.truncate(MAX_RESULT_ROWS)
     more = not result.complete
 
     result.data = [result.data[i] for i in order_triples(result.rows(), manager)]
@@ -1474,13 +1478,13 @@ SELECT DISTINCT {select_var} WHERE {{
     {pos_values["subject"]}
     {pos_values["property"]}
     {pos_values["object"]}
-}} LIMIT {MAX_RESULTS + 1}"""
+}} LIMIT {MAX_RESULT_ROWS + 1}"""
 
         try:
             identifier_map = manager.get_candidate_ids(
                 index,
                 sparql,
-                MAX_RESULTS,
+                MAX_RESULT_ROWS,
                 request_timeout,
                 read_timeout,
             )
@@ -1709,7 +1713,7 @@ def search_with_filter(
             identifier_map = manager.get_candidate_ids(
                 index,
                 sparql,
-                MAX_RESULTS,
+                MAX_RESULT_ROWS,
                 request_timeout,
                 read_timeout,
             )

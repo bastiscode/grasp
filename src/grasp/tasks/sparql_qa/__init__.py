@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, ValidationError
 from grasp.configs import GraspConfig
 from grasp.function_args import Sparql
 from grasp.functions import (
+    MAX_RESULT_ROWS,
     ExecuteArgs,
     check_known,
     selection_groups,
@@ -246,7 +247,7 @@ def prepare_formatted_output(
     max_cols: int = 10,
     request_timeout: float | tuple[float, float] = (6.0, 30.0),
     read_timeout: float = 10.0,
-    sparql_result_max_rows: int | None = None,
+    sparql_result_max_rows: int | None = MAX_RESULT_ROWS,
 ) -> dict:
     if kg is None:
         kg = managers[0].kg

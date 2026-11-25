@@ -1,4 +1,5 @@
 from grasp.functions import (
+    MAX_RESULT_ROWS,
     ExecutionResult,
     SelectionGroup,
     execute_sparql,
@@ -20,7 +21,7 @@ def prepare_sparql_result(
     known: set[str] | None = None,
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
     read_timeout: float | None = READ_TIMEOUT,
-    sparql_result_max_rows: int | None = None,
+    sparql_result_max_rows: int | None = MAX_RESULT_ROWS,
 ) -> tuple[ExecutionResult, list[Selection]]:
     manager = find_manager(managers, kg)
 
