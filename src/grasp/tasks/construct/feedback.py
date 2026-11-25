@@ -109,7 +109,18 @@ class ConstructFeedbackTask(FeedbackTask):
             "have verified.",
         ]
 
-    def instructions(self, inputs: list[str], output: dict) -> str:
+    def setup(self, input: dict) -> str:
+        output = input["output"]
+        scratch = Scratch(
+            self.construct_config.scratch_endpoint,
+            self.construct_config.timeout,
+        )
+        self.output_manager = output_manager(
+            scratch,
+            self.manager,
+            {query["name"]: query["sparql"] for query in output["queries"]},
+        )
+
         sections = [format_section("Queries", format_queries(output["queries"]))]
 
         if output["report"] is not None:
@@ -127,23 +138,13 @@ class ConstructFeedbackTask(FeedbackTask):
                 format_section("Competency questions", format_enumerate(questions))
             )
 
-        previous = [inpt for inpt in inputs if inpt.startswith("Feedback (status=")]
+        previous = [
+            inpt for inpt in input["inputs"] if inpt.startswith("Feedback (status=")
+        ]
         if previous:
             sections.append(format_section("Previous feedback", "\n\n".join(previous)))
 
         return "\n\n".join(sections)
-
-    def setup(self, input: Any) -> str:
-        scratch = Scratch(
-            self.construct_config.scratch_endpoint,
-            self.construct_config.timeout,
-        )
-        self.output_manager = output_manager(
-            scratch,
-            self.manager,
-            {query["name"]: query["sparql"] for query in input["output"]["queries"]},
-        )
-        return super().setup(input)
 
     def function_definitions(self) -> list[FunctionDefinition]:
         fns = super().function_definitions()
