@@ -1,15 +1,32 @@
 <script>
+  import { createEventDispatcher } from 'svelte';
   import { displayValue } from '../../utils/tables.js';
 
   export let result;
   // path of the table in a structured result, for data-path on its values
   export let path = '';
+  // clickable rows dispatch rowclick with the row and its index
+  export let clickable = false;
+  export let selectedIndex = null;
+
+  const dispatch = createEventDispatcher();
 
   $: columns = Array.isArray(result?.columns) ? result.columns : [];
   $: rows = Array.isArray(result?.rows) ? result.rows : [];
 
   function valuePath(index, column) {
     return `${path ? `${path}.` : ''}rows.${index}.${column.variable}`;
+  }
+
+  function click(event, row, index) {
+    if (!clickable || event.target?.closest?.('a')) return;
+    dispatch('rowclick', { row, index, event });
+  }
+
+  function keydown(event, row, index) {
+    if (!clickable || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    dispatch('rowclick', { row, index, event });
   }
 </script>
 
@@ -30,7 +47,15 @@
         <tbody>
           {#each rows as row, index}
             {#if row}
-              <tr>
+              <tr
+                class:row={clickable}
+                class:row--selected={clickable && selectedIndex === index}
+                tabindex={clickable ? 0 : undefined}
+                role={clickable ? 'button' : undefined}
+                aria-expanded={clickable ? selectedIndex === index : undefined}
+                on:click={(event) => click(event, row, index)}
+                on:keydown={(event) => keydown(event, row, index)}
+              >
                 {#each columns as column}
                   {#if column}
                     {@const value = displayValue(row[column.variable])}
@@ -114,6 +139,21 @@
     margin-left: 0.3rem;
     font-size: 0.72rem;
     color: var(--text-subtle);
+  }
+
+  .row {
+    cursor: pointer;
+  }
+
+  .row:hover,
+  .row:focus-visible {
+    background: rgba(52, 74, 154, 0.06);
+    outline: none;
+  }
+
+  .row--selected,
+  .row--selected:hover {
+    background: rgba(52, 74, 154, 0.14);
   }
 
   a {
