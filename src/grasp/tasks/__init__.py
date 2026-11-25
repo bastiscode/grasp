@@ -6,6 +6,8 @@ from grasp.provenance.state import ProvenanceState
 from grasp.tasks.auto_setup import AutoSetupTask
 from grasp.tasks.base import GraspTask
 from grasp.tasks.cea import CeaFeedbackTask, CeaTask
+from grasp.tasks.construct import ConstructTask
+from grasp.tasks.construct.feedback import ConstructFeedbackTask
 from grasp.tasks.exploration import (
     FunctionalExplorationTask,
     StructuralExplorationTask,
@@ -51,6 +53,8 @@ _REGISTRY: dict[str, type[GraspTask]] = {
         SparqlQaFeedbackTask,
         CeaFeedbackTask,
         EntityLinkingFeedbackTask,
+        ConstructTask,
+        ConstructFeedbackTask,
     ]
 }
 

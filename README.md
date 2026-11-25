@@ -69,6 +69,7 @@ apps/
 bash/                             # Bash scripts to run and evaluate GRASP
 configs/
   run.yaml                        # Config to run GRASP with a single KG
+  construct.yaml                  # Config to remodel a KG with CONSTRUCT queries
   serve.yaml                      # Config to run GRASP with all available KGs
   grisp/                          # Configs for the GRISP baseline
   notes/                          # Configs for note-taking
@@ -758,6 +759,52 @@ See our [info SPARQL query for Wikidata entities](queries/wikidata.entity.info.s
 
 > Note: If no custom info SPARQL query is found, we use the
 > default ones from [here](src/grasp/sparql/queries)
+
+## Remodel a knowledge graph with CONSTRUCT queries
+
+`grasp construct` lets an agent write SPARQL CONSTRUCT queries that turn a
+knowledge graph into a semantically meaningful one. It is meant for direct
+mappings of structured data to RDF, e.g. with one class per table, one entity
+per row and one property per column, which you need to create and serve with a
+SPARQL endpoint yourself.
+
+The agent explores the knowledge graph and tests its queries on a sample of it.
+Exploring is easier for it if the knowledge graph is set up with indices and
+shapes, see `grasp setup` above.
+The sample and the output of each query live in named graphs on a second,
+initially empty QLever server with an access token, the scratch server. It is
+needed because the agent and the feedback query the output while they work on it.
+
+```bash
+# Start the scratch server, e.g. from an index over a file with a single
+# triple, with ACCESS_TOKEN set in the Qleverfile
+qlever index && qlever start
+
+# Set KG, the endpoint of the scratch server and its access token
+export KG=my-kg
+export SCRATCH_ENDPOINT=http://localhost:7019
+export GRASP_SCRATCH_ACCESS_TOKEN=...
+
+# Build the sample, let the agent write and submit the queries, and
+# run them on the full knowledge graph
+grasp construct configs/construct.yaml out/my-kg
+```
+
+The output directory then has the queries in `queries/`, their output on the
+full knowledge graph in `output.nt`, and the trace of the run in `trace.json`.
+An existing sample on the scratch server is reused, pass `--rebuild-sample` to
+build it again, e.g. for another knowledge graph.
+
+Further knowledge graphs under `knowledge_graphs` in the config provide existing
+vocabulary for the new model, e.g. ontologies like schema.org that are served
+by a SPARQL endpoint and set up with class and property indices. The agent
+searches them for fitting classes and properties before it defines its own, and
+the checks report which classes and properties of the output they define.
+
+With `feedback: true` and more than one step in `feedback_max_steps`, a
+second agent reviews each submission. It gets the queries, the results of
+automatic checks of their output on the sample, and the competency questions
+from the config, and can query both the knowledge graph and the output.
 
 ## Run GRASP webapp
 

@@ -1,0 +1,35 @@
+model: env(MODEL:gpt-6.1-sol)
+model_provider: env(MODEL_PROVIDER:openai/responses)
+model_endpoint: env(MODEL_ENDPOINT:null)
+model_api_key: env(MODEL_API_KEY:null)
+
+seed: env(SEED:22)
+
+max_steps: env(MAX_STEPS:200)
+# the feedback reviews the queries and their output with its own steps
+feedback: env(FEEDBACK:true)
+max_feedbacks: env(MAX_FEEDBACKS:2)
+feedback_max_steps: env(FEEDBACK_MAX_STEPS:50)
+
+sparql_query_timeout: env(SPARQL_QUERY_TIMEOUT:60.0)
+sparql_read_timeout: env(SPARQL_READ_TIMEOUT:30.0)
+
+knowledge_graphs:
+  - kg: env(KG)
+    notes_file: env(KG_NOTES_FILE:null)
+  # further knowledge graphs provide vocabulary for the new model, e.g.
+  # ontologies set up with class and property indices
+  # - kg: schemaorg
+
+task_kwargs:
+  construct:
+    # the knowledge graph to remodel
+    kg: env(KG)
+    # QLever server for the sample and the output of the queries on it,
+    # its access token is read from GRASP_SCRATCH_ACCESS_TOKEN
+    scratch_endpoint: env(SCRATCH_ENDPOINT)
+    # questions the new model should be able to answer
+    competency_questions: env(COMPETENCY_QUESTIONS:[])
+    sample:
+      instances_per_class: env(INSTANCES_PER_CLASS:50)
+      max_triples: env(MAX_SAMPLE_TRIPLES:500000)
