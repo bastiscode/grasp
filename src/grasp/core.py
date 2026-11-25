@@ -329,8 +329,8 @@ def generate(
             config.random_examples,
             config.num_examples,
             task.provenance.known,
-            config.result_max_rows,
-            config.result_max_columns,
+            config.execute_max_rows,
+            config.execute_max_columns,
         )
 
         if isinstance(result, str):

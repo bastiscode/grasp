@@ -489,8 +489,8 @@ class SparqlQaTask(GraspTask):
             messages,
             self.managers,
             self.provenance,
-            self.config.result_max_rows,
-            self.config.result_max_columns,
+            self.config.execute_max_rows,
+            self.config.execute_max_columns,
             self.config.sparql_request_timeout,
             self.config.sparql_read_timeout,
         )
