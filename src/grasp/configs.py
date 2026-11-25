@@ -161,9 +161,9 @@ class GraspConfig(ModelConfig):
     # maximum page number allowed for search pagination
     search_max_pages: int = 10
     # 10 total rows, 5 top and 5 bottom
-    result_max_rows: int = 10
+    execute_max_rows: int = 10
     # same for columns
-    result_max_columns: int = 10
+    execute_max_columns: int = 10
     # 10 total results, 10 top
     list_k: int = 10
     # properties per page of a class shape

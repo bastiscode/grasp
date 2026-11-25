@@ -528,8 +528,8 @@ def prepare_ground_truth(
             sample.sparql,
             kg,
             managers,
-            config.result_max_rows,
-            config.result_max_columns,
+            config.execute_max_rows,
+            config.execute_max_columns,
             request_timeout=(
                 config.sparql_connection_timeout,
                 config.sparql_query_timeout,

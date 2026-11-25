@@ -239,8 +239,8 @@ class WdqlTask(GraspTask):
         formatted, _ = input_and_state(
             input,
             self.managers,
-            self.config.result_max_rows,
-            self.config.result_max_columns,
+            self.config.execute_max_rows,
+            self.config.execute_max_columns,
         )
         return formatted
 
@@ -248,8 +248,8 @@ class WdqlTask(GraspTask):
         return output(
             messages,
             self.managers,
-            self.config.result_max_rows,
-            self.config.result_max_columns,
+            self.config.execute_max_rows,
+            self.config.execute_max_columns,
         )
 
     @property

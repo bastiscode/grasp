@@ -206,8 +206,8 @@ class SparqlToQuestionTask(GraspTask):
         _, formatted = prepare_sparql(
             input,
             self.managers,
-            self.config.result_max_rows,
-            self.config.result_max_columns,
+            self.config.execute_max_rows,
+            self.config.execute_max_columns,
             remove_known=True,
         )
         return formatted
@@ -216,8 +216,8 @@ class SparqlToQuestionTask(GraspTask):
         return output(
             messages,
             self.managers,
-            self.config.result_max_rows,
-            self.config.result_max_columns,
+            self.config.execute_max_rows,
+            self.config.execute_max_columns,
         )
 
     @property
