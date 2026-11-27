@@ -207,3 +207,38 @@ def test_execute_incomplete_result(monkeypatch):
     ).formatted
     assert "more than 20 rows" in formatted and "the first 10 rows" in formatted
     assert "value9" in formatted and "value19" not in formatted
+
+
+def test_execute_construct_result(monkeypatch):
+    manager = KgManager("example", endpoint="http://example.org/sparql")
+    result = SelectResult(
+        variables=["s", "p", "o"],
+        data=[
+            {
+                "s": {"type": "uri", "value": "http://example.org/s"},
+                "p": {"type": "uri", "value": "http://example.org/p"},
+                "o": {"type": "literal", "value": f"value{i}"},
+            }
+            for i in range(10)
+        ],
+        complete=False,
+    )
+    calls = []
+
+    def execute(*args, **kwargs):
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(manager, "execute_sparql", execute)
+
+    formatted = execute_sparql(
+        [manager],
+        "example",
+        "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }",
+        10,
+        10,
+    ).formatted
+    assert calls[0]["sparql_result_max_rows"] == 10
+    assert "Got the first 10 triples" in formatted
+    assert "LIMIT and OFFSET" in formatted
+    assert "subject" in formatted and "value9" in formatted

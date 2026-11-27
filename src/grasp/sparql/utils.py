@@ -1015,6 +1015,119 @@ def stream_with_timeout(
         response.close()
 
 
+XSD = "http://www.w3.org/2001/XMLSchema#"
+
+# terms of N-Triples, QLever also writes constants of CONSTRUCT templates
+# without quotes, like true or 42
+NT_TERM = r'<[^>]*>|_:\S+|"(?:[^"\\]|\\.)*"(?:\^\^<[^>]*>|@[A-Za-z0-9-]+)?|[^\s<"]+'
+NT_TRIPLE = re.compile(rf"({NT_TERM})\s+({NT_TERM})\s+({NT_TERM})\s*\.$")
+NT_ESCAPE = re.compile(r"\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)")
+NT_ESCAPES = {"t": "\t", "b": "\b", "n": "\n", "r": "\r", "f": "\f"}
+
+
+def unescape_ntriples(value: str) -> str:
+    def replace(match: re.Match) -> str:
+        escape: str = match.group(1)
+        if len(escape) > 1:
+            return chr(int(escape[1:], 16))
+        return NT_ESCAPES.get(escape, escape)
+
+    return NT_ESCAPE.sub(replace, value)
+
+
+def parse_ntriples_term(term: str) -> dict:
+    # a term in the format of SPARQL JSON results
+    if term.startswith("<"):
+        return {"type": "uri", "value": unescape_ntriples(term[1:-1])}
+    elif term.startswith("_:"):
+        return {"type": "bnode", "value": term[2:]}
+    elif not term.startswith('"'):
+        if term in ("true", "false"):
+            datatype = "boolean"
+        elif "e" in term.lower():
+            datatype = "double"
+        elif "." in term:
+            datatype = "decimal"
+        else:
+            datatype = "int"
+        return {"type": "literal", "value": term, "datatype": XSD + datatype}
+
+    end = term.rindex('"')
+    binding = {"type": "literal", "value": unescape_ntriples(term[1:end])}
+    suffix = term[end + 1 :]
+    if suffix.startswith("^^"):
+        binding["datatype"] = suffix[3:-1]
+    elif suffix:
+        binding["xml:lang"] = suffix[1:]
+    return binding
+
+
+def stream_triples(
+    sparql: str,
+    response: requests.Response,
+    seconds: float | None = None,
+    sparql_result_max_rows: int | None = None,
+    truncate: bool = False,
+) -> dict:
+    # an N-Triples result as a SPARQL JSON result with the variables s, p
+    # and o, without duplicate triples
+    start = time.monotonic()
+    seen = set()
+    bindings = []
+    complete = True
+
+    try:
+        # line breaks within N-Triples terms are escaped
+        for line in response.iter_lines(delimiter=b"\n"):
+            if seconds and time.monotonic() - start > seconds:
+                raise SparqlExecuteException(
+                    f"Took longer than {seconds} seconds to read SPARQL result",
+                    sparql,
+                )
+
+            line = line.decode().strip()
+            if not line or line in seen:
+                continue
+
+            if (
+                sparql_result_max_rows is not None
+                and len(bindings) >= sparql_result_max_rows
+            ):
+                if truncate:
+                    # the rest of the result is not read
+                    complete = False
+                    break
+
+                raise SparqlExecuteException(
+                    f"SPARQL result exceeded {sparql_result_max_rows:,} rows",
+                    sparql,
+                )
+
+            match = NT_TRIPLE.match(line)
+            if match is None:
+                raise SparqlExecuteException(
+                    f"Invalid N-Triples line in SPARQL result: {line}",
+                    sparql,
+                )
+
+            seen.add(line)
+            bindings.append(
+                {
+                    var: parse_ntriples_term(term)
+                    for var, term in zip("spo", match.groups())
+                }
+            )
+
+        return {
+            "head": {"vars": ["s", "p", "o"]},
+            "results": {"bindings": bindings},
+            "complete": complete,
+        }
+
+    finally:
+        response.close()
+
+
 def backend_params(
     backend: str,
     request_timeout: float | tuple[float, float] | None,
@@ -1056,7 +1169,10 @@ def execute(
                 endpoint,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/sparql-results+json",
+                    # n-triples for construct and describe queries
+                    "Accept": (
+                        "application/sparql-results+json, application/n-triples;q=0.9"
+                    ),
                     "User-Agent": "grasp-rdf",
                     **headers,
                 },
@@ -1074,7 +1190,13 @@ def execute(
 
             response.raise_for_status()
 
-            res = stream_with_timeout(
+            content_type = response.headers.get("Content-Type", "")
+            stream = (
+                stream_triples
+                if content_type.startswith("application/n-triples")
+                else stream_with_timeout
+            )
+            res = stream(
                 sparql,
                 response,
                 read_timeout,

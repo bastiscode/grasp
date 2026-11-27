@@ -39,6 +39,7 @@ from grasp.sparql.utils import (
     has_scheme,
     parse_prefixes,
     parse_string,
+    query_type,
     wrap_iri,
 )
 from grasp.utils import FunctionCallException, format_enumerate, format_list
@@ -1175,6 +1176,11 @@ def execute_sparql(
     if know_before_use and known is not None:
         check_known(manager, sparql, known)
 
+    triples = query_type(sparql, manager.sparql_parser) in ("construct", "describe")
+    if triples:
+        # only the shown triples are read, LIMIT and OFFSET page through them
+        sparql_result_max_rows = max_rows
+
     start = time.monotonic()
     try:
         result = manager.execute_sparql(
@@ -1209,6 +1215,17 @@ def execute_sparql(
 
         update_known_from_index_iris(known, row_iris(rows), manager)
 
+    column_names = summary = None
+    if triples and isinstance(result, SelectResult) and result.num_columns == 3:
+        column_names = ["subject", "property", "object"]
+        num = f"{len(result):,} triple{'s' * (len(result) != 1)}"
+        summary = f"Got {num} in {diff:.2f}s"
+        if not result.complete:
+            summary = (
+                f"Got the first {num} in {diff:.2f}s, "
+                "use LIMIT and OFFSET to see others"
+            )
+
     view = sparql_result_view(
         manager,
         result,
@@ -1216,8 +1233,10 @@ def execute_sparql(
         bottom_rows,
         half_columns,
         half_columns,
+        column_names,
         clip_literals=not unclipped,
         time=diff,
+        summary=summary,
     )
     structured = view if isinstance(view, (TableResult, BooleanResult)) else None
     return ExecutionResult(sparql, view.formatted, result, structured)
