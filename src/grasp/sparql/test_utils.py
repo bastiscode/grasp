@@ -21,6 +21,7 @@ from grasp.sparql.utils import (
     prepare_identifier_for_sparql,
     query_type,
     backend_params,
+    stream_triples,
 )
 
 SPARQL_PARSER = load_sparql_parser()
@@ -36,6 +37,7 @@ class _FakeResponse:
     def __init__(self, data: dict, chunk_size: int = 16) -> None:
         self.data = json.dumps(data).encode("utf-8")
         self.encoding = "utf-8"
+        self.headers = {"Content-Type": "application/sparql-results+json"}
         self.chunk_size = chunk_size
         self.closed = False
 
@@ -132,6 +134,72 @@ class TestStreamWithTimeout:
         result = stream_with_timeout("ASK { ?x ?p ?o }", response)  # type: ignore
 
         assert result == {"boolean": True}
+        assert response.closed
+
+
+class _FakeTriplesResponse:
+    def __init__(self, text: str) -> None:
+        self.lines = text.encode("utf-8").split(b"\n")
+        self.closed = False
+
+    def iter_lines(self, delimiter: bytes | None = None):
+        yield from self.lines
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestStreamTriples:
+    def test_parses_terms_and_skips_duplicates(self):
+        response = _FakeTriplesResponse(
+            "<http://ex/s> <http://ex/p> <http://ex/o> .\n"
+            "<http://ex/s> <http://ex/p> <http://ex/o> .\n"
+            '<http://ex/s> <http://ex/label> "a \\"b\\"\\nc \\u00e9"@en .\n'
+            '_:b0 <http://ex/n> "5"^^<http://www.w3.org/2001/XMLSchema#int> .\n'
+            "<http://ex/s> <http://ex/flag> true .\n"
+            "<http://ex/s> <http://ex/x> 1.5 .\n"
+        )
+
+        result = stream_triples("CONSTRUCT WHERE { ?s ?p ?o }", response)  # type: ignore
+
+        assert result["head"] == {"vars": ["s", "p", "o"]}
+        assert result["complete"]
+        rows = result["results"]["bindings"]
+        assert len(rows) == 5
+        assert rows[0]["o"] == {"type": "uri", "value": "http://ex/o"}
+        assert rows[1]["o"] == {
+            "type": "literal",
+            "value": 'a "b"\nc é',
+            "xml:lang": "en",
+        }
+        assert rows[2]["s"] == {"type": "bnode", "value": "b0"}
+        assert rows[2]["o"]["datatype"] == "http://www.w3.org/2001/XMLSchema#int"
+        assert rows[3]["o"] == {
+            "type": "literal",
+            "value": "true",
+            "datatype": "http://www.w3.org/2001/XMLSchema#boolean",
+        }
+        assert rows[4]["o"]["datatype"] == "http://www.w3.org/2001/XMLSchema#decimal"
+        assert response.closed
+
+    def test_truncates_at_max_rows(self):
+        response = _FakeTriplesResponse(
+            "<http://ex/s> <http://ex/p> <http://ex/o1> .\n"
+            "<http://ex/s> <http://ex/p> <http://ex/o1> .\n"
+            "<http://ex/s> <http://ex/p> <http://ex/o2> .\n"
+            "<http://ex/s> <http://ex/p> <http://ex/o3> .\n"
+        )
+
+        result = stream_triples(
+            "CONSTRUCT WHERE { ?s ?p ?o }",
+            response,  # type: ignore
+            sparql_result_max_rows=2,
+            truncate=True,
+        )
+
+        values = [row["o"]["value"] for row in result["results"]["bindings"]]
+        assert values == ["http://ex/o1", "http://ex/o2"]
+        assert not result["complete"]
         assert response.closed
 
 
